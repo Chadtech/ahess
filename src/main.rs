@@ -1,8 +1,8 @@
 mod ahess_error;
-mod new_db_change;
+mod change_db;
 
 use crate::ahess_error::AhessError;
-use actix_web::{middleware, web, App, HttpRequest, HttpServer};
+use actix_web::{web, App, HttpRequest};
 use clap::Parser;
 
 async fn index(req: HttpRequest) -> &'static str {
@@ -14,6 +14,7 @@ async fn index(req: HttpRequest) -> &'static str {
 #[clap(author = "ct", version = "0.1", about = "Audio Generation")]
 enum Args {
     NewDbChange { change_name: String },
+    MigrateDb,
 }
 
 #[actix_web::main]
@@ -22,7 +23,10 @@ async fn main() -> Result<(), AhessError> {
 
     match args {
         Args::NewDbChange { change_name } => {
-            new_db_change::run(change_name).map_err(|err| AhessError::NewDbChangeError(err))?;
+            change_db::new_change(change_name).map_err(|err| AhessError::NewDbChangeError(err))?;
+        }
+        Args::MigrateDb => {
+            change_db::migrate_db().map_err(|err| AhessError::MigrateDbError(err))?;
         }
     }
 

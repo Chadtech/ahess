@@ -1,8 +1,9 @@
-use crate::new_db_change;
+use crate::change_db;
 use std::fmt::{Debug, Display, Formatter};
 
 pub enum AhessError {
-    NewDbChangeError(new_db_change::Error),
+    NewDbChangeError(change_db::Error),
+    MigrateDbError(change_db::Error),
 }
 
 impl Debug for AhessError {
@@ -16,6 +17,9 @@ impl Display for AhessError {
         let s = match self {
             AhessError::NewDbChangeError(sub_err) => {
                 format!("New Db Change Error, {}", sub_err.to_string())
+            }
+            AhessError::MigrateDbError(sub_err) => {
+                format!("Migrate Db Error, {}", sub_err.to_string())
             }
         };
 
