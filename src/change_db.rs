@@ -15,18 +15,16 @@ pub enum Error {
     FilenameDoesNotHaveDelimiter,
     FilenamePrefixIsNotInt,
     EntryExtensionIsNotSql,
-    CannotReadFile(String),
     InconsistentNumbering,
     CouldNotWriteFile(std::io::Error),
-    CannotReadMigrationScript(String),
-    CouldNotWriteMigrationScript(std::io::Error),
+    CouldNotMigrate(String),
 }
 
 pub async fn migrate_db(sqlx: sqlx::Pool<Postgres>) -> Result<(), Error> {
     sqlx::migrate!("./db/changes")
         .run(&sqlx)
         .await
-        .map_err(|err| Error::CannotReadFile(err.to_string()))?;
+        .map_err(|err| Error::CouldNotMigrate(err.to_string()))?;
 
     println!("Migrated db");
 
@@ -134,18 +132,12 @@ impl Display for Error {
                 format!("Cannot read db changes dir, {}", err.to_string())
             }
             Error::CannotReadEntry(err) => format!("Cannot read entry, {}", err),
-            Error::CannotReadFile(err) => {
-                format!("Cannot read file, {}", err)
-            }
             Error::InconsistentNumbering => "Inconsistent numbering".to_string(),
             Error::CouldNotWriteFile(err) => {
                 format!("Could not write file, {}", err.to_string())
             }
-            Error::CannotReadMigrationScript(err) => {
-                format!("Cannot read migration script, {}", err.to_string())
-            }
-            Error::CouldNotWriteMigrationScript(err) => {
-                format!("Could not write migration script, {}", err.to_string())
+            Error::CouldNotMigrate(err) => {
+                format!("Could not migrate, {}", err.to_string())
             }
         };
 

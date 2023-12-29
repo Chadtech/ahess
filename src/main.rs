@@ -3,7 +3,7 @@ mod change_db;
 
 use crate::ahess_error::AhessError;
 use actix_web::{web, App, HttpRequest};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 
@@ -14,9 +14,16 @@ async fn index(req: HttpRequest) -> &'static str {
 
 #[derive(Debug, Parser)]
 #[clap(author = "ct", version = "0.1", about = "Audio Generation")]
-enum Args {
+struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
     NewDbChange { change_name: String },
     MigrateDb,
+    Run,
 }
 
 fn get_env_var(key_name: &str) -> Result<String, AhessError> {
@@ -58,16 +65,21 @@ async fn main() -> Result<(), AhessError> {
 
     let args = Args::parse();
 
-    match args {
-        Args::NewDbChange { change_name } => {
+    let command = args.command.unwrap_or(Command::Run);
+
+    match command {
+        Command::NewDbChange { change_name } => {
             change_db::new_change(change_name).map_err(|err| AhessError::NewDbChangeError(err))?;
         }
-        Args::MigrateDb => {
+        Command::MigrateDb => {
             let sqlx = make_db_pool().await?;
 
             change_db::migrate_db(sqlx)
                 .await
                 .map_err(|err| AhessError::MigrateDbError(err))?;
+        }
+        Command::Run => {
+            println!("Running");
         }
     }
 
