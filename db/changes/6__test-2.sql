@@ -1,6 +1,0 @@
--- Put your SQL here
-            
-            
-            
-            
-        

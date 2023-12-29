@@ -1,3 +1,4 @@
+use sqlx::Postgres;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
@@ -21,19 +22,13 @@ pub enum Error {
     CouldNotWriteMigrationScript(std::io::Error),
 }
 
-pub fn migrate_db() -> Result<(), Error> {
-    //--------
-    sqlx::query_file!("./db/changes/1__jobs-table.sql", &[]);
-    sqlx::query_file!("./db/changes/2__test.sql", &[]);
-    sqlx::query_file!("./db/changes/3__test-2.sql", &[]);
-    sqlx::query_file!("./db/changes/4__test-2.sql", &[]);
-    sqlx::query_file!("./db/changes/5__test-2.sql", &[]);
-    sqlx::query_file!("./db/changes/6__test-2.sql", &[]);
-    sqlx::query_file!("./db/changes/7__test-2.sql", &[]);
-    sqlx::query_file!("./db/changes/8__test-2.sql", &[]);
+pub async fn migrate_db(sqlx: sqlx::Pool<Postgres>) -> Result<(), Error> {
+    sqlx::migrate!("./db/changes")
+        .run(&sqlx)
+        .await
+        .map_err(|err| Error::CannotReadFile(err.to_string()))?;
 
-//--------
-
+    println!("Migrated db");
 
     Ok(())
 }
@@ -55,43 +50,6 @@ pub fn new_change(change_name: String) -> Result<(), Error> {
         "#,
     )
     .map_err(|err| Error::CouldNotWriteFile(err))?;
-
-    changes.push(db_change_file_name);
-
-    // Modify migration script
-
-    let migration_script_path = PathBuf::from("./src/change_db.rs");
-
-    let migration_script = fs::read_to_string(migration_script_path.clone())
-        .map_err(|err| Error::CannotReadMigrationScript(err.to_string()))?;
-
-    let (beginning, remainder) = match migration_script.split_once("//--------") {
-        None => Err(Error::CannotReadMigrationScript(
-            "Could not find first '//--------' delimiter in migration script".to_string(),
-        ))?,
-        Some((b, r)) => (b, r),
-    };
-
-    let end = match remainder.split_once("//--------") {
-        None => Err(Error::CannotReadMigrationScript(
-            "Could not find second '//--------' delimiter in migration script".to_string(),
-        ))?,
-        Some((_, e)) => e,
-    };
-
-    let mut middle = String::new();
-
-    for change in changes {
-        middle.push_str(&format!(
-            "    sqlx::query_file!(\"./db/changes/{}\", &[]);\n",
-            change
-        ));
-    }
-
-    let new_migration_script = format!("{}//--------\n{}\n//--------\n{}", beginning, middle, end);
-
-    fs::write(migration_script_path, new_migration_script)
-        .map_err(|err| Error::CouldNotWriteMigrationScript(err))?;
 
     Ok(())
 }
@@ -201,7 +159,7 @@ mod change_db_tests {
 
     #[test]
     fn can_get_changes() -> Result<(), Error> {
-        let changes = get_changes()?;
+        let _changes = get_changes()?;
 
         Ok(())
     }
