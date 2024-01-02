@@ -7,6 +7,7 @@ pub enum AhessError {
     FailedToLoadEnv(dotenv::Error),
     FailedToLoadEnvVar { var: String, error: dotenv::Error },
     ConnectedToSqlxPool(sqlx::Error),
+    WebServerError(std::io::Error),
 }
 
 impl Debug for AhessError {
@@ -34,6 +35,9 @@ impl Display for AhessError {
             ),
             AhessError::ConnectedToSqlxPool(error) => {
                 format!("Connected to sqlx pool, error: {}", error.to_string())
+            }
+            AhessError::WebServerError(err) => {
+                format!("Web server error, error: {}", err.to_string())
             }
         };
 

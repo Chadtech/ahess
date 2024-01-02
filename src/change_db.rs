@@ -32,7 +32,7 @@ pub async fn migrate_db(sqlx: sqlx::Pool<Postgres>) -> Result<(), Error> {
 }
 
 pub fn new_change(change_name: String) -> Result<(), Error> {
-    let mut changes = get_changes()?;
+    let changes = get_changes()?;
 
     let db_change_file_name = format!("{}__{}.sql", changes.len() + 1, change_name);
 
