@@ -2,6 +2,7 @@ mod ahess_error;
 mod change_db;
 mod db_pool;
 mod generate_test;
+mod run_ui;
 mod web_server;
 
 use crate::ahess_error::AhessError;
@@ -18,8 +19,9 @@ struct Args {
 enum Command {
     NewDbChange { change_name: String },
     MigrateDb,
-    Run,
+    RunWebserver,
     GenerateTest,
+    RunUi,
 }
 
 #[actix_web::main]
@@ -28,7 +30,7 @@ async fn main() -> Result<(), AhessError> {
 
     let args = Args::parse();
 
-    let command = args.command.unwrap_or(Command::Run);
+    let command = args.command.unwrap_or(Command::RunWebserver);
 
     match command {
         Command::NewDbChange { change_name } => {
@@ -41,12 +43,13 @@ async fn main() -> Result<(), AhessError> {
                 .await
                 .map_err(|err| AhessError::MigrateDbError(err))?;
         }
-        Command::Run => {
+        Command::RunWebserver => {
             web_server::run().await?;
         }
         Command::GenerateTest => {
             generate_test::run()?;
         }
+        Command::RunUi => run_ui::run()?,
     }
 
     Ok(())
