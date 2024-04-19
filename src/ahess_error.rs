@@ -8,6 +8,7 @@ pub enum AhessError {
     FailedToLoadEnvVar { var: String, error: dotenv::Error },
     ConnectedToSqlxPool(sqlx::Error),
     WebServerError(std::io::Error),
+    IcedRunError(iced::Error),
 }
 
 impl Debug for AhessError {
@@ -38,6 +39,9 @@ impl Display for AhessError {
             }
             AhessError::WebServerError(err) => {
                 format!("Web server error, error: {}", err.to_string())
+            }
+            AhessError::IcedRunError(err) => {
+                format!("Iced run error, error: {}", err.to_string())
             }
         };
 

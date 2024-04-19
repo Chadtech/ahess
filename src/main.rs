@@ -4,6 +4,7 @@ mod db_pool;
 mod generate_test;
 mod run_ui;
 mod web_server;
+mod style;
 
 use crate::ahess_error::AhessError;
 use clap::{Parser, Subcommand};
