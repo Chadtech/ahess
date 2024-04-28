@@ -1,7 +1,7 @@
 use crate::ahess_error::AhessError;
 use iced;
-use iced::widget::{column, Column};
-use iced::{widget as w, Application, Command, Element, Renderer, Theme, Color};
+use iced::widget::{Column, column};
+use iced::{widget as w, Application, Command, Element, Theme, Color, Font};
 use crate::style as s;
 
 struct Model {
@@ -10,7 +10,9 @@ struct Model {
 
 #[derive(Debug, Clone)]
 enum Msg {
-    Msg,
+    PressedPing,
+    Finished,
+
 }
 
 impl Application for Model {
@@ -21,24 +23,38 @@ impl Application for Model {
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         let model = Model {
-            text: "AHESS!".to_string(),
+            text: "Ahess!".to_string(),
         };
 
         (model, Command::none())
     }
 
     fn title(&self) -> String {
-        "Ahess!!r".to_string()
+        "Ahess".to_string()
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Msg::Msg => Command::none(),
+            Msg::PressedPing => {
+                println!("Ping");
+                Command::perform(async { Msg::Finished }, |msg| msg)
+            }
+            Msg::Finished => {
+                println!("Finished");
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<Msg> {
-        w::container(column![w::text(self.text.clone())]).padding(s::S4).into()
+        w::container(
+            Column::with_children(vec![
+                w::text(self.text.clone()).into(),
+                w::button(
+                    w::text("Ping"),
+                ).on_press(Msg::PressedPing).into(),
+            ])
+        ).padding(s::S4).into()
     }
 
     fn theme(&self) -> Theme {
@@ -59,7 +75,8 @@ impl Application for Model {
 pub fn run() -> Result<(), AhessError> {
     let mut settings = iced::Settings::default();
 
-    // settings.fonts = vec![]
+    settings.default_font = Font::with_name("Fira Code");
 
     Model::run(settings).map_err(AhessError::IcedRunError)
 }
+
