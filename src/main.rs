@@ -5,6 +5,9 @@ mod generate_test;
 mod run_ui;
 mod web_server;
 mod style;
+mod job;
+mod ahess_result;
+mod worker;
 
 use crate::ahess_error::AhessError;
 use clap::{Parser, Subcommand};
@@ -50,7 +53,7 @@ async fn main() -> Result<(), AhessError> {
         Command::GenerateTest => {
             generate_test::run()?;
         }
-        Command::RunUi => run_ui::run()?,
+        Command::RunUi => run_ui::run().await?,
     }
 
     Ok(())

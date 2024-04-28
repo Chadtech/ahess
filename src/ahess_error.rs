@@ -9,6 +9,16 @@ pub enum AhessError {
     ConnectedToSqlxPool(sqlx::Error),
     WebServerError(std::io::Error),
     IcedRunError(iced::Error),
+    Db { tag: String, error: sqlx::Error },
+}
+
+impl AhessError {
+    pub fn db(tag: &str, error: sqlx::Error) -> Self {
+        AhessError::Db {
+            tag: tag.to_string(),
+            error,
+        }
+    }
 }
 
 impl Debug for AhessError {
@@ -42,6 +52,9 @@ impl Display for AhessError {
             }
             AhessError::IcedRunError(err) => {
                 format!("Iced run error, error: {}", err.to_string())
+            }
+            AhessError::Db { tag, error } => {
+                format!("Db error, tag: {}, error: {}", tag, error.to_string())
             }
         };
 

@@ -1,29 +1,37 @@
 use crate::ahess_error::AhessError;
 use iced;
-use iced::widget::{Column, column};
+use iced::widget::{Column};
 use iced::{widget as w, Application, Command, Element, Theme, Color, Font};
-use crate::style as s;
+use crate::{job, style as s};
+use crate::ahess_result::AhessResult;
+use crate::worker::Worker;
 
 struct Model {
     text: String,
+    worker: Worker,
+}
+
+struct Flags {
+    worker: Worker,
 }
 
 #[derive(Debug, Clone)]
 enum Msg {
     PressedPing,
     Finished,
-
+    BeepInserted,
 }
 
 impl Application for Model {
     type Executor = iced::executor::Default;
     type Message = Msg;
     type Theme = Theme;
-    type Flags = ();
+    type Flags = Flags;
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         let model = Model {
             text: "Ahess!".to_string(),
+            worker: flags.worker,
         };
 
         (model, Command::none())
@@ -37,12 +45,16 @@ impl Application for Model {
         match message {
             Msg::PressedPing => {
                 println!("Ping");
-                Command::perform(async { Msg::Finished }, |msg| msg)
+                Command::perform(insert_beep_job(self.worker.clone()), |result| {
+                    dbg!(result);
+                    Msg::BeepInserted
+                })
             }
             Msg::Finished => {
                 println!("Finished");
                 Command::none()
             }
+            Msg::BeepInserted => { Command::none() }
         }
     }
 
@@ -72,8 +84,18 @@ impl Application for Model {
     }
 }
 
-pub fn run() -> Result<(), AhessError> {
-    let mut settings = iced::Settings::default();
+async fn insert_beep_job(worker: Worker) -> Result<(), AhessError> {
+    job::insert(&worker, job::Job::Beep).await?;
+
+    Ok(())
+}
+
+pub async fn run() -> Result<(), AhessError> {
+    let flags = Flags {
+        worker: Worker::new().await?,
+    };
+
+    let mut settings = iced::Settings::with_flags(flags);
 
     settings.default_font = Font::with_name("Fira Code");
 
