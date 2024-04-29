@@ -3,7 +3,6 @@ mod change_db;
 mod db_pool;
 mod generate_test;
 mod run_ui;
-mod web_server;
 mod style;
 mod job;
 mod ahess_result;
@@ -11,6 +10,7 @@ mod worker;
 
 use crate::ahess_error::AhessError;
 use clap::{Parser, Subcommand};
+use futures::FutureExt;
 
 #[derive(Debug, Parser)]
 #[clap(author = "ct", version = "0.1", about = "Audio Generation")]
@@ -23,18 +23,17 @@ struct Args {
 enum Command {
     NewDbChange { change_name: String },
     MigrateDb,
-    RunWebserver,
     GenerateTest,
     RunUi,
 }
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> Result<(), AhessError> {
     dotenv::dotenv().map_err(AhessError::FailedToLoadEnv)?;
 
     let args = Args::parse();
 
-    let command = args.command.unwrap_or(Command::RunWebserver);
+    let command = args.command.unwrap_or(Command::RunUi);
 
     match command {
         Command::NewDbChange { change_name } => {
@@ -47,13 +46,14 @@ async fn main() -> Result<(), AhessError> {
                 .await
                 .map_err(|err| AhessError::MigrateDbError(err))?;
         }
-        Command::RunWebserver => {
-            web_server::run().await?;
-        }
         Command::GenerateTest => {
             generate_test::run()?;
         }
-        Command::RunUi => run_ui::run().await?,
+        Command::RunUi => {
+            let h2 = tokio::spawn(job::check("A"));
+
+            tokio::join!(run_ui::run(), h2);
+        }
     }
 
     Ok(())

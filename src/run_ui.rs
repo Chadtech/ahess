@@ -3,7 +3,6 @@ use iced;
 use iced::widget::{Column};
 use iced::{widget as w, Application, Command, Element, Theme, Color, Font};
 use crate::{job, style as s};
-use crate::ahess_result::AhessResult;
 use crate::worker::Worker;
 
 struct Model {

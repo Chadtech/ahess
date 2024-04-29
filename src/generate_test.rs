@@ -1,6 +1,6 @@
 use crate::ahess_error::AhessError;
 use rodio;
-use rodio::{source::Source, Decoder, OutputStream};
+use rodio::{source::Source, OutputStream};
 use std::time::Duration;
 
 struct Audio {
