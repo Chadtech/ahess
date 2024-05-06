@@ -7,10 +7,12 @@ mod style;
 mod job;
 mod ahess_result;
 mod worker;
+mod tone;
 
 use crate::ahess_error::AhessError;
 use clap::{Parser, Subcommand};
 use futures::FutureExt;
+use crate::tone::Tone;
 
 #[derive(Debug, Parser)]
 #[clap(author = "ct", version = "0.1", about = "Audio Generation")]
@@ -50,7 +52,9 @@ async fn main() -> Result<(), AhessError> {
             generate_test::run()?;
         }
         Command::RunUi => {
-            let h2 = tokio::spawn(job::check("A"));
+            Tone::new(1000.0).run("main test")?;
+            let h2 = tokio::spawn(job::check());
+
 
             tokio::join!(run_ui::run(), h2);
         }

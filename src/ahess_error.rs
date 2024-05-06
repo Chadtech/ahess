@@ -10,6 +10,9 @@ pub enum AhessError {
     WebServerError(std::io::Error),
     IcedRunError(iced::Error),
     Db { tag: String, error: sqlx::Error },
+    UnknownJob(String),
+    TonePlayError { tag: String, error: rodio::PlayError },
+    ToneStreamError { tag: String, error: rodio::StreamError },
 }
 
 impl AhessError {
@@ -55,6 +58,15 @@ impl Display for AhessError {
             }
             AhessError::Db { tag, error } => {
                 format!("Db error, tag: {}, error: {}", tag, error.to_string())
+            }
+            AhessError::UnknownJob(job_name) => {
+                format!("Unknown job: {}", job_name)
+            }
+            AhessError::TonePlayError { tag, error } => {
+                format!("Tone play error, tag: {}, error: {}", tag, error.to_string())
+            }
+            AhessError::ToneStreamError { tag, error } => {
+                format!("Tone stream error, tag: {}, error: {}", tag, error.to_string())
             }
         };
 
