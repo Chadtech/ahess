@@ -68,7 +68,7 @@ impl Source for Audio {
 // }
 
 pub fn run() -> Result<(), AhessError> {
-    let (stream, stream_handle) = OutputStream::try_default().unwrap();
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
 
     let audio = Audio {
         freq: 400.0,

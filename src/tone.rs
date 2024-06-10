@@ -15,7 +15,7 @@ impl Iterator for Tone {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let r = f32::sin((2.0 * std::f32::consts::PI) * self.freq * (self.sample * SAMPLE_RATE_FL))
+        let r = f32::sin(2.0 * std::f32::consts::PI * self.freq * (self.sample / SAMPLE_RATE_FL))
             * self.volume;
         self.sample += 1.0;
         Some(r)

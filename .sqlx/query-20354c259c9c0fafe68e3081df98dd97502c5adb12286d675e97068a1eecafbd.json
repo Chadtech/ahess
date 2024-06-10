@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE job\n                    SET finished_at = NOW()\n                    WHERE uuid = $1::UUID;\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "20354c259c9c0fafe68e3081df98dd97502c5adb12286d675e97068a1eecafbd"
+}

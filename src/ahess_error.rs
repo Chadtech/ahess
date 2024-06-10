@@ -7,12 +7,12 @@ pub enum AhessError {
     FailedToLoadEnv(dotenv::Error),
     FailedToLoadEnvVar { var: String, error: dotenv::Error },
     ConnectedToSqlxPool(sqlx::Error),
-    WebServerError(std::io::Error),
     IcedRunError(iced::Error),
     Db { tag: String, error: sqlx::Error },
     UnknownJob(String),
     TonePlayError { tag: String, error: rodio::PlayError },
     ToneStreamError { tag: String, error: rodio::StreamError },
+    JoinError(tokio::task::JoinError),
 }
 
 impl AhessError {
@@ -50,9 +50,6 @@ impl Display for AhessError {
             AhessError::ConnectedToSqlxPool(error) => {
                 format!("Connected to sqlx pool, error: {}", error.to_string())
             }
-            AhessError::WebServerError(err) => {
-                format!("Web server error, error: {}", err.to_string())
-            }
             AhessError::IcedRunError(err) => {
                 format!("Iced run error, error: {}", err.to_string())
             }
@@ -67,6 +64,9 @@ impl Display for AhessError {
             }
             AhessError::ToneStreamError { tag, error } => {
                 format!("Tone stream error, tag: {}, error: {}", tag, error.to_string())
+            }
+            AhessError::JoinError(err) => {
+                format!("Join error: {}", err.to_string())
             }
         };
 

@@ -1,14 +1,19 @@
 use crate::ahess_error::AhessError;
 use iced;
-use iced::widget::{Column};
+use iced::widget::{Column, Row};
 use iced::{widget as w, Application, Command, Element, Theme, Color, Font};
 use crate::{job, style as s};
+use crate::ahess_result::AhessResult;
+use crate::run_ui::page::{new_score, Page};
 use crate::worker::Worker;
 
+mod page;
+
 struct Model {
-    text: String,
     worker: Worker,
+    page: Page,
 }
+
 
 struct Flags {
     worker: Worker,
@@ -19,6 +24,8 @@ enum Msg {
     PressedPing,
     Finished,
     BeepInserted,
+    PressedNewScore,
+    NewScoreMsg(page::new_score::Msg),
 }
 
 impl Application for Model {
@@ -29,8 +36,8 @@ impl Application for Model {
 
     fn new(flags: Self::Flags) -> (Self, Command<Self::Message>) {
         let model = Model {
-            text: "Ahess!".to_string(),
             worker: flags.worker,
+            page: Page::Landing,
         };
 
         (model, Command::none())
@@ -43,29 +50,46 @@ impl Application for Model {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Msg::PressedPing => {
-                println!("Ping");
-                Command::perform(insert_beep_job(self.worker.clone()), |result| {
-                    dbg!(result);
+                Command::perform(insert_beep_job(self.worker.clone()), |_result| {
                     Msg::BeepInserted
                 })
             }
             Msg::Finished => {
-                println!("Finished");
                 Command::none()
             }
             Msg::BeepInserted => { Command::none() }
+            Msg::PressedNewScore => {
+                self.page = Page::NewScore(new_score::Model::init());
+
+                Command::none()
+            }
+            Msg::NewScoreMsg(sub_msg) => {
+                if let Page::NewScore(new_score_model) = &mut self.page {
+                    new_score_model.update(sub_msg);
+                }
+
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<Msg> {
-        w::container(
-            Column::with_children(vec![
-                w::text(self.text.clone()).into(),
-                w::button(
-                    w::text("Ping"),
-                ).on_press(Msg::PressedPing).into(),
-            ])
-        ).padding(s::S4).into()
+        let body: Element<Msg> = match &self.page {
+            Page::Landing => {
+                Column::with_children(vec![
+                    Row::with_children(vec![
+                        w::button(w::text("new score")).on_press(Msg::PressedNewScore).into()
+                    ]).into()
+                ]).into()
+            }
+            Page::NewScore(sub_model) => {
+                let new_score_el: Element<new_score::Msg> = sub_model.view().into();
+                new_score_el.map(Msg::NewScoreMsg)
+            }
+        };
+
+
+        w::container(body).padding(s::S4).into()
     }
 
     fn theme(&self) -> Theme {
@@ -89,7 +113,7 @@ async fn insert_beep_job(worker: Worker) -> Result<(), AhessError> {
     Ok(())
 }
 
-pub async fn run() -> Result<(), AhessError> {
+pub async fn run() -> AhessResult<()> {
     let flags = Flags {
         worker: Worker::new().await?,
     };

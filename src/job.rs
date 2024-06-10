@@ -5,10 +5,7 @@ use crate::worker::Worker;
 
 
 use sqlx;
-use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 use uuid;
-use uuid::Timestamp;
 use crate::tone::Tone;
 
 pub enum Job {
@@ -81,7 +78,7 @@ pub async fn insert(worker: &Worker, job: Job) -> AhessResult<()> {
 
     let uuid = uuid::Uuid::now_v7();
 
-    let r = sqlx::query!(
+    sqlx::query!(
         r#"INSERT INTO job (uuid, name) VALUES ($1::UUID, $2::TEXT)
         "#,
         uuid,

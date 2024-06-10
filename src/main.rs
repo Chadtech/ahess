@@ -11,8 +11,6 @@ mod tone;
 
 use crate::ahess_error::AhessError;
 use clap::{Parser, Subcommand};
-use futures::FutureExt;
-use crate::tone::Tone;
 
 #[derive(Debug, Parser)]
 #[clap(author = "ct", version = "0.1", about = "Audio Generation")]
@@ -52,11 +50,20 @@ async fn main() -> Result<(), AhessError> {
             generate_test::run()?;
         }
         Command::RunUi => {
-            Tone::new(1000.0).run("main test")?;
-            let h2 = tokio::spawn(job::check());
+            let job_checker = tokio::spawn(job::check());
 
+            let (run_ui_result, join_result) = tokio::join!(run_ui::run(), job_checker);
 
-            tokio::join!(run_ui::run(), h2);
+            run_ui_result?;
+
+            match join_result {
+                Ok(job_check_result) => {
+                    job_check_result?;
+                }
+                Err(err) => {
+                    Err(AhessError::JoinError(err))?;
+                }
+            }
         }
     }
 
