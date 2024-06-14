@@ -8,6 +8,7 @@ use crate::run_ui::page::{new_score, Page};
 use crate::worker::Worker;
 
 mod page;
+mod view;
 
 struct Model {
     worker: Worker,

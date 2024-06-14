@@ -1,6 +1,6 @@
 use iced::widget::{Column, Row, Space, TextInput};
 use iced::{Alignment, widget as w};
-use iced::application::StyleSheet;
+use crate::run_ui::view::button::Button;
 use crate::style as s;
 
 pub struct Model {
@@ -10,6 +10,7 @@ pub struct Model {
 #[derive(Debug, Clone)]
 pub enum Msg {
     NameChanged(String),
+    ClickedCancel,
 }
 
 impl Model {
@@ -19,23 +20,27 @@ impl Model {
         }
     }
     pub fn view(&self) -> Column<Msg> {
-        Column::with_children(vec![
-            Row::with_children(vec![
-                w::text("name").into(),
-                TextInput::new("", self.name_field.as_str()).on_input(Msg::NameChanged).into(),
-            ]).spacing(
-                s::S4,
-            ).align_items(Alignment::Center).into(),
-            Column::with_children(vec![
-                Space::with_height(iced::Length::Fill).into()
-            ]).into(),
-            Row::with_children(vec![
-                w::button(w::text("cancel")).into(),
-                w::button(w::text("create")).into(),
-            ]).spacing(
-                s::S4,
-            ).into(),
-        ])
+        let name_row = Row::new().push(
+            w::text("name")
+        ).push(
+            TextInput::new("", self.name_field.as_str()).on_input(Msg::NameChanged)
+        ).spacing(
+            s::S4,
+        ).align_items(Alignment::Center);
+
+        let submit_row = Row::new().push(
+            Button::new("cancel").on_press(Msg::ClickedCancel).to_el().into()
+        ).push(
+            w::button(w::text("create")).into()
+        ).spacing(
+            s::S4,
+        );
+
+
+        Column::new()
+            .push(name_row)
+            .push(Space::with_height(iced::Length::Fill))
+            .push(submit_row)
     }
 
 
@@ -44,6 +49,7 @@ impl Model {
             Msg::NameChanged(name) => {
                 self.name_field = name;
             }
+            Msg::ClickedCancel => {}
         }
     }
 }
