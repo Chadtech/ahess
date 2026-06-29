@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml">
+      <package file="$PROJECT_DIR$">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="490c09fc-9576-451c-a79a-7ef837d64629" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.sqlx/query-20354c259c9c0fafe68e3081df98dd97502c5adb12286d675e97068a1eecafbd.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.sqlx/query-3714612107261934f5e6305f1d9e769b12ed01d5b354be911106de6887f4a515.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.sqlx/query-953dbe29f5bd968c8db7638ae91dc3c610581c24ae39e2c9f6534e0046be2b08.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/10__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/1__jobs-table.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/2__test.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/3__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/4__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/5__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/6__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/7__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/8__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/db/changes/9__test-2.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ahess_error.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ahess_result.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/change_db.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/db_pool.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/generate_test.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/job.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run_ui.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run_ui/page/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run_ui/page/new_score.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run_ui/view/button.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/run_ui/view/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/style.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/tone.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/worker.rs" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="CopilotChats">
+    <option name="panelChat">
+      <chat>
+        <option name="activeSessionId" value="4cfe8947-09b9-4a89-a8cb-c3ef11529e65" />
+        <option name="sessions">
+          <session>
+            <option name="chatType" value="PANEL" />
+            <option name="id" value="4cfe8947-09b9-4a89-a8cb-c3ef11529e65" />
+            <option name="modeId" value="Agent" />
+            <option name="modelType" value="builtin_family" />
+            <option name="modelValue" value="auto" />
+            <option name="targetType" value="LOCAL" />
+          </session>
+        </option>
+        <option name="type" value="PANEL" />
+      </chat>
+    </option>
+  </component>
+  <component name="CopilotPersistence">
+    <persistenceIdMap>
+      <entry key="_/Users/chadstearns/code/ahess" value="2a4RQ2hB5zBYLZCS9zOuhhRC4o6" />
+    </persistenceIdMap>
+  </component>
+  <component name="ElmWorkspace">
+    <elmProjects />
+    <settings elmCompilerPath="/usr/local/bin/elm" lamderaCompilerPath="" elmFormatPath="/usr/local/bin/elm-format" elmTestPath="null" elmReviewPath="" isElmFormatOnSaveEnabled="false" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="FormatOnSaveOptions">
+    <option name="myRunOnSave" value="true" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="r7nm08bp" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2
+}</component>
+  <component name="ProjectId" id="2a4RQ2hB5zBYLZCS9zOuhhRC4o6" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="1" id="Add" />
+  </component>
+  <component name="ProjectViewState">
+    <option name="autoscrollFromSource" value="true" />
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Cargo.Check.executor": "Run",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.rust.reset.selective.auto.import": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "main",
+    "junie.onboarding.icon.badge.shown": "true",
+    "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "/Users/chadstearns/code/ahess",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.elm.workspace.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "org.rust.first.attach.projects": "true",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/run_ui/page" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Cargo.Check">
+    <configuration name="Check" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="command" value="check" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs>
+        <env name="DATABASE_URL" value="postgres://postgres:postgres@127.0.0.1:5432/ahess" />
+      </envs>
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test" type="CargoCommandRunConfiguration" factoryName="Cargo Command" nameIsGenerated="true">
+      <option name="command" value="test" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="false" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="true" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Check" />
+      <item itemvalue="Cargo.Test" />
+    </list>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+  </component>
+  <component name="RustfmtProjectSettings">
+    <option name="runRustfmtOnSave" value="true" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="490c09fc-9576-451c-a79a-7ef837d64629" name="Changes" comment="" />
+      <created>1703575845067</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1703575845067</updated>
+      <workItem from="1713498832861" duration="687000" />
+      <workItem from="1713499527545" duration="1071000" />
+      <workItem from="1714255209181" duration="38725000" />
+      <workItem from="1716825827998" duration="339000" />
+      <workItem from="1716832715535" duration="599000" />
+      <workItem from="1717890643487" duration="37343000" />
+      <workItem from="1720198644357" duration="158000" />
+      <workItem from="1720198862774" duration="598000" />
+      <workItem from="1721245929883" duration="145000" />
+      <workItem from="1721246084056" duration="1225000" />
+      <workItem from="1721781164029" duration="599000" />
+      <workItem from="1721804375822" duration="600000" />
+      <workItem from="1722264738553" duration="674000" />
+      <workItem from="1722527188931" duration="1268000" />
+      <workItem from="1724685936816" duration="995000" />
+      <workItem from="1727381127790" duration="597000" />
+      <workItem from="1727383649449" duration="665000" />
+      <workItem from="1727984763515" duration="1197000" />
+      <workItem from="1727987401675" duration="1201000" />
+      <workItem from="1728499663140" duration="611000" />
+      <workItem from="1729008844620" duration="180000" />
+      <workItem from="1729009033170" duration="81000" />
+      <workItem from="1729009128137" duration="668000" />
+      <workItem from="1730698613629" duration="609000" />
+      <workItem from="1731193036528" duration="29000" />
+      <workItem from="1731193072006" duration="604000" />
+      <workItem from="1731542408894" duration="19000" />
+      <workItem from="1748839850069" duration="1586000" />
+      <workItem from="1750551525636" duration="1551000" />
+      <workItem from="1750606627273" duration="2109000" />
+      <workItem from="1751219044875" duration="1189000" />
+      <workItem from="1751689345262" duration="75000" />
+      <workItem from="1751689471740" duration="1761000" />
+      <workItem from="1782689735882" duration="1069000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
+  </component>
+</project>
