@@ -1,0 +1,10 @@
+[package]
+name = "ahess"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.4.11", features = ["derive"] }
+gpui = "0.2.2"
+unicode-segmentation = "1.12.0"
+cpal = "0.18.1"

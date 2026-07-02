@@ -12,39 +12,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="490c09fc-9576-451c-a79a-7ef837d64629" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.sqlx/query-20354c259c9c0fafe68e3081df98dd97502c5adb12286d675e97068a1eecafbd.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.sqlx/query-3714612107261934f5e6305f1d9e769b12ed01d5b354be911106de6887f4a515.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.sqlx/query-953dbe29f5bd968c8db7638ae91dc3c610581c24ae39e2c9f6534e0046be2b08.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/10__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/1__jobs-table.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/2__test.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/3__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/4__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/5__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/6__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/7__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/8__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/db/changes/9__test-2.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ahess_error.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ahess_result.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/change_db.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/db_pool.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/generate_test.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/job.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/run_ui.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/run_ui/page/mod.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/run_ui/page/new_score.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/run_ui/view/button.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/run_ui/view/mod.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/style.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/tone.rs" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/worker.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -110,33 +78,33 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Cargo.Check.executor": "Run",
-    "RunOnceActivity.OpenProjectViewOnStart": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.rust.reset.selective.auto.import": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "main",
-    "junie.onboarding.icon.badge.shown": "true",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "/Users/chadstearns/code/ahess",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "org.elm.workspace.PROJECT_DISCOVERY": "true",
-    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
-    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
-    "org.rust.first.attach.projects": "true",
-    "settings.editor.selected.configurable": "preferences.pluginManager",
-    "to.speed.mode.migration.done": "true",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Cargo.Check.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/chadstearns/code/ahess&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.elm.workspace.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
+    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/src/run_ui/page" />
@@ -231,7 +199,7 @@
       <workItem from="1751219044875" duration="1189000" />
       <workItem from="1751689345262" duration="75000" />
       <workItem from="1751689471740" duration="1761000" />
-      <workItem from="1782689735882" duration="1069000" />
+      <workItem from="1782689735882" duration="16332000" />
     </task>
     <servers />
   </component>
