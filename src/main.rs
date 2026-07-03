@@ -1,5 +1,11 @@
+mod app;
 mod cpal_spike;
 mod gpui_spike;
+mod palette;
+pub mod project;
+pub mod seed;
+mod style;
+mod view;
 
 use clap::{Parser, Subcommand};
 
@@ -12,6 +18,9 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(name = "ui")]
+    Ui,
+
     #[command(name = "RunGpuiSpike")]
     RunGpuiSpike,
 
@@ -23,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
+        Command::Ui => app::run(),
         Command::RunGpuiSpike => gpui_spike::run(),
         Command::RunCpalSpike => cpal_spike::run(),
     }

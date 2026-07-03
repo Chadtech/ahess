@@ -1,0 +1,118 @@
+#![allow(dead_code)]
+
+use gpui::{prelude::*, Div, Pixels, Rgba};
+
+use crate::palette;
+
+pub const FONT: &str = "Fira Code";
+pub const DISPLAY_FONT: &str = "UnifrakturMaguntia";
+
+pub const S0: Pixels = gpui::px(0.0);
+pub const S1: Pixels = gpui::px(1.0);
+pub const S2: Pixels = gpui::px(2.0);
+pub const S3: Pixels = gpui::px(4.0);
+pub const S4: Pixels = gpui::px(8.0);
+pub const S5: Pixels = gpui::px(16.0);
+pub const S6: Pixels = gpui::px(32.0);
+pub const S7: Pixels = gpui::px(64.0);
+pub const S8: Pixels = gpui::px(128.0);
+pub const S9: Pixels = gpui::px(256.0);
+
+pub const GREEN1: Rgba = rgba(palette::GREEN1);
+pub const GREEN2: Rgba = rgba(palette::GREEN2);
+pub const GREEN3: Rgba = rgba(palette::GREEN3);
+pub const GREEN4: Rgba = rgba(palette::GREEN4);
+pub const GREEN5: Rgba = rgba(palette::GREEN5);
+pub const GREEN6: Rgba = rgba(palette::GREEN6);
+pub const GREEN7: Rgba = rgba(palette::GREEN7);
+
+pub const GRAY1: Rgba = rgba(palette::GRAY1);
+pub const GRAY2: Rgba = rgba(palette::GRAY2);
+pub const GRAY3: Rgba = rgba(palette::GRAY3);
+pub const GRAY4: Rgba = rgba(palette::GRAY4);
+pub const GRAY5: Rgba = rgba(palette::GRAY5);
+pub const GRAY6: Rgba = rgba(palette::GRAY6);
+
+pub const YELLOW1: Rgba = rgba(palette::YELLOW1);
+pub const YELLOW2: Rgba = rgba(palette::YELLOW2);
+pub const YELLOW3: Rgba = rgba(palette::YELLOW3);
+pub const YELLOW4: Rgba = rgba(palette::YELLOW4);
+pub const YELLOW5: Rgba = rgba(palette::YELLOW5);
+pub const YELLOW6: Rgba = rgba(palette::YELLOW6);
+
+pub const BLUE1: Rgba = rgba(palette::BLUE1);
+pub const BLUE2: Rgba = rgba(palette::BLUE2);
+
+pub const RED1: Rgba = rgba(palette::RED1);
+pub const RED2: Rgba = rgba(palette::RED2);
+
+pub const WHITE: Rgba = rgba(palette::WHITE);
+
+pub fn raised(child: impl IntoElement) -> Div {
+    gpui::div()
+        .relative()
+        .child(child)
+        .child(bevel_top(GRAY3))
+        .child(bevel_left(GRAY3))
+        .child(bevel_bottom(GRAY1))
+        .child(bevel_right(GRAY1))
+}
+
+pub fn sunken(child: impl IntoElement) -> Div {
+    gpui::div()
+        .relative()
+        .child(child)
+        .child(bevel_top(GRAY1))
+        .child(bevel_left(GRAY1))
+        .child(bevel_bottom(GRAY3))
+        .child(bevel_right(GRAY3))
+}
+
+const fn rgba(color: palette::Color) -> Rgba {
+    let hex = color.rgb();
+    let r = ((hex >> 16) & 0xff) as f32 / 255.0;
+    let g = ((hex >> 8) & 0xff) as f32 / 255.0;
+    let b = (hex & 0xff) as f32 / 255.0;
+
+    Rgba { r, g, b, a: 1.0 }
+}
+
+fn bevel_top(color: Rgba) -> impl IntoElement {
+    gpui::div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .h(S2)
+        .bg(color)
+}
+
+fn bevel_left(color: Rgba) -> impl IntoElement {
+    gpui::div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(S2)
+        .bg(color)
+}
+
+fn bevel_bottom(color: Rgba) -> impl IntoElement {
+    gpui::div()
+        .absolute()
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .h(S2)
+        .bg(color)
+}
+
+fn bevel_right(color: Rgba) -> impl IntoElement {
+    gpui::div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .right_0()
+        .w(S2)
+        .bg(color)
+}
