@@ -1,4 +1,7 @@
-use gpui::{prelude::*, ClickEvent, Context, CursorStyle, ElementId, SharedString, Window};
+use gpui::{
+    prelude::*, Context, CursorStyle, ElementId, EventEmitter, MouseButton, MouseDownEvent,
+    MouseUpEvent, SharedString, Window,
+};
 
 use crate::style as s;
 
@@ -7,7 +10,13 @@ pub struct Button {
     label: SharedString,
     size: Size,
     depressed: bool,
+    pressing: bool,
+    hovered: bool,
 }
+
+pub struct Clicked;
+
+impl EventEmitter<Clicked> for Button {}
 
 enum Size {
     Text,
@@ -22,7 +31,14 @@ impl Button {
             label: label.into(),
             size: Size::Text,
             depressed: false,
+            pressing: false,
+            hovered: false,
         }
+    }
+
+    pub fn depressed(mut self, depressed: bool) -> Self {
+        self.depressed = depressed;
+        self
     }
 
     #[allow(dead_code)]
@@ -32,6 +48,8 @@ impl Button {
             label: "X".into(),
             size: Size::Square,
             depressed: false,
+            pressing: false,
+            hovered: false,
         }
     }
 
@@ -44,30 +62,69 @@ impl Button {
         cx.notify();
     }
 
-    fn on_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_depressed(true, cx);
+    fn set_pressing(&mut self, pressing: bool, cx: &mut Context<Self>) {
+        if self.pressing == pressing {
+            return;
+        }
+
+        self.pressing = pressing;
+        cx.notify();
+    }
+
+    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.hovered == hovered {
+            return;
+        }
+
+        self.hovered = hovered;
+        cx.notify();
+    }
+
+    fn on_hover(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_hovered(*hovered, cx);
+    }
+
+    fn on_mouse_down(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_pressing(true, cx);
+    }
+
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let was_pressing = self.pressing;
+        self.set_pressing(false, cx);
+
+        if was_pressing {
+            cx.emit(Clicked);
+        }
+    }
+
+    fn on_mouse_up_out(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_pressing(false, cx);
     }
 }
 
 impl Render for Button {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_color = if self.hovered { s::WHITE } else { s::GRAY6 };
+
         let button = gpui::div()
             .id(self.id.clone())
             .flex()
             .items_center()
             .justify_center()
             .bg(s::GRAY2)
-            .text_color(s::GRAY6)
             .cursor(CursorStyle::PointingHand)
-            .child(self.label.clone())
-            .on_click(cx.listener(Self::on_click));
+            .child(gpui::div().text_color(text_color).child(self.label.clone()))
+            .on_hover(cx.listener(Self::on_hover))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up_out));
 
         let button = match self.size {
             Size::Text => button.p(s::S3).px(s::S4),
             Size::Square => button.size(s::S6),
         };
 
-        if self.depressed {
+        if self.depressed || self.pressing {
             s::sunken(button)
         } else {
             s::raised(button)

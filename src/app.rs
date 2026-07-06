@@ -4,20 +4,71 @@ use gpui::{div, prelude::*, px, App, Application, Context, Entity, Window, Windo
 
 use crate::{style as s, view};
 
-use view::{button::Button, text_input::TextInput};
+use view::{
+    button::{self, Button},
+    text_input::TextInput,
+};
 
 const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMaguntia-Regular.ttf");
 
 struct AhessApp {
     fields: NewProjectFields,
     buttons: Buttons,
+    project_start_mode: ProjectStartMode,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ProjectStartMode {
+    New,
+    Existing,
 }
 
 impl AhessApp {
     fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            fields: NewProjectFields::new(cx),
-            buttons: Buttons::new(cx),
+        let project_start_mode = ProjectStartMode::New;
+        let fields = NewProjectFields::new(cx);
+        let buttons = Buttons::new(cx, project_start_mode);
+
+        cx.subscribe(&buttons.new_project, Self::on_new_project_clicked)
+            .detach();
+        cx.subscribe(&buttons.open_existing, Self::on_existing_project_clicked)
+            .detach();
+
+        let app = Self {
+            fields,
+            buttons,
+            project_start_mode,
+        };
+
+        app
+    }
+
+    fn on_new_project_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_project_start_mode(ProjectStartMode::New, cx);
+    }
+
+    fn on_existing_project_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_project_start_mode(ProjectStartMode::Existing, cx);
+    }
+
+    fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<Self>) {
+        let changed = self.project_start_mode != mode;
+
+        self.project_start_mode = mode;
+        self.buttons.set_project_start_mode(mode, cx);
+
+        if changed {
+            cx.notify();
         }
     }
 }
@@ -25,18 +76,30 @@ impl AhessApp {
 struct Buttons {
     new_project: Entity<Button>,
     open_existing: Entity<Button>,
-    cancel: Entity<Button>,
     create: Entity<Button>,
 }
 
 impl Buttons {
-    fn new(cx: &mut Context<AhessApp>) -> Self {
+    fn new(cx: &mut Context<AhessApp>, mode: ProjectStartMode) -> Self {
         Self {
-            new_project: cx.new(|_| Button::new("new-project", "new project")),
-            open_existing: cx.new(|_| Button::new("open-existing", "open existing")),
-            cancel: cx.new(|_| Button::new("cancel-new-project", "cancel")),
+            new_project: cx.new(|_| {
+                Button::new("new-project", "new project").depressed(mode == ProjectStartMode::New)
+            }),
+            open_existing: cx.new(|_| {
+                Button::new("open-existing", "open existing")
+                    .depressed(mode == ProjectStartMode::Existing)
+            }),
             create: cx.new(|_| Button::new("create-new-project", "create")),
         }
+    }
+
+    fn set_project_start_mode(&self, mode: ProjectStartMode, cx: &mut Context<AhessApp>) {
+        self.new_project.update(cx, |button, cx| {
+            button.set_depressed(mode == ProjectStartMode::New, cx);
+        });
+        self.open_existing.update(cx, |button, cx| {
+            button.set_depressed(mode == ProjectStartMode::Existing, cx);
+        });
     }
 }
 
@@ -220,7 +283,6 @@ fn new_project_dialog(fields: &NewProjectFields, buttons: &Buttons) -> impl Into
                     .justify_end()
                     .gap_3()
                     .p(s::S4)
-                    .child(buttons.cancel.clone())
                     .child(buttons.create.clone()),
             ),
     )

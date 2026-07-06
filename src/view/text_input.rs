@@ -538,7 +538,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top() + px(4.0)),
                         size(px(2.0), bounds.bottom() - bounds.top() - px(8.0)),
                     ),
-                    s::BLUE2,
+                    s::RED2,
                 )),
             )
         } else {
@@ -606,9 +606,7 @@ impl Element for TextElement {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_focused = self.focus_handle.is_focused(window);
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
@@ -640,7 +638,7 @@ impl Render for TextInput {
             .text_color(s::GRAY6)
             .bg(s::GREEN3)
             .border_1()
-            .border_color(if is_focused { s::BLUE2 } else { s::GREEN3 })
+            .border_color(s::GREEN3)
             .child(TextElement { input: cx.entity() })
     }
 }
