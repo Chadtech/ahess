@@ -79,6 +79,10 @@ impl TextInput {
         }
     }
 
+    pub fn value(&self) -> String {
+        self.content.to_string()
+    }
+
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
@@ -483,7 +487,8 @@ impl Element for TextElement {
         let cursor = input.cursor_offset();
         let style = window.text_style();
 
-        let display_text = if content.is_empty() {
+        let is_placeholder = content.is_empty();
+        let display_text = if is_placeholder {
             input.placeholder.clone()
         } else {
             content
@@ -492,7 +497,11 @@ impl Element for TextElement {
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),
-            color: style.color,
+            color: if is_placeholder {
+                s::GRAY4.into()
+            } else {
+                style.color
+            },
             background_color: None,
             underline: None,
             strikethrough: None,

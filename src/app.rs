@@ -1,8 +1,10 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 
-use gpui::{div, prelude::*, px, App, Application, Context, Entity, Window, WindowOptions};
+use gpui::{
+    div, prelude::*, px, App, Application, Context, Entity, SharedString, Window, WindowOptions,
+};
 
-use crate::{style as s, view};
+use crate::{project, seed::Seed, style as s, view};
 
 use view::{
     button::{self, Button},
@@ -14,10 +16,23 @@ const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMag
 struct AhessApp {
     fields: NewProjectFields,
     buttons: Buttons,
-    project_start_mode: ProjectStartMode,
+    app_mode: AppMode,
+    workspace_root: PathBuf,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AppMode {
+    ProjectStart {
+        project_start_mode: ProjectStartMode,
+        create_project_error: Option<String>,
+    },
+    ProjectOpen {
+        project_name: String,
+        project_directory: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProjectStartMode {
     New,
     Existing,
@@ -33,11 +48,17 @@ impl AhessApp {
             .detach();
         cx.subscribe(&buttons.open_existing, Self::on_existing_project_clicked)
             .detach();
+        cx.subscribe(&buttons.create, Self::on_create_project_clicked)
+            .detach();
 
         let app = Self {
             fields,
             buttons,
-            project_start_mode,
+            app_mode: AppMode::ProjectStart {
+                project_start_mode,
+                create_project_error: None,
+            },
+            workspace_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         };
 
         app
@@ -61,16 +82,131 @@ impl AhessApp {
         self.set_project_start_mode(ProjectStartMode::Existing, cx);
     }
 
-    fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<Self>) {
-        let changed = self.project_start_mode != mode;
+    fn on_create_project_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        match self.create_project_from_fields(cx) {
+            Ok(open_project) => {
+                self.open_project(open_project);
+            }
+            Err(error) => {
+                self.set_create_project_error(error);
+            }
+        }
 
-        self.project_start_mode = mode;
+        cx.notify();
+    }
+
+    fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<Self>) {
+        let changed = match &self.app_mode {
+            AppMode::ProjectStart {
+                project_start_mode,
+                create_project_error,
+            } => *project_start_mode != mode || create_project_error.is_some(),
+            AppMode::ProjectOpen { .. } => true,
+        };
+
+        self.app_mode = AppMode::ProjectStart {
+            project_start_mode: mode,
+            create_project_error: None,
+        };
         self.buttons.set_project_start_mode(mode, cx);
 
         if changed {
             cx.notify();
         }
     }
+
+    fn create_project_from_fields(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Result<OpenProject, CreateProjectFormError> {
+        let project_name = self.fields.project_name.read(cx).value().trim().to_string();
+        let beat_length =
+            parse_u32_field("beat length", &self.fields.beat_length.read(cx).value())?;
+        let timing_variance = parse_u32_field("variance", &self.fields.variance.read(cx).value())?;
+        let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
+        let description = self.fields.description.read(cx).value();
+        let project = project::Project::new(project_name, beat_length, timing_variance, seed)
+            .with_description(description);
+        let project_directory = project::create_project(&self.workspace_root, &project)?;
+
+        Ok(OpenProject {
+            project_name: project.name,
+            project_directory,
+        })
+    }
+
+    fn open_project(&mut self, open_project: OpenProject) {
+        self.app_mode = AppMode::ProjectOpen {
+            project_name: open_project.project_name,
+            project_directory: open_project.project_directory,
+        };
+    }
+
+    fn set_create_project_error(&mut self, error: CreateProjectFormError) {
+        self.app_mode = AppMode::ProjectStart {
+            project_start_mode: self.project_start_mode(),
+            create_project_error: Some(error.to_string()),
+        };
+    }
+
+    fn project_start_mode(&self) -> ProjectStartMode {
+        match &self.app_mode {
+            AppMode::ProjectStart {
+                project_start_mode, ..
+            } => *project_start_mode,
+            AppMode::ProjectOpen { .. } => ProjectStartMode::New,
+        }
+    }
+
+    fn project_title(&self) -> SharedString {
+        match &self.app_mode {
+            AppMode::ProjectStart { .. } => "".into(),
+            AppMode::ProjectOpen { project_name, .. } => project_name.clone().into(),
+        }
+    }
+}
+
+struct OpenProject {
+    project_name: String,
+    project_directory: PathBuf,
+}
+
+#[derive(Debug)]
+enum CreateProjectFormError {
+    InvalidField(String),
+    CreateProject(project::CreateProjectError),
+}
+
+impl std::fmt::Display for CreateProjectFormError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidField(message) => write!(f, "{message}"),
+            Self::CreateProject(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl From<project::CreateProjectError> for CreateProjectFormError {
+    fn from(error: project::CreateProjectError) -> Self {
+        Self::CreateProject(error)
+    }
+}
+
+fn parse_u32_field(label: &'static str, value: &str) -> Result<u32, CreateProjectFormError> {
+    value.trim().parse::<u32>().map_err(|_| {
+        CreateProjectFormError::InvalidField(format!("{label} must be a whole number"))
+    })
+}
+
+fn parse_seed_field(value: &str) -> Result<Seed, CreateProjectFormError> {
+    value.trim().parse::<u64>().map(Seed::new).map_err(|_| {
+        CreateProjectFormError::InvalidField("seed must be a whole number".to_string())
+    })
 }
 
 struct Buttons {
@@ -114,17 +250,28 @@ struct NewProjectFields {
 impl NewProjectFields {
     fn new(cx: &mut Context<AhessApp>) -> Self {
         Self {
-            project_name: cx.new(|cx| TextInput::new("arc-light sketch", "project name", cx)),
-            beat_length: cx.new(|cx| TextInput::new("4000", "beat length", cx)),
-            variance: cx.new(|cx| TextInput::new("100", "variance", cx)),
-            seed: cx.new(|cx| TextInput::new("0x1234", "seed", cx)),
-            description: cx.new(|cx| TextInput::new("first generated sketch", "description", cx)),
+            project_name: cx.new(|cx| TextInput::new("", "", cx)),
+            beat_length: cx.new(|cx| TextInput::new("", "800", cx)),
+            variance: cx.new(|cx| TextInput::new("", "", cx)),
+            seed: cx.new(|cx| TextInput::new("", "1234", cx)),
+            description: cx.new(|cx| TextInput::new("", "", cx)),
         }
     }
 }
 
 impl Render for AhessApp {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let screen = match &self.app_mode {
+            AppMode::ProjectStart {
+                create_project_error,
+                ..
+            } => new_project_screen(&self.fields, &self.buttons, create_project_error.clone()),
+            AppMode::ProjectOpen {
+                project_directory, ..
+            } => project_workspace(project_directory),
+        };
+        let project_title = self.project_title();
+
         div()
             .size_full()
             .font_family(s::FONT)
@@ -135,8 +282,8 @@ impl Render for AhessApp {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .child(status_bar())
-                    .child(new_project_screen(&self.fields, &self.buttons)),
+                    .child(project_bar(project_title))
+                    .child(screen),
             )
     }
 }
@@ -159,7 +306,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn status_bar() -> impl IntoElement {
+fn project_bar(project_title: SharedString) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -174,11 +321,15 @@ fn status_bar() -> impl IntoElement {
                 .items_center()
                 .gap_3()
                 .child(div().text_color(s::GRAY4).child("ahess"))
-                .child(div().text_color(s::GRAY5).child("no project open")),
+                .child(div().text_color(s::GRAY5).child(project_title)),
         )
 }
 
-fn new_project_screen(fields: &NewProjectFields, buttons: &Buttons) -> impl IntoElement {
+fn new_project_screen(
+    fields: &NewProjectFields,
+    buttons: &Buttons,
+    create_project_error: Option<String>,
+) -> gpui::Div {
     div()
         .relative()
         .flex_1()
@@ -193,8 +344,12 @@ fn new_project_screen(fields: &NewProjectFields, buttons: &Buttons) -> impl Into
                 .justify_between()
                 .gap_3()
                 .child(project_picker_dialog(buttons))
-                .child(new_project_dialog(fields, buttons)),
+                .child(new_project_dialog(fields, buttons, create_project_error)),
         )
+}
+
+fn project_workspace(_project_directory: &PathBuf) -> gpui::Div {
+    div().flex_1().min_h(px(0.0)).bg(s::GREEN2)
 }
 
 fn title_bar(title: &'static str, close_button: Option<Entity<Button>>) -> gpui::Div {
@@ -255,7 +410,29 @@ fn project_picker_dialog(buttons: &Buttons) -> impl IntoElement {
     )
 }
 
-fn new_project_dialog(fields: &NewProjectFields, buttons: &Buttons) -> impl IntoElement {
+fn new_project_dialog(
+    fields: &NewProjectFields,
+    buttons: &Buttons,
+    create_project_error: Option<String>,
+) -> impl IntoElement {
+    let form_body = div()
+        .flex()
+        .flex_col()
+        .gap_5()
+        .p(s::S5)
+        .child(text_field("project name", fields.project_name.clone()))
+        .child(div().flex().gap_4().children([
+            text_field("beat length (samples)", fields.beat_length.clone()),
+            text_field("variance", fields.variance.clone()),
+            text_field("seed", fields.seed.clone()),
+        ]))
+        .child(text_field("description", fields.description.clone()));
+    let form_body = if let Some(error) = create_project_error {
+        form_body.child(error_message(error.into()))
+    } else {
+        form_body
+    };
+
     s::raised(
         div()
             .flex()
@@ -263,20 +440,7 @@ fn new_project_dialog(fields: &NewProjectFields, buttons: &Buttons) -> impl Into
             .w(px(570.0))
             .bg(s::GRAY2)
             .child(title_bar("new window", None))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_5()
-                    .p(s::S5)
-                    .child(text_field("project name", fields.project_name.clone()))
-                    .child(div().flex().gap_4().children([
-                        text_field("beat length", fields.beat_length.clone()),
-                        text_field("variance", fields.variance.clone()),
-                        text_field("seed", fields.seed.clone()),
-                    ]))
-                    .child(text_field("description", fields.description.clone())),
-            )
+            .child(form_body)
             .child(
                 div()
                     .flex()
@@ -288,6 +452,17 @@ fn new_project_dialog(fields: &NewProjectFields, buttons: &Buttons) -> impl Into
     )
 }
 
+fn error_message(message: SharedString) -> gpui::Div {
+    s::sunken(
+        div()
+            .bg(s::RED1)
+            .text_color(s::WHITE)
+            .p(s::S4)
+            .child(message),
+    )
+    .overflow_hidden()
+}
+
 fn text_field(label: &'static str, input: Entity<TextInput>) -> gpui::Div {
     div()
         .flex()
@@ -296,4 +471,23 @@ fn text_field(label: &'static str, input: Entity<TextInput>) -> gpui::Div {
         .flex_1()
         .child(div().text_color(s::GRAY5).child(label))
         .child(s::sunken(input).overflow_hidden())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_seed_field, parse_u32_field};
+    use crate::seed::Seed;
+
+    #[test]
+    fn parses_decimal_number_fields() {
+        assert_eq!(parse_u32_field("beat length", " 4000 ").unwrap(), 4000);
+        assert!(parse_u32_field("beat length", "4.0").is_err());
+    }
+
+    #[test]
+    fn parses_seed_as_a_whole_number() {
+        assert_eq!(parse_seed_field(" 1234 ").unwrap(), Seed::new(1234));
+        assert!(parse_seed_field("0x1234").is_err());
+        assert!(parse_seed_field("12.34").is_err());
+    }
 }
