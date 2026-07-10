@@ -1,6 +1,7 @@
 mod app;
 mod cpal_spike;
 mod gpui_spike;
+mod new_project;
 mod palette;
 pub mod project;
 pub mod seed;
