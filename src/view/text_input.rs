@@ -27,6 +27,8 @@ actions!(
         Paste,
         Cut,
         Copy,
+        FocusNext,
+        FocusPrev,
     ]
 );
 
@@ -42,6 +44,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-v", Paste, None),
         KeyBinding::new("secondary-c", Copy, None),
         KeyBinding::new("secondary-x", Cut, None),
+        KeyBinding::new("tab", FocusNext, None),
+        KeyBinding::new("shift-tab", FocusPrev, None),
         KeyBinding::new("home", Home, None),
         KeyBinding::new("end", End, None),
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
@@ -190,6 +194,14 @@ impl TextInput {
             ));
             self.replace_text_in_range(None, "", window, cx)
         }
+    }
+
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, _: &mut Context<Self>) {
+        window.focus_next();
+    }
+
+    fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, _: &mut Context<Self>) {
+        window.focus_prev();
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -633,6 +645,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_prev))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))

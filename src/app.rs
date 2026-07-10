@@ -18,6 +18,7 @@ const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMag
 struct AhessApp {
     new_project_dialog: Entity<NewProjectDialog>,
     project_start_buttons: ProjectStartButtons,
+    close_project_button: Entity<Button>,
     app_mode: AppMode,
 }
 
@@ -44,6 +45,7 @@ impl AhessApp {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let new_project_dialog = cx.new(move |cx| NewProjectDialog::new(workspace_root, cx));
         let project_start_buttons = ProjectStartButtons::new(cx, project_start_mode);
+        let close_project_button = cx.new(|_| Button::new("close-project", "close project"));
 
         cx.subscribe(&new_project_dialog, Self::on_project_opened)
             .detach();
@@ -57,10 +59,13 @@ impl AhessApp {
             Self::on_existing_project_clicked,
         )
         .detach();
+        cx.subscribe(&close_project_button, Self::on_close_project_clicked)
+            .detach();
 
         Self {
             new_project_dialog,
             project_start_buttons,
+            close_project_button,
             app_mode: AppMode::ProjectStart { project_start_mode },
         }
     }
@@ -75,6 +80,15 @@ impl AhessApp {
     }
 
     fn on_existing_project_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_project_start_mode(ProjectStartMode::Existing, cx);
+    }
+
+    fn on_close_project_clicked(
         &mut self,
         _: Entity<Button>,
         _: &button::Clicked,
@@ -132,6 +146,8 @@ impl Render for AhessApp {
             } => project_workspace(project_directory).into_any_element(),
         };
         let project_title = self.project_title();
+        let close_project_button = matches!(self.app_mode, AppMode::ProjectOpen { .. })
+            .then(|| self.close_project_button.clone());
 
         div()
             .size_full()
@@ -143,7 +159,7 @@ impl Render for AhessApp {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .child(project_bar(project_title))
+                    .child(project_bar(project_title, close_project_button))
                     .child(screen),
             )
     }
@@ -167,10 +183,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn project_bar(project_title: SharedString) -> impl IntoElement {
-    div()
+fn project_bar(
+    project_title: SharedString,
+    close_project_button: Option<Entity<Button>>,
+) -> impl IntoElement {
+    let bar = div()
         .flex()
         .items_center()
+        .justify_between()
         .border_b_2()
         .border_color(s::GRAY1)
         .bg(s::GRAY2)
@@ -183,7 +203,13 @@ fn project_bar(project_title: SharedString) -> impl IntoElement {
                 .gap_3()
                 .child(div().text_color(s::GRAY4).child("ahess"))
                 .child(div().text_color(s::GRAY5).child(project_title)),
-        )
+        );
+
+    if let Some(close_project_button) = close_project_button {
+        bar.child(close_project_button)
+    } else {
+        bar
+    }
 }
 
 struct ProjectStartButtons {
