@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    error::Error,
     fmt, fs, io,
     path::{Path, PathBuf},
 };
@@ -56,7 +55,7 @@ enum ProjectStartMode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum RestoredAppMode {
+enum StoredAppMode {
     ProjectStart {
         project_start_mode: ProjectStartMode,
     },
@@ -185,22 +184,22 @@ impl AhessApp {
 
 impl AppMode {
     fn from_restored(
-        restored_app_mode: RestoredAppMode,
+        restored_app_mode: StoredAppMode,
         workspace_root: &Path,
         cx: &mut Context<AhessApp>,
     ) -> Self {
         match restored_app_mode {
-            RestoredAppMode::ProjectStart { project_start_mode } => {
+            StoredAppMode::ProjectStart { project_start_mode } => {
                 Self::ProjectStart(ProjectStart::new(workspace_root, project_start_mode, cx))
             }
-            RestoredAppMode::ProjectOpen {
+            StoredAppMode::ProjectOpen {
                 project_name,
                 project_directory,
             } => Self::ProjectOpen {
                 project_name,
                 project_directory,
             },
-            RestoredAppMode::Error { message } => Self::Error { message },
+            StoredAppMode::Error { message } => Self::Error { message },
         }
     }
 }
@@ -252,13 +251,7 @@ impl ProjectStart {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-struct Storage {
-    app_mode: StorageAppMode,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "mode", rename_all = "kebab-case")]
-enum StorageAppMode {
+enum Storage {
     ProjectStart {
         project_start_mode: ProjectStartMode,
     },
@@ -305,8 +298,8 @@ impl fmt::Display for StorageError {
     }
 }
 
-impl Error for StorageError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl std::error::Error for StorageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Read { source, .. } | Self::Write { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
@@ -316,17 +309,17 @@ impl Error for StorageError {
     }
 }
 
-fn restore_app_mode(workspace_root: &Path) -> RestoredAppMode {
+fn restore_app_mode(workspace_root: &Path) -> StoredAppMode {
     match load_storage(workspace_root).and_then(|storage| {
         storage
             .map(|storage| storage.into_restored_app_mode(workspace_root))
             .transpose()
     }) {
         Ok(Some(app_mode)) => app_mode,
-        Ok(None) => RestoredAppMode::ProjectStart {
+        Ok(None) => StoredAppMode::ProjectStart {
             project_start_mode: ProjectStartMode::New,
         },
-        Err(error) => RestoredAppMode::Error {
+        Err(error) => StoredAppMode::Error {
             message: error.to_string(),
         },
     }
@@ -359,13 +352,13 @@ fn storage_path(workspace_root: &Path) -> PathBuf {
 
 impl Storage {
     fn generate(app: &AhessApp) -> Option<Self> {
-        let app_mode = match &app.app_mode {
-            AppMode::ProjectStart(project_start) => StorageAppMode::ProjectStart {
+        let storage = match &app.app_mode {
+            AppMode::ProjectStart(project_start) => Storage::ProjectStart {
                 project_start_mode: project_start.project_start_mode,
             },
             AppMode::ProjectOpen {
                 project_directory, ..
-            } => StorageAppMode::ProjectOpen {
+            } => Storage::ProjectOpen {
                 project_directory: project_directory
                     .strip_prefix(&app.workspace_root)
                     .unwrap_or(project_directory)
@@ -374,18 +367,15 @@ impl Storage {
             AppMode::Error { .. } => return None,
         };
 
-        Some(Self { app_mode })
+        Some(storage)
     }
 
-    fn into_restored_app_mode(
-        self,
-        workspace_root: &Path,
-    ) -> Result<RestoredAppMode, StorageError> {
-        match self.app_mode {
-            StorageAppMode::ProjectStart { project_start_mode } => {
-                Ok(RestoredAppMode::ProjectStart { project_start_mode })
+    fn into_restored_app_mode(self, workspace_root: &Path) -> Result<StoredAppMode, StorageError> {
+        match self {
+            Storage::ProjectStart { project_start_mode } => {
+                Ok(StoredAppMode::ProjectStart { project_start_mode })
             }
-            StorageAppMode::ProjectOpen { project_directory } => {
+            Storage::ProjectOpen { project_directory } => {
                 let project_directory = if project_directory.is_absolute() {
                     project_directory
                 } else {
@@ -394,7 +384,7 @@ impl Storage {
                 let project =
                     project::load_project(&project_directory).map_err(StorageError::LoadProject)?;
 
-                Ok(RestoredAppMode::ProjectOpen {
+                Ok(StoredAppMode::ProjectOpen {
                     project_name: project.project.name,
                     project_directory: project.project_directory,
                 })
@@ -621,8 +611,8 @@ mod tests {
     };
 
     use super::{
-        load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
-        RestoredAppMode, Storage, StorageAppMode,
+        load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode, Storage,
+        StoredAppMode,
     };
     use crate::{
         project::{self, Project},
@@ -632,10 +622,8 @@ mod tests {
     #[test]
     fn storage_round_trips_the_project_start_mode() {
         let root = temp_root("storage-start-mode");
-        let storage = Storage {
-            app_mode: StorageAppMode::ProjectStart {
-                project_start_mode: ProjectStartMode::Existing,
-            },
+        let storage = Storage::ProjectStart {
+            project_start_mode: ProjectStartMode::Existing,
         };
 
         save_storage(&root, &storage).unwrap();
@@ -654,17 +642,15 @@ mod tests {
         let project = Project::new("Arc Light Sketch", 4000, 100, Seed::new(1234))
             .with_description("saved project");
         let project_directory = project::create_project(&root, &project).unwrap();
-        let storage = Storage {
-            app_mode: StorageAppMode::ProjectOpen {
-                project_directory: project_directory.strip_prefix(&root).unwrap().to_path_buf(),
-            },
+        let storage = Storage::ProjectOpen {
+            project_directory: project_directory.strip_prefix(&root).unwrap().to_path_buf(),
         };
 
         save_storage(&root, &storage).unwrap();
 
         assert_eq!(
             restore_app_mode(&root),
-            RestoredAppMode::ProjectOpen {
+            StoredAppMode::ProjectOpen {
                 project_name: project.name,
                 project_directory,
             }
@@ -680,7 +666,7 @@ mod tests {
         assert_eq!(load_storage(&root).unwrap(), None);
         assert_eq!(
             restore_app_mode(&root),
-            RestoredAppMode::ProjectStart {
+            StoredAppMode::ProjectStart {
                 project_start_mode: ProjectStartMode::New,
             }
         );
@@ -696,7 +682,7 @@ mod tests {
 
         assert!(matches!(
             restore_app_mode(&root),
-            RestoredAppMode::Error { message } if message.contains("invalid storage")
+            StoredAppMode::Error { message } if message.contains("invalid storage")
         ));
 
         fs::remove_dir_all(root).unwrap();
