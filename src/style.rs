@@ -60,6 +60,12 @@ pub const BUTTON_TEXT: Rgba = GRAY6;
 pub const DIALOG_TITLE_TEXT: Rgba = GRAY2;
 
 pub const CONTENT_PADDING: Pixels = S5;
+pub const MODAL_BACKDROP: Rgba = Rgba {
+    r: GREEN1.r,
+    g: GREEN1.g,
+    b: GREEN1.b,
+    a: 0.82,
+};
 
 pub fn raised(child: impl IntoElement) -> Div {
     gpui::div()

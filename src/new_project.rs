@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, SharedString, Window};
+use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, Window};
 
 use crate::{
     project::{self, ProjectOpened},
@@ -8,6 +8,7 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
+        dialog::{error_message, title_bar},
         field_group::field_group,
         text_input::TextInput,
     },
@@ -139,24 +140,6 @@ impl NewProjectFields {
     }
 }
 
-fn title_bar(title: &'static str, close_button: Option<Entity<Button>>) -> gpui::Div {
-    let title_bar = div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .bg(s::GRAY5)
-        .text_color(s::DIALOG_TITLE_TEXT)
-        .p(s::S3)
-        .px(s::S4)
-        .child(title);
-
-    if let Some(close_button) = close_button {
-        title_bar.child(close_button)
-    } else {
-        title_bar
-    }
-}
-
 fn new_project_form(
     fields: &NewProjectFields,
     create_button: Entity<Button>,
@@ -174,7 +157,7 @@ fn new_project_form(
         ]))
         .child(field_group("description", fields.description.clone()));
     let form_body = if let Some(error) = create_project_error {
-        form_body.child(error_message(error.into()))
+        form_body.child(error_message(error))
     } else {
         form_body
     };
@@ -196,17 +179,6 @@ fn new_project_form(
                     .child(div().flex().justify_end().child(create_button)),
             ),
     )
-}
-
-fn error_message(message: SharedString) -> gpui::Div {
-    s::sunken(
-        div()
-            .bg(s::RED1)
-            .text_color(s::WHITE)
-            .p(s::S4)
-            .child(message),
-    )
-    .overflow_hidden()
 }
 
 #[cfg(test)]

@@ -146,6 +146,38 @@ pub enum LoadProjectError {
     },
 }
 
+#[derive(Debug)]
+pub enum SaveProjectError {
+    Write { path: PathBuf, source: io::Error },
+    Replace { path: PathBuf, source: io::Error },
+}
+
+impl fmt::Display for SaveProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Write { path, source } => {
+                write!(f, "filesystem error writing {}: {}", path.display(), source)
+            }
+            Self::Replace { path, source } => {
+                write!(
+                    f,
+                    "filesystem error replacing {}: {}",
+                    path.display(),
+                    source
+                )
+            }
+        }
+    }
+}
+
+impl Error for SaveProjectError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Write { source, .. } | Self::Replace { source, .. } => Some(source),
+        }
+    }
+}
+
 impl fmt::Display for LoadProjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -254,6 +286,26 @@ pub fn load_project(project_directory: impl AsRef<Path>) -> Result<ProjectEntry,
     })
 }
 
+pub fn save_project(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+) -> Result<(), SaveProjectError> {
+    let project_directory = project_directory.as_ref();
+    let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+    let pending_path = project_directory.join(format!(".{PROJECT_CONFIG_FILE}.pending"));
+
+    fs::write(&pending_path, project.config_file_contents()).map_err(|source| {
+        SaveProjectError::Write {
+            path: pending_path.clone(),
+            source,
+        }
+    })?;
+    fs::rename(&pending_path, &config_path).map_err(|source| SaveProjectError::Replace {
+        path: config_path,
+        source,
+    })
+}
+
 pub fn project_directory_name(name: &str) -> Option<String> {
     let mut directory_name = String::new();
     let mut previous_was_separator = false;
@@ -332,8 +384,8 @@ mod tests {
     };
 
     use super::{
-        create_project, list_projects, load_project, project_directory_name, CreateProjectError,
-        Project, PROJECT_CONFIG_FILE,
+        create_project, list_projects, load_project, project_directory_name, save_project,
+        CreateProjectError, Project, PROJECT_CONFIG_FILE,
     };
     use crate::seed::Seed;
 
@@ -416,6 +468,26 @@ mod tests {
 
         assert_eq!(loaded_project.project, project);
         assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn save_project_replaces_the_config_without_renaming_the_directory() {
+        let root = temp_root("save-project");
+        let original = Project::new("Original Name", 800, 10, Seed::new(1));
+        let project_directory = create_project(&root, &original).unwrap();
+        let updated = Project::new("Updated Name", 4000, 100, Seed::new(99))
+            .with_description("updated description");
+
+        save_project(&project_directory, &updated).unwrap();
+
+        assert_eq!(
+            project_directory,
+            root.join("projects").join("original-name")
+        );
+        assert_eq!(load_project(&project_directory).unwrap().project, updated);
+        assert!(!project_directory.join(".project.toml.pending").exists());
 
         fs::remove_dir_all(root).unwrap();
     }

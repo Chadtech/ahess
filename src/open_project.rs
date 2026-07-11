@@ -8,7 +8,10 @@ use gpui::{
 use crate::{
     project::{self, ProjectEntry, ProjectOpened},
     style as s,
-    view::button::{self, Button},
+    view::{
+        button::{self, Button},
+        dialog::{error_message, title_bar},
+    },
 };
 
 pub struct OpenProjectDialog {
@@ -130,7 +133,7 @@ fn open_project_dialog(
         .child(project_details(selected_project_entry));
 
     let body = if let Some(error) = open_project_error {
-        body.child(error_message(error.into()))
+        body.child(error_message(error))
     } else {
         body
     };
@@ -141,7 +144,7 @@ fn open_project_dialog(
             .flex_col()
             .w(px(680.0))
             .bg(s::GRAY2)
-            .child(title_bar("open project"))
+            .child(title_bar("open project", None))
             .child(body)
             .child(
                 div()
@@ -152,18 +155,6 @@ fn open_project_dialog(
                     .child(open_button),
             ),
     )
-}
-
-fn title_bar(title: &'static str) -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .bg(s::GRAY5)
-        .text_color(s::DIALOG_TITLE_TEXT)
-        .p(s::S3)
-        .px(s::S4)
-        .child(title)
 }
 
 fn project_list(
@@ -297,15 +288,4 @@ fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
         .flex_1()
         .child(div().text_color(s::TEXT_HEADER).child(label))
         .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
-}
-
-fn error_message(message: SharedString) -> gpui::Div {
-    s::sunken(
-        div()
-            .bg(s::RED1)
-            .text_color(s::WHITE)
-            .p(s::S4)
-            .child(message),
-    )
-    .overflow_hidden()
 }

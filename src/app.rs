@@ -13,11 +13,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     new_project::NewProjectDialog,
     open_project::OpenProjectDialog,
-    project::{self, ProjectOpened},
-    style as s,
+    project::{self, Project, ProjectOpened},
+    project_open, style as s,
     view::{
         self,
         button::{self, Button},
+        dialog::modal_overlay,
     },
 };
 
@@ -30,19 +31,13 @@ static AHESS_IMAGE: OnceLock<Arc<Image>> = OnceLock::new();
 
 struct AhessApp {
     workspace_root: PathBuf,
-    close_project_button: Entity<Button>,
     app_mode: AppMode,
 }
 
 enum AppMode {
     ProjectStart(ProjectStart),
-    ProjectOpen {
-        project_name: String,
-        project_directory: PathBuf,
-    },
-    Error {
-        message: String,
-    },
+    ProjectOpen(Entity<project_open::Model>),
+    Error { message: String },
 }
 
 struct ProjectStart {
@@ -65,7 +60,7 @@ enum StoredAppMode {
         project_start_mode: ProjectStartMode,
     },
     ProjectOpen {
-        project_name: String,
+        project: Project,
         project_directory: PathBuf,
     },
     Error {
@@ -76,7 +71,6 @@ enum StoredAppMode {
 impl AhessApp {
     fn new(cx: &mut Context<Self>) -> Self {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let close_project_button = cx.new(|_| Button::new("close-project", "close project"));
         let restored_app_mode = restore_app_mode(&workspace_root);
         let app_mode = if FORCE_ERROR_VIEW {
             AppMode::Error {
@@ -86,13 +80,22 @@ impl AhessApp {
             AppMode::from_restored(restored_app_mode, &workspace_root, cx)
         };
 
-        cx.subscribe(&close_project_button, Self::on_close_project_clicked)
-            .detach();
-
         Self {
             workspace_root,
-            close_project_button,
             app_mode,
+        }
+    }
+
+    fn on_project_open_event(
+        &mut self,
+        _: Entity<project_open::Model>,
+        event: &project_open::Event,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            project_open::Event::CloseRequested => {
+                self.set_project_start_mode(ProjectStartMode::Existing, cx);
+            }
         }
     }
 
@@ -106,15 +109,6 @@ impl AhessApp {
     }
 
     fn on_existing_project_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_project_start_mode(ProjectStartMode::Existing, cx);
-    }
-
-    fn on_close_project_clicked(
         &mut self,
         _: Entity<Button>,
         _: &button::Clicked,
@@ -142,9 +136,22 @@ impl AhessApp {
     }
 
     fn open_project(&mut self, project: &ProjectOpened, cx: &mut Context<Self>) {
-        self.app_mode = AppMode::ProjectOpen {
-            project_name: project.project_name.clone(),
-            project_directory: project.project_directory.clone(),
+        self.app_mode = match project::load_project(&project.project_directory) {
+            Ok(project) => {
+                let model = cx.new(|cx| {
+                    project_open::Model::new(
+                        project.project,
+                        project.project_directory,
+                        self.workspace_root.clone(),
+                        cx,
+                    )
+                });
+                cx.subscribe(&model, Self::on_project_open_event).detach();
+                AppMode::ProjectOpen(model)
+            }
+            Err(error) => AppMode::Error {
+                message: error.to_string(),
+            },
         };
         self.persist_storage(cx);
     }
@@ -152,7 +159,7 @@ impl AhessApp {
     fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<Self>) {
         let changed = match &self.app_mode {
             AppMode::ProjectStart(project_start) => project_start.project_start_mode != mode,
-            AppMode::ProjectOpen { .. } => true,
+            AppMode::ProjectOpen(_) => true,
             AppMode::Error { .. } => true,
         };
 
@@ -160,7 +167,7 @@ impl AhessApp {
             AppMode::ProjectStart(project_start) => {
                 project_start.set_project_start_mode(mode, cx);
             }
-            AppMode::ProjectOpen { .. } | AppMode::Error { .. } => {
+            AppMode::ProjectOpen(_) | AppMode::Error { .. } => {
                 self.app_mode =
                     AppMode::ProjectStart(ProjectStart::new(&self.workspace_root, mode, cx));
             }
@@ -171,16 +178,8 @@ impl AhessApp {
         }
     }
 
-    fn project_title(&self) -> SharedString {
-        match &self.app_mode {
-            AppMode::ProjectStart(_) => "".into(),
-            AppMode::ProjectOpen { project_name, .. } => project_name.clone().into(),
-            AppMode::Error { .. } => "error".into(),
-        }
-    }
-
     fn persist_storage(&mut self, cx: &mut Context<Self>) {
-        let Some(storage) = Storage::generate(self) else {
+        let Some(storage) = Storage::generate(self, cx) else {
             return;
         };
 
@@ -204,12 +203,21 @@ impl AppMode {
                 Self::ProjectStart(ProjectStart::new(workspace_root, project_start_mode, cx))
             }
             StoredAppMode::ProjectOpen {
-                project_name,
+                project,
                 project_directory,
-            } => Self::ProjectOpen {
-                project_name,
-                project_directory,
-            },
+            } => {
+                let model = cx.new(|cx| {
+                    project_open::Model::new(
+                        project,
+                        project_directory,
+                        workspace_root.to_path_buf(),
+                        cx,
+                    )
+                });
+                cx.subscribe(&model, AhessApp::on_project_open_event)
+                    .detach();
+                Self::ProjectOpen(model)
+            }
             StoredAppMode::Error { message } => Self::Error { message },
         }
     }
@@ -362,19 +370,20 @@ fn storage_path(workspace_root: &Path) -> PathBuf {
 }
 
 impl Storage {
-    fn generate(app: &AhessApp) -> Option<Self> {
+    fn generate(app: &AhessApp, cx: &Context<AhessApp>) -> Option<Self> {
         let storage = match &app.app_mode {
             AppMode::ProjectStart(project_start) => Storage::ProjectStart {
                 project_start_mode: project_start.project_start_mode,
             },
-            AppMode::ProjectOpen {
-                project_directory, ..
-            } => Storage::ProjectOpen {
-                project_directory: project_directory
-                    .strip_prefix(&app.workspace_root)
-                    .unwrap_or(project_directory)
-                    .to_path_buf(),
-            },
+            AppMode::ProjectOpen(model) => {
+                let project_directory = model.read(cx).project_directory();
+                Storage::ProjectOpen {
+                    project_directory: project_directory
+                        .strip_prefix(&app.workspace_root)
+                        .unwrap_or(project_directory)
+                        .to_path_buf(),
+                }
+            }
             AppMode::Error { .. } => return None,
         };
 
@@ -396,7 +405,7 @@ impl Storage {
                     project::load_project(&project_directory).map_err(StorageError::LoadProject)?;
 
                 Ok(StoredAppMode::ProjectOpen {
-                    project_name: project.project.name,
+                    project: project.project,
                     project_directory: project.project_directory,
                 })
             }
@@ -405,21 +414,37 @@ impl Storage {
 }
 
 impl Render for AhessApp {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let screen = match &self.app_mode {
-            AppMode::ProjectStart(project_start) => {
-                project_start_screen(project_start).into_any_element()
-            }
-            AppMode::ProjectOpen {
-                project_directory, ..
-            } => project_workspace(project_directory).into_any_element(),
-            AppMode::Error { message } => error_screen(message.clone().into()).into_any_element(),
-        };
-        let project_title = self.project_title();
-        let close_project_button = matches!(self.app_mode, AppMode::ProjectOpen { .. })
-            .then(|| self.close_project_button.clone());
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (screen, project_title, project_settings_button, close_project_button, settings_dialog) =
+            match &self.app_mode {
+                AppMode::ProjectStart(project_start) => (
+                    project_start_screen(project_start).into_any_element(),
+                    SharedString::from(""),
+                    None,
+                    None,
+                    None,
+                ),
+                AppMode::ProjectOpen(model) => {
+                    let model = model.read(cx);
+                    (
+                        project_workspace().into_any_element(),
+                        SharedString::from(model.project().name.clone()),
+                        Some(model.settings_button()),
+                        Some(model.close_button()),
+                        model.settings_dialog(),
+                    )
+                }
+                AppMode::Error { message } => (
+                    error_screen(message.clone().into()).into_any_element(),
+                    SharedString::from("error"),
+                    None,
+                    None,
+                    None,
+                ),
+            };
 
-        div()
+        let app = div()
+            .relative()
             .size_full()
             .font_family(s::FONT)
             .text_size(s::TEXT_SIZE)
@@ -431,9 +456,19 @@ impl Render for AhessApp {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .child(project_bar(project_title, close_project_button))
+                    .child(project_bar(
+                        project_title,
+                        project_settings_button,
+                        close_project_button,
+                    ))
                     .child(screen),
-            )
+            );
+
+        if let Some(dialog) = settings_dialog {
+            app.child(modal_overlay(dialog))
+        } else {
+            app
+        }
     }
 }
 
@@ -453,6 +488,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn project_bar(
     project_title: SharedString,
+    project_settings_button: Option<Entity<Button>>,
     close_project_button: Option<Entity<Button>>,
 ) -> impl IntoElement {
     let bar = div()
@@ -473,8 +509,17 @@ fn project_bar(
                 .child(div().text_color(s::TEXT_DEFAULT).child(project_title)),
         );
 
-    if let Some(close_project_button) = close_project_button {
-        bar.child(close_project_button)
+    if let (Some(project_settings_button), Some(close_project_button)) =
+        (project_settings_button, close_project_button)
+    {
+        bar.child(
+            div()
+                .flex()
+                .gap_3()
+                .my(-s::S3)
+                .child(project_settings_button)
+                .child(close_project_button),
+        )
     } else {
         bar
     }
@@ -577,7 +622,7 @@ fn ahess_image() -> Arc<Image> {
         .clone()
 }
 
-fn project_workspace(_project_directory: &PathBuf) -> gpui::Div {
+fn project_workspace() -> gpui::Div {
     div().flex_1().min_h(px(0.0)).bg(s::GREEN2)
 }
 
@@ -680,7 +725,7 @@ mod tests {
         assert_eq!(
             restore_app_mode(&root),
             StoredAppMode::ProjectOpen {
-                project_name: project.name,
+                project,
                 project_directory,
             }
         );

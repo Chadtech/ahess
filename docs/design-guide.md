@@ -29,3 +29,10 @@ their styles locally.
 - use `view::field_group::field_group` for text fields.
 - arrange the label above the input.
 - style field labels with `FIELD_LABEL_TEXT`.
+
+## dialogs
+
+- use `view::dialog::title_bar` for dialog title bars.
+- use `view::dialog::error_message` for errors within dialog content.
+- use `view::dialog::modal_overlay` for a modal dialog displayed over an active
+  screen. Modal overlays block interaction with the screen beneath them.
