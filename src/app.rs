@@ -22,6 +22,7 @@ use crate::{
 
 const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMaguntia-Regular.ttf");
 const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
+const FORCE_ERROR_VIEW: bool = false;
 
 struct AhessApp {
     workspace_root: PathBuf,
@@ -73,7 +74,13 @@ impl AhessApp {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let close_project_button = cx.new(|_| Button::new("close-project", "close project"));
         let restored_app_mode = restore_app_mode(&workspace_root);
-        let app_mode = AppMode::from_restored(restored_app_mode, &workspace_root, cx);
+        let app_mode = if FORCE_ERROR_VIEW {
+            AppMode::Error {
+                message: "preview error: failed to restore open project: invalid project config at projects/arc-light/project.toml".to_string(),
+            }
+        } else {
+            AppMode::from_restored(restored_app_mode, &workspace_root, cx)
+        };
 
         cx.subscribe(&close_project_button, Self::on_close_project_clicked)
             .detach();
@@ -569,37 +576,52 @@ fn project_workspace(_project_directory: &PathBuf) -> gpui::Div {
 
 fn error_screen(message: SharedString) -> gpui::Div {
     div()
+        .flex()
         .flex_1()
         .min_h(px(0.0))
+        .items_center()
+        .justify_center()
         .bg(s::GREEN2)
         .p(s::S7)
-        .child(s::raised(
-            div()
-                .flex()
-                .flex_col()
-                .w(px(680.0))
-                .bg(s::GRAY2)
-                .child(
-                    div()
-                        .bg(s::GRAY5)
-                        .text_color(s::GREEN1)
-                        .p(s::S3)
-                        .px(s::S4)
-                        .child("error"),
-                )
-                .child(
-                    div().p(s::S5).child(
-                        s::sunken(
-                            div()
-                                .bg(s::RED1)
-                                .text_color(s::WHITE)
-                                .p(s::S4)
-                                .child(message),
-                        )
-                        .overflow_hidden(),
+        .child(
+            s::raised(
+                div()
+                    .flex()
+                    .flex_col()
+                    .bg(s::RED1)
+                    .text_color(s::WHITE)
+                    .child(
+                        div()
+                            .bg(s::GRAY5)
+                            .text_color(s::GREEN1)
+                            .p(s::S3)
+                            .px(s::S4)
+                            .child("error"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .p(s::S5)
+                            .child(
+                                "ahess experienced a critical error that prevented it from starting.",
+                            )
+                            .child(
+                                s::sunken(
+                                    div()
+                                        .w_full()
+                                        .bg(s::GREEN3)
+                                        .text_color(s::GRAY6)
+                                        .p(s::S5)
+                                        .child(message),
+                                )
+                                .overflow_hidden(),
+                            ),
                     ),
-                ),
-        ))
+            )
+            .w(px(680.0)),
+        )
 }
 
 #[cfg(test)]
