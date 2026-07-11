@@ -8,6 +8,7 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
+        field_group::field_group,
         text_input::TextInput,
     },
 };
@@ -144,7 +145,7 @@ fn title_bar(title: &'static str, close_button: Option<Entity<Button>>) -> gpui:
         .items_center()
         .justify_between()
         .bg(s::GRAY5)
-        .text_color(s::GREEN1)
+        .text_color(s::DIALOG_TITLE_TEXT)
         .p(s::S3)
         .px(s::S4)
         .child(title);
@@ -165,14 +166,13 @@ fn new_project_form(
         .flex()
         .flex_col()
         .gap_5()
-        .p(s::S5)
-        .child(text_field("project name", fields.project_name.clone()))
+        .child(field_group("project name", fields.project_name.clone()))
         .child(div().flex().gap_4().children([
-            text_field("beat length (samples)", fields.beat_length.clone()),
-            text_field("variance", fields.variance.clone()),
-            text_field("seed", fields.seed.clone()),
+            field_group("beat length (samples)", fields.beat_length.clone()),
+            field_group("variance", fields.variance.clone()),
+            field_group("seed", fields.seed.clone()),
         ]))
-        .child(text_field("description", fields.description.clone()));
+        .child(field_group("description", fields.description.clone()));
     let form_body = if let Some(error) = create_project_error {
         form_body.child(error_message(error.into()))
     } else {
@@ -185,15 +185,15 @@ fn new_project_form(
             .flex_col()
             .w(px(570.0))
             .bg(s::GRAY2)
-            .child(title_bar("new window", None))
-            .child(form_body)
+            .child(title_bar("new project", None))
             .child(
                 div()
                     .flex()
-                    .justify_end()
-                    .gap_3()
-                    .p(s::S4)
-                    .child(create_button),
+                    .flex_col()
+                    .gap(s::CONTENT_PADDING)
+                    .p(s::CONTENT_PADDING)
+                    .child(form_body)
+                    .child(div().flex().justify_end().child(create_button)),
             ),
     )
 }
@@ -207,16 +207,6 @@ fn error_message(message: SharedString) -> gpui::Div {
             .child(message),
     )
     .overflow_hidden()
-}
-
-fn text_field(label: &'static str, input: Entity<TextInput>) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .flex_1()
-        .child(div().text_color(s::GRAY5).child(label))
-        .child(s::sunken(input).overflow_hidden())
 }
 
 #[cfg(test)]

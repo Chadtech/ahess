@@ -5,7 +5,9 @@ use gpui::{prelude::*, Div, Pixels, Rgba};
 use crate::palette;
 
 pub const FONT: &str = "Fira Code";
-pub const DISPLAY_FONT: &str = "UnifrakturMaguntia";
+
+pub const TEXT_SIZE: Pixels = gpui::px(14.0);
+pub const TEXT_LINE_HEIGHT: Pixels = gpui::px(20.0);
 
 pub const S0: Pixels = gpui::px(0.0);
 pub const S1: Pixels = gpui::px(1.0);
@@ -47,6 +49,17 @@ pub const RED1: Rgba = rgba(palette::RED1);
 pub const RED2: Rgba = rgba(palette::RED2);
 
 pub const WHITE: Rgba = rgba(palette::WHITE);
+
+// Semantic text colors. Most text should use TEXT_DEFAULT. Brighter text is
+// reserved for interaction feedback, while labels and titles are darker.
+pub const TEXT_DEFAULT: Rgba = GRAY5;
+pub const TEXT_HEADER: Rgba = GRAY4;
+pub const TEXT_HOVERED: Rgba = WHITE;
+pub const FIELD_LABEL_TEXT: Rgba = GRAY5;
+pub const BUTTON_TEXT: Rgba = GRAY6;
+pub const DIALOG_TITLE_TEXT: Rgba = GRAY2;
+
+pub const CONTENT_PADDING: Pixels = S5;
 
 pub fn raised(child: impl IntoElement) -> Div {
     gpui::div()

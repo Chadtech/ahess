@@ -125,7 +125,7 @@ fn open_project_dialog(
     let body = div()
         .flex()
         .gap_5()
-        .p(s::S5)
+        .p(s::CONTENT_PADDING)
         .child(project_list(projects, selected_project, cx))
         .child(project_details(selected_project_entry));
 
@@ -148,7 +148,7 @@ fn open_project_dialog(
                     .flex()
                     .justify_end()
                     .gap_3()
-                    .p(s::S4)
+                    .p(s::CONTENT_PADDING)
                     .child(open_button),
             ),
     )
@@ -160,7 +160,7 @@ fn title_bar(title: &'static str) -> gpui::Div {
         .items_center()
         .justify_between()
         .bg(s::GRAY5)
-        .text_color(s::GREEN1)
+        .text_color(s::DIALOG_TITLE_TEXT)
         .p(s::S3)
         .px(s::S4)
         .child(title)
@@ -200,7 +200,7 @@ fn project_list(
         .flex_col()
         .gap_1()
         .w(px(300.0))
-        .child(div().text_color(s::GRAY5).child("projects"))
+        .child(div().text_color(s::TEXT_HEADER).child("projects"))
         .child(s::sunken(list_body).overflow_hidden())
 }
 
@@ -266,7 +266,7 @@ fn selected_project_details(project: &ProjectEntry) -> gpui::Div {
         .gap_4()
         .child(
             div()
-                .text_color(s::GRAY5)
+                .text_color(s::TEXT_DEFAULT)
                 .child(project.project.name.clone()),
         )
         .child(detail_row(
@@ -285,8 +285,8 @@ fn detail_row(label: &'static str, value: impl Into<SharedString>) -> gpui::Div 
         .flex()
         .flex_col()
         .gap_1()
-        .child(div().text_color(s::GRAY4).child(label))
-        .child(div().text_color(s::GRAY5).child(value.into()))
+        .child(div().text_color(s::TEXT_HEADER).child(label))
+        .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
 }
 
 fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
@@ -295,8 +295,8 @@ fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
         .flex_col()
         .gap_1()
         .flex_1()
-        .child(div().text_color(s::GRAY4).child(label))
-        .child(div().text_color(s::GRAY5).child(value.into()))
+        .child(div().text_color(s::TEXT_HEADER).child(label))
+        .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
 }
 
 fn error_message(message: SharedString) -> gpui::Div {

@@ -1,11 +1,12 @@
 use std::{
-    borrow::Cow,
     fmt, fs, io,
     path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
 };
 
 use gpui::{
-    div, prelude::*, px, App, Application, Context, Entity, SharedString, Window, WindowOptions,
+    div, img, prelude::*, px, App, Application, Context, Entity, Image, ImageFormat, ObjectFit,
+    Pixels, SharedString, Window, WindowOptions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,9 +21,12 @@ use crate::{
     },
 };
 
-const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMaguntia-Regular.ttf");
+const PROJECT_PICKER_WIDTH: Pixels = px(430.0);
+const AHESS_IMAGE_HEIGHT_RATIO: f32 = 1086.0 / 1448.0;
 const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
 const FORCE_ERROR_VIEW: bool = false;
+
+static AHESS_IMAGE: OnceLock<Arc<Image>> = OnceLock::new();
 
 struct AhessApp {
     workspace_root: PathBuf,
@@ -418,8 +422,10 @@ impl Render for AhessApp {
         div()
             .size_full()
             .font_family(s::FONT)
+            .text_size(s::TEXT_SIZE)
+            .line_height(s::TEXT_LINE_HEIGHT)
             .bg(s::GREEN2)
-            .text_color(s::GRAY6)
+            .text_color(s::TEXT_DEFAULT)
             .child(
                 div()
                     .flex()
@@ -433,10 +439,6 @@ impl Render for AhessApp {
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Application::new().run(|cx: &mut App| {
-        cx.text_system()
-            .add_fonts(vec![Cow::Borrowed(UNIFRAKTUR_MAGUNTIA)])
-            .expect("failed to load UnifrakturMaguntia font");
-
         view::text_input::bind_keys(cx);
 
         cx.open_window(WindowOptions::default(), |window, cx| {
@@ -467,8 +469,8 @@ fn project_bar(
                 .flex()
                 .items_center()
                 .gap_3()
-                .child(div().text_color(s::GRAY4).child("ahess"))
-                .child(div().text_color(s::GRAY5).child(project_title)),
+                .child(div().text_color(s::TEXT_HEADER).child("ahess"))
+                .child(div().text_color(s::TEXT_DEFAULT).child(project_title)),
         );
 
     if let Some(close_project_button) = close_project_button {
@@ -531,43 +533,48 @@ fn project_start_screen(project_start: &ProjectStart) -> gpui::Div {
 }
 
 fn project_picker_dialog(buttons: &ProjectStartButtons) -> impl IntoElement {
+    let image_width = PROJECT_PICKER_WIDTH - s::CONTENT_PADDING * 2.0;
+    let image_height = image_width * AHESS_IMAGE_HEIGHT_RATIO;
+
     s::raised(
-        div().flex().flex_col().w(px(430.0)).bg(s::GRAY2).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_5()
-                .p(s::S5)
-                .child(
-                    s::sunken(
+        div()
+            .flex()
+            .flex_col()
+            .w(PROJECT_PICKER_WIDTH)
+            .bg(s::GRAY2)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(s::CONTENT_PADDING)
+                    .p(s::CONTENT_PADDING)
+                    .child(
+                        s::sunken(img(ahess_image()).size_full().object_fit(ObjectFit::Fill))
+                            .w(image_width)
+                            .h(image_height)
+                            .overflow_hidden(),
+                    )
+                    .child(
                         div()
                             .flex()
-                            .items_center()
                             .justify_center()
-                            .min_h(px(240.0))
-                            .bg(s::GREEN3)
-                            .p(s::S6)
-                            .child(
-                                div()
-                                    .font_family(s::DISPLAY_FONT)
-                                    .text_color(s::YELLOW6)
-                                    .text_size(px(92.0))
-                                    .line_height(px(92.0))
-                                    .child("ahess"),
-                            ),
-                    )
-                    .overflow_hidden(),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .justify_center()
-                        .gap_5()
-                        .child(buttons.new_project.clone())
-                        .child(buttons.open_existing.clone()),
-                ),
-        ),
+                            .gap_5()
+                            .child(buttons.new_project.clone())
+                            .child(buttons.open_existing.clone()),
+                    ),
+            ),
     )
+}
+
+fn ahess_image() -> Arc<Image> {
+    AHESS_IMAGE
+        .get_or_init(|| {
+            Arc::new(Image::from_bytes(
+                ImageFormat::Png,
+                include_bytes!("../ahess_image.png").to_vec(),
+            ))
+        })
+        .clone()
 }
 
 fn project_workspace(_project_directory: &PathBuf) -> gpui::Div {
@@ -593,7 +600,7 @@ fn error_screen(message: SharedString) -> gpui::Div {
                     .child(
                         div()
                             .bg(s::GRAY5)
-                            .text_color(s::GREEN1)
+                            .text_color(s::DIALOG_TITLE_TEXT)
                             .p(s::S3)
                             .px(s::S4)
                             .child("error"),
@@ -603,7 +610,7 @@ fn error_screen(message: SharedString) -> gpui::Div {
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .p(s::S5)
+                            .p(s::CONTENT_PADDING)
                             .child(
                                 "ahess experienced a critical error that prevented it from starting.",
                             )
@@ -612,8 +619,8 @@ fn error_screen(message: SharedString) -> gpui::Div {
                                     div()
                                         .w_full()
                                         .bg(s::GREEN3)
-                                        .text_color(s::GRAY6)
-                                        .p(s::S5)
+                                        .text_color(s::TEXT_DEFAULT)
+                                        .p(s::CONTENT_PADDING)
                                         .child(message),
                                 )
                                 .overflow_hidden(),

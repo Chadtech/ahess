@@ -104,7 +104,11 @@ impl Button {
 
 impl Render for Button {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_color = if self.hovered { s::WHITE } else { s::GRAY6 };
+        let text_color = if self.hovered {
+            s::TEXT_HOVERED
+        } else {
+            s::BUTTON_TEXT
+        };
 
         let button = gpui::div()
             .id(self.id.clone())
