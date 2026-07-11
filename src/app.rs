@@ -1,11 +1,19 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    error::Error,
+    fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 use gpui::{
     div, prelude::*, px, App, Application, Context, Entity, SharedString, Window, WindowOptions,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    new_project::{NewProjectDialog, ProjectOpened},
+    new_project::NewProjectDialog,
+    open_project::OpenProjectDialog,
+    project::{self, ProjectOpened},
     style as s,
     view::{
         self,
@@ -14,16 +22,41 @@ use crate::{
 };
 
 const UNIFRAKTUR_MAGUNTIA: &[u8] = include_bytes!("../assets/fonts/UnifrakturMaguntia-Regular.ttf");
+const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
 
 struct AhessApp {
-    new_project_dialog: Entity<NewProjectDialog>,
-    project_start_buttons: ProjectStartButtons,
+    workspace_root: PathBuf,
     close_project_button: Entity<Button>,
     app_mode: AppMode,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 enum AppMode {
+    ProjectStart(ProjectStart),
+    ProjectOpen {
+        project_name: String,
+        project_directory: PathBuf,
+    },
+    Error {
+        message: String,
+    },
+}
+
+struct ProjectStart {
+    project_start_mode: ProjectStartMode,
+    new_project_dialog: Entity<NewProjectDialog>,
+    open_project_dialog: Entity<OpenProjectDialog>,
+    buttons: ProjectStartButtons,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ProjectStartMode {
+    New,
+    Existing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RestoredAppMode {
     ProjectStart {
         project_start_mode: ProjectStartMode,
     },
@@ -31,42 +64,25 @@ enum AppMode {
         project_name: String,
         project_directory: PathBuf,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProjectStartMode {
-    New,
-    Existing,
+    Error {
+        message: String,
+    },
 }
 
 impl AhessApp {
     fn new(cx: &mut Context<Self>) -> Self {
-        let project_start_mode = ProjectStartMode::New;
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let new_project_dialog = cx.new(move |cx| NewProjectDialog::new(workspace_root, cx));
-        let project_start_buttons = ProjectStartButtons::new(cx, project_start_mode);
         let close_project_button = cx.new(|_| Button::new("close-project", "close project"));
+        let restored_app_mode = restore_app_mode(&workspace_root);
+        let app_mode = AppMode::from_restored(restored_app_mode, &workspace_root, cx);
 
-        cx.subscribe(&new_project_dialog, Self::on_project_opened)
-            .detach();
-        cx.subscribe(
-            &project_start_buttons.new_project,
-            Self::on_new_project_clicked,
-        )
-        .detach();
-        cx.subscribe(
-            &project_start_buttons.open_existing,
-            Self::on_existing_project_clicked,
-        )
-        .detach();
         cx.subscribe(&close_project_button, Self::on_close_project_clicked)
             .detach();
 
         Self {
-            new_project_dialog,
-            project_start_buttons,
+            workspace_root,
             close_project_button,
-            app_mode: AppMode::ProjectStart { project_start_mode },
+            app_mode,
         }
     }
 
@@ -97,39 +113,292 @@ impl AhessApp {
         self.set_project_start_mode(ProjectStartMode::Existing, cx);
     }
 
-    fn on_project_opened(
+    fn on_new_project_opened(
         &mut self,
         _: Entity<NewProjectDialog>,
         project: &ProjectOpened,
         cx: &mut Context<Self>,
     ) {
+        self.open_project(project, cx);
+    }
+
+    fn on_existing_project_opened(
+        &mut self,
+        _: Entity<OpenProjectDialog>,
+        project: &ProjectOpened,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_project(project, cx);
+    }
+
+    fn open_project(&mut self, project: &ProjectOpened, cx: &mut Context<Self>) {
         self.app_mode = AppMode::ProjectOpen {
             project_name: project.project_name.clone(),
             project_directory: project.project_directory.clone(),
         };
-        cx.notify();
+        self.persist_storage(cx);
     }
 
     fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<Self>) {
         let changed = match &self.app_mode {
-            AppMode::ProjectStart { project_start_mode } => *project_start_mode != mode,
+            AppMode::ProjectStart(project_start) => project_start.project_start_mode != mode,
             AppMode::ProjectOpen { .. } => true,
+            AppMode::Error { .. } => true,
         };
 
-        self.app_mode = AppMode::ProjectStart {
-            project_start_mode: mode,
-        };
-        self.project_start_buttons.set_project_start_mode(mode, cx);
+        match &mut self.app_mode {
+            AppMode::ProjectStart(project_start) => {
+                project_start.set_project_start_mode(mode, cx);
+            }
+            AppMode::ProjectOpen { .. } | AppMode::Error { .. } => {
+                self.app_mode =
+                    AppMode::ProjectStart(ProjectStart::new(&self.workspace_root, mode, cx));
+            }
+        }
 
         if changed {
-            cx.notify();
+            self.persist_storage(cx);
         }
     }
 
     fn project_title(&self) -> SharedString {
         match &self.app_mode {
-            AppMode::ProjectStart { .. } => "".into(),
+            AppMode::ProjectStart(_) => "".into(),
             AppMode::ProjectOpen { project_name, .. } => project_name.clone().into(),
+            AppMode::Error { .. } => "error".into(),
+        }
+    }
+
+    fn persist_storage(&mut self, cx: &mut Context<Self>) {
+        let Some(storage) = Storage::generate(self) else {
+            return;
+        };
+
+        if let Err(error) = save_storage(&self.workspace_root, &storage) {
+            self.app_mode = AppMode::Error {
+                message: error.to_string(),
+            };
+        }
+        cx.notify();
+    }
+}
+
+impl AppMode {
+    fn from_restored(
+        restored_app_mode: RestoredAppMode,
+        workspace_root: &Path,
+        cx: &mut Context<AhessApp>,
+    ) -> Self {
+        match restored_app_mode {
+            RestoredAppMode::ProjectStart { project_start_mode } => {
+                Self::ProjectStart(ProjectStart::new(workspace_root, project_start_mode, cx))
+            }
+            RestoredAppMode::ProjectOpen {
+                project_name,
+                project_directory,
+            } => Self::ProjectOpen {
+                project_name,
+                project_directory,
+            },
+            RestoredAppMode::Error { message } => Self::Error { message },
+        }
+    }
+}
+
+impl ProjectStart {
+    fn new(
+        workspace_root: &Path,
+        project_start_mode: ProjectStartMode,
+        cx: &mut Context<AhessApp>,
+    ) -> Self {
+        let new_project_workspace_root = workspace_root.to_path_buf();
+        let open_project_workspace_root = workspace_root.to_path_buf();
+        let new_project_dialog =
+            cx.new(move |cx| NewProjectDialog::new(new_project_workspace_root, cx));
+        let open_project_dialog =
+            cx.new(move |cx| OpenProjectDialog::new(open_project_workspace_root, cx));
+        let buttons = ProjectStartButtons::new(cx, project_start_mode);
+
+        cx.subscribe(&new_project_dialog, AhessApp::on_new_project_opened)
+            .detach();
+        cx.subscribe(&open_project_dialog, AhessApp::on_existing_project_opened)
+            .detach();
+        cx.subscribe(&buttons.new_project, AhessApp::on_new_project_clicked)
+            .detach();
+        cx.subscribe(
+            &buttons.open_existing,
+            AhessApp::on_existing_project_clicked,
+        )
+        .detach();
+
+        Self {
+            project_start_mode,
+            new_project_dialog,
+            open_project_dialog,
+            buttons,
+        }
+    }
+
+    fn set_project_start_mode(&mut self, mode: ProjectStartMode, cx: &mut Context<AhessApp>) {
+        self.project_start_mode = mode;
+        self.buttons.set_project_start_mode(mode, cx);
+
+        if mode == ProjectStartMode::Existing {
+            self.open_project_dialog.update(cx, |dialog, cx| {
+                dialog.refresh(cx);
+            });
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+struct Storage {
+    app_mode: StorageAppMode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+enum StorageAppMode {
+    ProjectStart {
+        project_start_mode: ProjectStartMode,
+    },
+    ProjectOpen {
+        project_directory: PathBuf,
+    },
+}
+
+#[derive(Debug)]
+enum StorageError {
+    Read {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Write {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    Serialize {
+        source: toml::ser::Error,
+    },
+    LoadProject(project::LoadProjectError),
+}
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, source } => {
+                write!(f, "failed to read storage at {}: {source}", path.display())
+            }
+            Self::Write { path, source } => {
+                write!(f, "failed to write storage at {}: {source}", path.display())
+            }
+            Self::Parse { path, source } => {
+                write!(f, "invalid storage at {}: {source}", path.display())
+            }
+            Self::Serialize { source } => write!(f, "failed to serialize storage: {source}"),
+            Self::LoadProject(error) => write!(f, "failed to restore open project: {error}"),
+        }
+    }
+}
+
+impl Error for StorageError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Read { source, .. } | Self::Write { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::Serialize { source } => Some(source),
+            Self::LoadProject(error) => Some(error),
+        }
+    }
+}
+
+fn restore_app_mode(workspace_root: &Path) -> RestoredAppMode {
+    match load_storage(workspace_root).and_then(|storage| {
+        storage
+            .map(|storage| storage.into_restored_app_mode(workspace_root))
+            .transpose()
+    }) {
+        Ok(Some(app_mode)) => app_mode,
+        Ok(None) => RestoredAppMode::ProjectStart {
+            project_start_mode: ProjectStartMode::New,
+        },
+        Err(error) => RestoredAppMode::Error {
+            message: error.to_string(),
+        },
+    }
+}
+
+fn load_storage(workspace_root: &Path) -> Result<Option<Storage>, StorageError> {
+    let path = storage_path(workspace_root);
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(StorageError::Read { path, source }),
+    };
+    let storage = toml::from_str::<Storage>(&contents)
+        .map_err(|source| StorageError::Parse { path, source })?;
+
+    Ok(Some(storage))
+}
+
+fn save_storage(workspace_root: &Path, storage: &Storage) -> Result<(), StorageError> {
+    let path = storage_path(workspace_root);
+    let contents =
+        toml::to_string_pretty(storage).map_err(|source| StorageError::Serialize { source })?;
+
+    fs::write(&path, contents).map_err(|source| StorageError::Write { path, source })
+}
+
+fn storage_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(APP_STATE_FILE)
+}
+
+impl Storage {
+    fn generate(app: &AhessApp) -> Option<Self> {
+        let app_mode = match &app.app_mode {
+            AppMode::ProjectStart(project_start) => StorageAppMode::ProjectStart {
+                project_start_mode: project_start.project_start_mode,
+            },
+            AppMode::ProjectOpen {
+                project_directory, ..
+            } => StorageAppMode::ProjectOpen {
+                project_directory: project_directory
+                    .strip_prefix(&app.workspace_root)
+                    .unwrap_or(project_directory)
+                    .to_path_buf(),
+            },
+            AppMode::Error { .. } => return None,
+        };
+
+        Some(Self { app_mode })
+    }
+
+    fn into_restored_app_mode(
+        self,
+        workspace_root: &Path,
+    ) -> Result<RestoredAppMode, StorageError> {
+        match self.app_mode {
+            StorageAppMode::ProjectStart { project_start_mode } => {
+                Ok(RestoredAppMode::ProjectStart { project_start_mode })
+            }
+            StorageAppMode::ProjectOpen { project_directory } => {
+                let project_directory = if project_directory.is_absolute() {
+                    project_directory
+                } else {
+                    workspace_root.join(project_directory)
+                };
+                let project =
+                    project::load_project(&project_directory).map_err(StorageError::LoadProject)?;
+
+                Ok(RestoredAppMode::ProjectOpen {
+                    project_name: project.project.name,
+                    project_directory: project.project_directory,
+                })
+            }
         }
     }
 }
@@ -137,13 +406,13 @@ impl AhessApp {
 impl Render for AhessApp {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let screen = match &self.app_mode {
-            AppMode::ProjectStart { .. } => {
-                project_start_screen(&self.new_project_dialog, &self.project_start_buttons)
-                    .into_any_element()
+            AppMode::ProjectStart(project_start) => {
+                project_start_screen(project_start).into_any_element()
             }
             AppMode::ProjectOpen {
                 project_directory, ..
             } => project_workspace(project_directory).into_any_element(),
+            AppMode::Error { message } => error_screen(message.clone().into()).into_any_element(),
         };
         let project_title = self.project_title();
         let close_project_button = matches!(self.app_mode, AppMode::ProjectOpen { .. })
@@ -240,10 +509,12 @@ impl ProjectStartButtons {
     }
 }
 
-fn project_start_screen(
-    new_project_dialog: &Entity<NewProjectDialog>,
-    buttons: &ProjectStartButtons,
-) -> gpui::Div {
+fn project_start_screen(project_start: &ProjectStart) -> gpui::Div {
+    let project_dialog = match project_start.project_start_mode {
+        ProjectStartMode::New => project_start.new_project_dialog.clone().into_any_element(),
+        ProjectStartMode::Existing => project_start.open_project_dialog.clone().into_any_element(),
+    };
+
     div()
         .relative()
         .flex_1()
@@ -257,8 +528,8 @@ fn project_start_screen(
                 .items_start()
                 .justify_between()
                 .gap_3()
-                .child(project_picker_dialog(buttons))
-                .child(new_project_dialog.clone()),
+                .child(project_picker_dialog(&project_start.buttons))
+                .child(project_dialog),
         )
 }
 
@@ -304,4 +575,142 @@ fn project_picker_dialog(buttons: &ProjectStartButtons) -> impl IntoElement {
 
 fn project_workspace(_project_directory: &PathBuf) -> gpui::Div {
     div().flex_1().min_h(px(0.0)).bg(s::GREEN2)
+}
+
+fn error_screen(message: SharedString) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_h(px(0.0))
+        .bg(s::GREEN2)
+        .p(s::S7)
+        .child(s::raised(
+            div()
+                .flex()
+                .flex_col()
+                .w(px(680.0))
+                .bg(s::GRAY2)
+                .child(
+                    div()
+                        .bg(s::GRAY5)
+                        .text_color(s::GREEN1)
+                        .p(s::S3)
+                        .px(s::S4)
+                        .child("error"),
+                )
+                .child(
+                    div().p(s::S5).child(
+                        s::sunken(
+                            div()
+                                .bg(s::RED1)
+                                .text_color(s::WHITE)
+                                .p(s::S4)
+                                .child(message),
+                        )
+                        .overflow_hidden(),
+                    ),
+                ),
+        ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{
+        load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
+        RestoredAppMode, Storage, StorageAppMode,
+    };
+    use crate::{
+        project::{self, Project},
+        seed::Seed,
+    };
+
+    #[test]
+    fn storage_round_trips_the_project_start_mode() {
+        let root = temp_root("storage-start-mode");
+        let storage = Storage {
+            app_mode: StorageAppMode::ProjectStart {
+                project_start_mode: ProjectStartMode::Existing,
+            },
+        };
+
+        save_storage(&root, &storage).unwrap();
+
+        assert_eq!(load_storage(&root).unwrap(), Some(storage));
+        assert!(fs::read_to_string(storage_path(&root))
+            .unwrap()
+            .contains("project_start_mode = \"existing\""));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn storage_restores_an_open_project_from_its_project_config() {
+        let root = temp_root("storage-open-project");
+        let project = Project::new("Arc Light Sketch", 4000, 100, Seed::new(1234))
+            .with_description("saved project");
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let storage = Storage {
+            app_mode: StorageAppMode::ProjectOpen {
+                project_directory: project_directory.strip_prefix(&root).unwrap().to_path_buf(),
+            },
+        };
+
+        save_storage(&root, &storage).unwrap();
+
+        assert_eq!(
+            restore_app_mode(&root),
+            RestoredAppMode::ProjectOpen {
+                project_name: project.name,
+                project_directory,
+            }
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_storage_defaults_to_new_project_mode() {
+        let root = temp_root("missing-storage");
+
+        assert_eq!(load_storage(&root).unwrap(), None);
+        assert_eq!(
+            restore_app_mode(&root),
+            RestoredAppMode::ProjectStart {
+                project_start_mode: ProjectStartMode::New,
+            }
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_storage_restores_to_error_mode() {
+        let root = temp_root("invalid-storage");
+
+        fs::write(storage_path(&root), "app_mode =").unwrap();
+
+        assert!(matches!(
+            restore_app_mode(&root),
+            RestoredAppMode::Error { message } if message.contains("invalid storage")
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ahess-{test_name}-{}-{unique}", std::process::id()));
+
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

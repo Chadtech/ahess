@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Deserialize;
+
 use crate::seed::Seed;
 
 pub const PROJECTS_DIRECTORY: &str = "projects";
@@ -50,6 +52,18 @@ impl Project {
             self.seed.value()
         )
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectEntry {
+    pub project: Project,
+    pub project_directory: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectOpened {
+    pub project_name: String,
+    pub project_directory: PathBuf,
 }
 
 #[derive(Debug)]
@@ -120,6 +134,126 @@ pub fn create_project(
     Ok(project_directory)
 }
 
+#[derive(Debug)]
+pub enum LoadProjectError {
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
+    InvalidConfig {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+}
+
+impl fmt::Display for LoadProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(f, "filesystem error at {}: {}", path.display(), source)
+            }
+            Self::InvalidConfig { path, source } => {
+                write!(
+                    f,
+                    "invalid project config at {}: {}",
+                    path.display(),
+                    source
+                )
+            }
+        }
+    }
+}
+
+impl Error for LoadProjectError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::InvalidConfig { source, .. } => Some(source),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ListProjectsError {
+    Io { path: PathBuf, source: io::Error },
+    LoadProject(LoadProjectError),
+}
+
+impl fmt::Display for ListProjectsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(f, "filesystem error at {}: {}", path.display(), source)
+            }
+            Self::LoadProject(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl Error for ListProjectsError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::LoadProject(error) => Some(error),
+        }
+    }
+}
+
+pub fn list_projects(
+    workspace_root: impl AsRef<Path>,
+) -> Result<Vec<ProjectEntry>, ListProjectsError> {
+    let projects_directory = workspace_root.as_ref().join(PROJECTS_DIRECTORY);
+    let entries = match fs::read_dir(&projects_directory) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(ListProjectsError::Io {
+                path: projects_directory,
+                source,
+            });
+        }
+    };
+
+    let mut projects = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|source| ListProjectsError::Io {
+            path: projects_directory.clone(),
+            source,
+        })?;
+        let path = entry.path();
+
+        if !path.is_dir() || !path.join(PROJECT_CONFIG_FILE).is_file() {
+            continue;
+        }
+
+        projects.push(load_project(&path).map_err(ListProjectsError::LoadProject)?);
+    }
+
+    projects.sort_by_key(|entry| entry.project.name.to_ascii_lowercase());
+    Ok(projects)
+}
+
+pub fn load_project(project_directory: impl AsRef<Path>) -> Result<ProjectEntry, LoadProjectError> {
+    let project_directory = project_directory.as_ref();
+    let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+    let config = fs::read_to_string(&config_path).map_err(|source| LoadProjectError::Io {
+        path: config_path.clone(),
+        source,
+    })?;
+    let project_config = toml::from_str::<ProjectConfig>(&config).map_err(|source| {
+        LoadProjectError::InvalidConfig {
+            path: config_path,
+            source,
+        }
+    })?;
+
+    Ok(ProjectEntry {
+        project: project_config.into_project(),
+        project_directory: project_directory.to_path_buf(),
+    })
+}
+
 pub fn project_directory_name(name: &str) -> Option<String> {
     let mut directory_name = String::new();
     let mut previous_was_separator = false;
@@ -168,6 +302,27 @@ fn toml_string(value: &str) -> String {
     output
 }
 
+#[derive(Deserialize)]
+struct ProjectConfig {
+    name: String,
+    description: String,
+    beat_length: u32,
+    timing_variance: u32,
+    seed: u64,
+}
+
+impl ProjectConfig {
+    fn into_project(self) -> Project {
+        Project::new(
+            self.name,
+            self.beat_length,
+            self.timing_variance,
+            Seed::new(self.seed),
+        )
+        .with_description(self.description)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -177,7 +332,8 @@ mod tests {
     };
 
     use super::{
-        create_project, project_directory_name, CreateProjectError, Project, PROJECT_CONFIG_FILE,
+        create_project, list_projects, load_project, project_directory_name, CreateProjectError,
+        Project, PROJECT_CONFIG_FILE,
     };
     use crate::seed::Seed;
 
@@ -245,6 +401,58 @@ mod tests {
         let error = create_project(&root, &project).unwrap_err();
 
         assert!(matches!(error, CreateProjectError::ProjectAlreadyExists(_)));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_reads_config_from_project_directory() {
+        let root = temp_root("load-project");
+        let project = Project::new("test \"score\"", 4000, 100, Seed::new(1234))
+            .with_description("line one\nline two");
+        let project_directory = create_project(&root, &project).unwrap();
+
+        let loaded_project = load_project(&project_directory).unwrap();
+
+        assert_eq!(loaded_project.project, project);
+        assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projects_returns_projects_sorted_by_name() {
+        let root = temp_root("list-projects");
+        create_project(
+            &root,
+            &Project::new("Zinc", 4000, 100, Seed::new(1)).with_description("last"),
+        )
+        .unwrap();
+        create_project(
+            &root,
+            &Project::new("Arc", 4000, 100, Seed::new(2)).with_description("first"),
+        )
+        .unwrap();
+
+        let projects = list_projects(&root).unwrap();
+
+        assert_eq!(
+            projects
+                .iter()
+                .map(|entry| entry.project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Arc", "Zinc"]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projects_allows_a_missing_projects_directory() {
+        let root = temp_root("missing-projects-directory");
+        fs::remove_dir_all(root.join("projects")).unwrap_or(());
+
+        assert!(list_projects(&root).unwrap().is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

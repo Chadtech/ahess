@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, SharedString, Window};
 
 use crate::{
-    project,
+    project::{self, ProjectOpened},
     seed::Seed,
     style as s,
     view::{
@@ -17,12 +17,6 @@ pub struct NewProjectDialog {
     create_button: Entity<Button>,
     create_project_error: Option<String>,
     workspace_root: PathBuf,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectOpened {
-    pub project_name: String,
-    pub project_directory: PathBuf,
 }
 
 impl EventEmitter<ProjectOpened> for NewProjectDialog {}
