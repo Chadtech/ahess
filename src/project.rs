@@ -19,6 +19,47 @@ pub struct Project {
     pub timing_variance: u32,
     pub seed: Seed,
     pub description: String,
+    pub voices: Vec<Voice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Voice {
+    pub name: String,
+    pub voice_type: VoiceType,
+}
+
+impl Voice {
+    pub fn new(name: impl Into<String>, voice_type: VoiceType) -> Self {
+        Self {
+            name: name.into(),
+            voice_type,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VoiceType {
+    Sin,
+    Saw,
+}
+
+impl VoiceType {
+    pub const ALL: [Self; 2] = [Self::Sin, Self::Saw];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Sin => "sin",
+            Self::Saw => "saw",
+        }
+    }
+
+    const fn config_value(self) -> &'static str {
+        match self {
+            Self::Sin => "sin",
+            Self::Saw => "saw",
+        }
+    }
 }
 
 impl Project {
@@ -34,6 +75,7 @@ impl Project {
             timing_variance,
             seed,
             description: String::new(),
+            voices: Vec::new(),
         }
     }
 
@@ -42,15 +84,35 @@ impl Project {
         self
     }
 
+    pub fn with_voices(mut self, voices: Vec<Voice>) -> Self {
+        self.voices = voices;
+        self
+    }
+
+    pub fn add_voice(&mut self, voice: Voice) {
+        self.voices.push(voice);
+    }
+
     pub fn config_file_contents(&self) -> String {
-        format!(
+        let mut contents = format!(
             "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nseed = {}\n",
             toml_string(&self.name),
             toml_string(&self.description),
             self.beat_length,
             self.timing_variance,
             self.seed.value()
-        )
+        );
+
+        for voice in &self.voices {
+            contents.push_str("\n[[voices]]\n");
+            contents.push_str("name = ");
+            contents.push_str(&toml_string(&voice.name));
+            contents.push_str("\nvoice_type = ");
+            contents.push_str(&toml_string(voice.voice_type.config_value()));
+            contents.push('\n');
+        }
+
+        contents
     }
 }
 
@@ -361,6 +423,8 @@ struct ProjectConfig {
     beat_length: u32,
     timing_variance: u32,
     seed: u64,
+    #[serde(default)]
+    voices: Vec<Voice>,
 }
 
 impl ProjectConfig {
@@ -372,6 +436,7 @@ impl ProjectConfig {
             Seed::new(self.seed),
         )
         .with_description(self.description)
+        .with_voices(self.voices)
     }
 }
 
@@ -385,7 +450,7 @@ mod tests {
 
     use super::{
         create_project, list_projects, load_project, project_directory_name, save_project,
-        CreateProjectError, Project, PROJECT_CONFIG_FILE,
+        CreateProjectError, Project, Voice, VoiceType, PROJECT_CONFIG_FILE,
     };
     use crate::seed::Seed;
 
@@ -398,6 +463,7 @@ mod tests {
         assert_eq!(project.timing_variance, 100);
         assert_eq!(project.seed, Seed::new(19));
         assert_eq!(project.description, "sketch");
+        assert!(project.voices.is_empty());
     }
 
     #[test]
@@ -421,6 +487,19 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\n"
+        );
+    }
+
+    #[test]
+    fn config_file_contents_store_voices_in_column_order() {
+        let project = Project::new("test", 4000, 100, Seed::new(1234)).with_voices(vec![
+            Voice::new("lead", VoiceType::Saw),
+            Voice::new("bass", VoiceType::Sin),
+        ]);
+
+        assert_eq!(
+            project.config_file_contents(),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\n\n[[voices]]\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nname = \"bass\"\nvoice_type = \"sin\"\n"
         );
     }
 
@@ -467,7 +546,23 @@ mod tests {
         let loaded_project = load_project(&project_directory).unwrap();
 
         assert_eq!(loaded_project.project, project);
+        assert!(loaded_project.project.voices.is_empty());
         assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn every_voice_type_round_trips_through_project_config() {
+        let root = temp_root("voice-types-round-trip");
+        let voices = VoiceType::ALL
+            .into_iter()
+            .map(|voice_type| Voice::new(voice_type.label(), voice_type))
+            .collect();
+        let project = Project::new("voice types", 800, 0, Seed::new(1)).with_voices(voices);
+        let project_directory = create_project(&root, &project).unwrap();
+
+        assert_eq!(load_project(project_directory).unwrap().project, project);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -478,7 +573,11 @@ mod tests {
         let original = Project::new("Original Name", 800, 10, Seed::new(1));
         let project_directory = create_project(&root, &original).unwrap();
         let updated = Project::new("Updated Name", 4000, 100, Seed::new(99))
-            .with_description("updated description");
+            .with_description("updated description")
+            .with_voices(vec![
+                Voice::new("lead", VoiceType::Saw),
+                Voice::new("bass", VoiceType::Sin),
+            ]);
 
         save_project(&project_directory, &updated).unwrap();
 

@@ -150,7 +150,14 @@ impl ProjectSettingsDialog {
         let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
         let description = self.fields.description.read(cx).value();
 
-        Ok(Project::new(name, beat_length, timing_variance, seed).with_description(description))
+        let mut project = self.original_project.clone();
+        project.name = name;
+        project.beat_length = beat_length;
+        project.timing_variance = timing_variance;
+        project.seed = seed;
+        project.description = description;
+
+        Ok(project)
     }
 
     fn is_dirty(&self, cx: &mut Context<Self>) -> bool {

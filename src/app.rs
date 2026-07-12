@@ -1,26 +1,32 @@
+mod new_project;
+mod open_project;
+mod project_open;
+
 use std::{
+    cell::Cell,
     fmt, fs, io,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, OnceLock},
 };
 
 use gpui::{
-    div, img, prelude::*, px, App, Application, Context, Entity, Image, ImageFormat, ObjectFit,
-    Pixels, SharedString, Window, WindowOptions,
+    div, img, prelude::*, px, AnyElement, App, Application, Context, Entity, Image, ImageFormat,
+    ObjectFit, Pixels, SharedString, Window, WindowOptions,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    new_project::NewProjectDialog,
-    open_project::OpenProjectDialog,
     project::{self, Project, ProjectOpened},
-    project_open, style as s,
+    style as s,
     view::{
         self,
         button::{self, Button},
         dialog::modal_overlay,
     },
 };
+
+use self::{new_project::NewProjectDialog, open_project::OpenProjectDialog};
 
 const PROJECT_PICKER_WIDTH: Pixels = px(430.0);
 const AHESS_IMAGE_HEIGHT_RATIO: f32 = 1086.0 / 1448.0;
@@ -415,35 +421,35 @@ impl Storage {
 
 impl Render for AhessApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (screen, project_title, project_settings_button, close_project_button, settings_dialog) =
-            match &self.app_mode {
-                AppMode::ProjectStart(project_start) => (
-                    project_start_screen(project_start).into_any_element(),
-                    SharedString::from(""),
-                    None,
-                    None,
-                    None,
-                ),
-                AppMode::ProjectOpen(model) => {
-                    let model = model.read(cx);
-                    (
-                        project_workspace().into_any_element(),
-                        SharedString::from(model.project().name.clone()),
-                        Some(model.settings_button()),
-                        Some(model.close_button()),
-                        model.settings_dialog(),
-                    )
-                }
-                AppMode::Error { message } => (
-                    error_screen(message.clone().into()).into_any_element(),
-                    SharedString::from("error"),
-                    None,
-                    None,
-                    None,
-                ),
-            };
+        let frame = match &self.app_mode {
+            AppMode::ProjectStart(project_start) => {
+                AppFrame::new(project_start_screen(project_start), "")
+            }
+            AppMode::ProjectOpen(model) => {
+                let model = model.read(cx);
+                AppFrame::new(model.view(), model.project().name.clone())
+                    .with_actions(model.bar_actions())
+                    .with_dialog(model.active_dialog())
+            }
+            AppMode::Error { message } => {
+                AppFrame::new(error_screen(message.clone().into()), "error")
+            }
+        };
 
-        let app = div()
+        let content = div()
+            .relative()
+            .flex()
+            .flex_1()
+            .min_h(px(0.0))
+            .children(frame.content);
+
+        let content = if let Some(dialog) = frame.dialog {
+            content.child(modal_overlay(dialog))
+        } else {
+            content
+        };
+
+        div()
             .relative()
             .size_full()
             .font_family(s::FONT)
@@ -456,41 +462,63 @@ impl Render for AhessApp {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .child(project_bar(
-                        project_title,
-                        project_settings_button,
-                        close_project_button,
-                    ))
-                    .child(screen),
-            );
-
-        if let Some(dialog) = settings_dialog {
-            app.child(modal_overlay(dialog))
-        } else {
-            app
-        }
+                    .child(project_bar(frame.project_title, frame.actions))
+                    .child(content),
+            )
     }
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    Application::new().run(|cx: &mut App| {
+    let startup_error = Rc::new(Cell::new(None));
+    let startup_error_from_callback = Rc::clone(&startup_error);
+
+    Application::new().run(move |cx: &mut App| {
         view::text_input::bind_keys(cx);
 
-        cx.open_window(WindowOptions::default(), |window, cx| {
+        if let Err(error) = cx.open_window(WindowOptions::default(), |window, cx| {
             window.set_window_title("ahess");
             cx.new(AhessApp::new)
-        })
-        .unwrap();
+        }) {
+            startup_error_from_callback.set(Some(io::Error::other(error)));
+            cx.quit();
+        }
     });
 
-    Ok(())
+    match startup_error.take() {
+        Some(error) => Err(Box::new(error)),
+        None => Ok(()),
+    }
 }
 
-fn project_bar(
+struct AppFrame {
+    content: Vec<AnyElement>,
     project_title: SharedString,
-    project_settings_button: Option<Entity<Button>>,
-    close_project_button: Option<Entity<Button>>,
-) -> impl IntoElement {
+    actions: Vec<AnyElement>,
+    dialog: Option<AnyElement>,
+}
+
+impl AppFrame {
+    fn new(content: impl IntoElement, project_title: impl Into<SharedString>) -> Self {
+        Self {
+            content: vec![content.into_any_element()],
+            project_title: project_title.into(),
+            actions: Vec::new(),
+            dialog: None,
+        }
+    }
+
+    fn with_actions(mut self, actions: Vec<AnyElement>) -> Self {
+        self.actions = actions;
+        self
+    }
+
+    fn with_dialog(mut self, dialog: Option<AnyElement>) -> Self {
+        self.dialog = dialog;
+        self
+    }
+}
+
+fn project_bar(project_title: SharedString, actions: Vec<AnyElement>) -> impl IntoElement {
     let bar = div()
         .flex()
         .items_center()
@@ -509,19 +537,10 @@ fn project_bar(
                 .child(div().text_color(s::TEXT_DEFAULT).child(project_title)),
         );
 
-    if let (Some(project_settings_button), Some(close_project_button)) =
-        (project_settings_button, close_project_button)
-    {
-        bar.child(
-            div()
-                .flex()
-                .gap_3()
-                .my(-s::S3)
-                .child(project_settings_button)
-                .child(close_project_button),
-        )
-    } else {
+    if actions.is_empty() {
         bar
+    } else {
+        bar.child(div().flex().gap_3().my(-s::S3).children(actions))
     }
 }
 
@@ -620,10 +639,6 @@ fn ahess_image() -> Arc<Image> {
             ))
         })
         .clone()
-}
-
-fn project_workspace() -> gpui::Div {
-    div().flex_1().min_h(px(0.0)).bg(s::GREEN2)
 }
 
 fn error_screen(message: SharedString) -> gpui::Div {
