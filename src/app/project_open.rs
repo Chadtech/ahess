@@ -13,7 +13,7 @@ use crate::{
 
 use self::{
     project_settings::{ProjectSettingsDialog, ProjectSettingsEvent},
-    voices::{Event as VoicesEvent, VoicesDialog},
+    voices::VoicesDialog,
 };
 
 pub enum Event {
@@ -158,15 +158,19 @@ impl Model {
     fn on_voices_event(
         &mut self,
         _: Entity<VoicesDialog>,
-        event: &VoicesEvent,
+        event: &voices::Event,
         cx: &mut Context<Self>,
     ) {
-        if let VoicesEvent::Added(updated_project) = event {
-            self.project = updated_project.clone();
+        match event {
+            voices::Event::Added(updated_project) => {
+                self.project = updated_project.clone();
+            }
+            voices::Event::Closed => {
+                self.dialog = None;
+                self.set_voices_button_depressed(false, cx);
+            }
         }
 
-        self.dialog = None;
-        self.set_voices_button_depressed(false, cx);
         cx.notify();
     }
 

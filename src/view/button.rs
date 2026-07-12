@@ -12,6 +12,7 @@ pub struct Button {
     depressed: bool,
     pressing: bool,
     hovered: bool,
+    hover_suppressed_until_exit: bool,
 }
 
 pub struct Clicked;
@@ -33,6 +34,7 @@ impl Button {
             depressed: false,
             pressing: false,
             hovered: false,
+            hover_suppressed_until_exit: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl Button {
             depressed: false,
             pressing: false,
             hovered: false,
+            hover_suppressed_until_exit: false,
         }
     }
 
@@ -62,6 +65,16 @@ impl Button {
         cx.notify();
     }
 
+    pub fn suppress_hover_until_pointer_exit(&mut self, cx: &mut Context<Self>) {
+        let changed = self.hovered || !self.hover_suppressed_until_exit;
+        self.hovered = false;
+        self.hover_suppressed_until_exit = true;
+
+        if changed {
+            cx.notify();
+        }
+    }
+
     fn set_pressing(&mut self, pressing: bool, cx: &mut Context<Self>) {
         if self.pressing == pressing {
             return;
@@ -71,17 +84,19 @@ impl Button {
         cx.notify();
     }
 
-    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        if self.hovered == hovered {
+    fn on_hover(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
+        if *hovered && self.hover_suppressed_until_exit {
             return;
         }
 
-        self.hovered = hovered;
-        cx.notify();
-    }
+        let hover_suppression_changed = !*hovered && self.hover_suppressed_until_exit;
+        let hovered_changed = self.hovered != *hovered;
+        self.hover_suppressed_until_exit &= *hovered;
+        self.hovered = *hovered;
 
-    fn on_hover(&mut self, hovered: &bool, _: &mut Window, cx: &mut Context<Self>) {
-        self.set_hovered(*hovered, cx);
+        if hover_suppression_changed || hovered_changed {
+            cx.notify();
+        }
     }
 
     fn on_mouse_down(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {

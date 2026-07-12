@@ -436,20 +436,21 @@ impl Render for AhessApp {
             }
         };
 
+        let AppFrame {
+            content,
+            project_title,
+            actions,
+            dialog,
+        } = frame;
+
         let content = div()
             .relative()
             .flex()
             .flex_1()
             .min_h(px(0.0))
-            .children(frame.content);
+            .children(content);
 
-        let content = if let Some(dialog) = frame.dialog {
-            content.child(modal_overlay(dialog))
-        } else {
-            content
-        };
-
-        div()
+        let app_frame = div()
             .relative()
             .size_full()
             .font_family(s::FONT)
@@ -462,9 +463,15 @@ impl Render for AhessApp {
                     .flex()
                     .flex_col()
                     .size_full()
-                    .child(project_bar(frame.project_title, frame.actions))
+                    .child(project_bar(project_title, actions))
                     .child(content),
-            )
+            );
+
+        if let Some(dialog) = dialog {
+            app_frame.child(modal_overlay(dialog))
+        } else {
+            app_frame
+        }
     }
 }
 
