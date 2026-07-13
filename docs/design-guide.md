@@ -34,5 +34,7 @@ their styles locally.
 
 - use `view::dialog::title_bar` for dialog title bars.
 - use `view::dialog::error_message` for errors within dialog content.
+- use `view::dialog::destructive_confirmation` for irreversible confirmation
+  prompts. It groups the warning text and actions in a dark-red, sunken panel.
 - use `view::dialog::modal_overlay` for a modal dialog displayed over an active
   screen. Modal overlays block interaction with the screen beneath them.

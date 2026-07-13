@@ -24,12 +24,30 @@ pub fn title_bar(
 }
 
 pub fn error_message(message: impl Into<SharedString>) -> gpui::Div {
+    danger_panel(div().child(message.into()))
+}
+
+pub fn destructive_confirmation(
+    message: impl Into<SharedString>,
+    actions: impl IntoElement,
+) -> gpui::Div {
+    danger_panel(
+        div()
+            .flex()
+            .flex_col()
+            .gap(s::S3)
+            .child(div().child(message.into()))
+            .child(actions),
+    )
+}
+
+fn danger_panel(content: impl IntoElement) -> gpui::Div {
     s::sunken(
         div()
             .bg(s::RED1)
             .text_color(s::WHITE)
             .p(s::S4)
-            .child(message.into()),
+            .child(content),
     )
     .overflow_hidden()
 }

@@ -7,7 +7,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::seed::Seed;
+use crate::{seed::Seed, voice_name::VoiceName};
 
 pub const PROJECTS_DIRECTORY: &str = "projects";
 pub const PROJECT_CONFIG_FILE: &str = "project.toml";
@@ -24,12 +24,12 @@ pub struct Project {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Voice {
-    pub name: String,
+    pub name: VoiceName,
     pub voice_type: VoiceType,
 }
 
 impl Voice {
-    pub fn new(name: impl Into<String>, voice_type: VoiceType) -> Self {
+    pub fn new(name: impl Into<VoiceName>, voice_type: VoiceType) -> Self {
         Self {
             name: name.into(),
             voice_type,
@@ -93,6 +93,20 @@ impl Project {
         self.voices.push(voice);
     }
 
+    pub fn voice(&self, name: &VoiceName) -> Option<&Voice> {
+        self.voices
+            .iter()
+            .find(|voice| voice.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn remove_voice(&mut self, name: &VoiceName) -> Option<Voice> {
+        let index = self
+            .voices
+            .iter()
+            .position(|voice| voice.name.eq_ignore_ascii_case(name))?;
+        Some(self.voices.remove(index))
+    }
+
     pub fn config_file_contents(&self) -> String {
         let mut contents = format!(
             "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nseed = {}\n",
@@ -106,7 +120,7 @@ impl Project {
         for voice in &self.voices {
             contents.push_str("\n[[voices]]\n");
             contents.push_str("name = ");
-            contents.push_str(&toml_string(&voice.name));
+            contents.push_str(&toml_string(voice.name.as_str()));
             contents.push_str("\nvoice_type = ");
             contents.push_str(&toml_string(voice.voice_type.config_value()));
             contents.push('\n');
@@ -423,8 +437,32 @@ struct ProjectConfig {
     beat_length: u32,
     timing_variance: u32,
     seed: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_voices")]
     voices: Vec<Voice>,
+}
+
+fn deserialize_voices<'de, D>(deserializer: D) -> Result<Vec<Voice>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let voices = Vec::<Voice>::deserialize(deserializer)?;
+
+    for (index, voice) in voices.iter().enumerate() {
+        if voice.name.as_str().trim().is_empty() {
+            return Err(serde::de::Error::custom("voice names must not be empty"));
+        }
+        if voices[..index]
+            .iter()
+            .any(|other| other.name.eq_ignore_ascii_case(&voice.name))
+        {
+            return Err(serde::de::Error::custom(format!(
+                "voice name {:?} is duplicated",
+                voice.name.as_str()
+            )));
+        }
+    }
+
+    Ok(voices)
 }
 
 impl ProjectConfig {
@@ -450,9 +488,9 @@ mod tests {
 
     use super::{
         create_project, list_projects, load_project, project_directory_name, save_project,
-        CreateProjectError, Project, Voice, VoiceType, PROJECT_CONFIG_FILE,
+        CreateProjectError, LoadProjectError, Project, Voice, VoiceType, PROJECT_CONFIG_FILE,
     };
-    use crate::seed::Seed;
+    use crate::{seed::Seed, voice_name::VoiceName};
 
     #[test]
     fn project_stores_the_initial_music_settings() {
@@ -504,6 +542,33 @@ mod tests {
     }
 
     #[test]
+    fn voices_are_found_and_removed_by_name_without_changing_column_order() {
+        let mut project = Project::new("test", 4000, 100, Seed::new(1234)).with_voices(vec![
+            Voice::new("lead", VoiceType::Saw),
+            Voice::new("bass", VoiceType::Sin),
+            Voice::new("harmony", VoiceType::Saw),
+        ]);
+
+        assert_eq!(
+            project.voice(&VoiceName::new("BASS")),
+            Some(&Voice::new("bass", VoiceType::Sin))
+        );
+        assert_eq!(
+            project.remove_voice(&VoiceName::new("bass")),
+            Some(Voice::new("bass", VoiceType::Sin))
+        );
+        assert_eq!(
+            project.voices,
+            vec![
+                Voice::new("lead", VoiceType::Saw),
+                Voice::new("harmony", VoiceType::Saw),
+            ]
+        );
+        assert_eq!(project.voice(&VoiceName::new("bass")), None);
+        assert_eq!(project.remove_voice(&VoiceName::new("missing")), None);
+    }
+
+    #[test]
     fn create_project_writes_config_under_projects_directory() {
         let root = temp_root("writes-config");
         let project = Project::new("Arc Light Sketch", 4000, 100, Seed::new(1234))
@@ -548,6 +613,27 @@ mod tests {
         assert_eq!(loaded_project.project, project);
         assert!(loaded_project.project.voices.is_empty());
         assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rejects_voice_names_that_cannot_be_identifiers() {
+        let root = temp_root("invalid-voice-identifiers");
+        let project_directory = root.join("projects").join("test");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\n\n[[voices]]\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nname = \"LEAD\"\nvoice_type = \"sin\"\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(matches!(error, LoadProjectError::InvalidConfig { .. }));
+        assert!(error
+            .to_string()
+            .contains("voice name \"LEAD\" is duplicated"));
 
         fs::remove_dir_all(root).unwrap();
     }

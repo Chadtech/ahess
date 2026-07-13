@@ -162,7 +162,7 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         match event {
-            voices::Event::Added(updated_project) => {
+            voices::Event::Updated(updated_project) => {
                 self.project = updated_project.clone();
             }
             voices::Event::Closed => {
