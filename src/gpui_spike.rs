@@ -10,6 +10,8 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::style as s;
+
 const ROWS: usize = 5;
 const COLS: usize = 4;
 const CELL_WIDTH: f32 = 180.0;
@@ -873,7 +875,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     focus: true,
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
-                        size(px(900.0), px(620.0)),
+                        size(s::S11, s::S10),
                         cx,
                     ))),
                     ..Default::default()

@@ -12,7 +12,7 @@ use std::{
 
 use gpui::{
     div, img, prelude::*, px, AnyElement, App, Application, Context, Entity, Image, ImageFormat,
-    ObjectFit, Pixels, SharedString, Window, WindowOptions,
+    ObjectFit, SharedString, Window, WindowOptions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +28,6 @@ use crate::{
 
 use self::{new_project::NewProjectDialog, open_project::OpenProjectDialog};
 
-const PROJECT_PICKER_WIDTH: Pixels = px(430.0);
 const AHESS_IMAGE_HEIGHT_RATIO: f32 = 1086.0 / 1448.0;
 const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
 const FORCE_ERROR_VIEW: bool = false;
@@ -604,36 +603,31 @@ fn project_start_screen(project_start: &ProjectStart) -> gpui::Div {
 }
 
 fn project_picker_dialog(buttons: &ProjectStartButtons) -> impl IntoElement {
-    let image_width = PROJECT_PICKER_WIDTH - s::CONTENT_PADDING * 2.0;
+    let image_width = s::S10 - s::CONTENT_PADDING * 2.0;
     let image_height = image_width * AHESS_IMAGE_HEIGHT_RATIO;
 
     s::raised(
-        div()
-            .flex()
-            .flex_col()
-            .w(PROJECT_PICKER_WIDTH)
-            .bg(s::GRAY2)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(s::CONTENT_PADDING)
-                    .p(s::CONTENT_PADDING)
-                    .child(
-                        s::sunken(img(ahess_image()).size_full().object_fit(ObjectFit::Fill))
-                            .w(image_width)
-                            .h(image_height)
-                            .overflow_hidden(),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_center()
-                            .gap_5()
-                            .child(buttons.new_project.clone())
-                            .child(buttons.open_existing.clone()),
-                    ),
-            ),
+        div().flex().flex_col().w(s::S10).bg(s::GRAY2).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(s::CONTENT_PADDING)
+                .p(s::CONTENT_PADDING)
+                .child(
+                    s::sunken(img(ahess_image()).size_full().object_fit(ObjectFit::Fill))
+                        .w(image_width)
+                        .h(image_height)
+                        .overflow_hidden(),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_center()
+                        .gap_5()
+                        .child(buttons.new_project.clone())
+                        .child(buttons.open_existing.clone()),
+                ),
+        ),
     )
 }
 
@@ -694,7 +688,7 @@ fn error_screen(message: SharedString) -> gpui::Div {
                             ),
                     ),
             )
-            .w(px(680.0)),
+            .w(s::S10),
         )
 }
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    div, prelude::*, px, Context, CursorStyle, Entity, EventEmitter, MouseButton, MouseDownEvent,
+    div, prelude::*, Context, CursorStyle, Entity, EventEmitter, MouseButton, MouseDownEvent,
     SharedString, Window,
 };
 
@@ -142,7 +142,7 @@ fn open_project_dialog(
         div()
             .flex()
             .flex_col()
-            .w(px(680.0))
+            .w(s::S10)
             .bg(s::GRAY2)
             .child(title_bar("open project", None))
             .child(body)
@@ -170,7 +170,7 @@ fn project_list(
         })
         .collect::<Vec<_>>();
 
-    let list_body = div().flex().flex_col().min_h(px(240.0)).bg(s::GREEN3);
+    let list_body = div().flex().flex_col().min_h(s::S9).bg(s::GREEN3);
 
     let list_body = if rows.is_empty() {
         list_body.child(
@@ -190,7 +190,7 @@ fn project_list(
         .flex()
         .flex_col()
         .gap_1()
-        .w(px(300.0))
+        .w(s::S9)
         .child(div().text_color(s::TEXT_HEADER).child("projects"))
         .child(s::sunken(list_body).overflow_hidden())
 }
@@ -246,7 +246,7 @@ fn project_details(project: Option<&ProjectEntry>) -> gpui::Div {
         .flex_col()
         .gap_4()
         .flex_1()
-        .min_h(px(240.0))
+        .min_h(s::S9)
         .child(details)
 }
 

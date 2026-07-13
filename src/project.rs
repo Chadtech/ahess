@@ -7,7 +7,11 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::{seed::Seed, voice_name::VoiceName};
+use crate::{
+    part::{self, Part, PartName},
+    seed::Seed,
+    voice_name::VoiceName,
+};
 
 pub const PROJECTS_DIRECTORY: &str = "projects";
 pub const PROJECT_CONFIG_FILE: &str = "project.toml";
@@ -20,6 +24,7 @@ pub struct Project {
     pub seed: Seed,
     pub description: String,
     pub voices: Vec<Voice>,
+    pub parts: Vec<Part>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -76,6 +81,7 @@ impl Project {
             seed,
             description: String::new(),
             voices: Vec::new(),
+            parts: Vec::new(),
         }
     }
 
@@ -93,6 +99,15 @@ impl Project {
         self.voices.push(voice);
     }
 
+    pub fn with_parts(mut self, parts: Vec<Part>) -> Self {
+        self.parts = parts;
+        self
+    }
+
+    pub fn add_part(&mut self, part: Part) {
+        self.parts.push(part);
+    }
+
     pub fn voice(&self, name: &VoiceName) -> Option<&Voice> {
         self.voices
             .iter()
@@ -105,6 +120,20 @@ impl Project {
             .iter()
             .position(|voice| voice.name.eq_ignore_ascii_case(name))?;
         Some(self.voices.remove(index))
+    }
+
+    pub fn part(&self, name: &PartName) -> Option<&Part> {
+        self.parts
+            .iter()
+            .find(|part| part.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn remove_part(&mut self, name: &PartName) -> Option<Part> {
+        let index = self
+            .parts
+            .iter()
+            .position(|part| part.name.eq_ignore_ascii_case(name))?;
+        Some(self.parts.remove(index))
     }
 
     pub fn config_file_contents(&self) -> String {
@@ -123,6 +152,15 @@ impl Project {
             contents.push_str(&toml_string(voice.name.as_str()));
             contents.push_str("\nvoice_type = ");
             contents.push_str(&toml_string(voice.voice_type.config_value()));
+            contents.push('\n');
+        }
+
+        for part in &self.parts {
+            contents.push_str("\n[[parts]]\n");
+            contents.push_str("name = ");
+            contents.push_str(&toml_string(part.name.as_str()));
+            contents.push_str("\nlength = ");
+            contents.push_str(&part.length.to_string());
             contents.push('\n');
         }
 
@@ -439,6 +477,8 @@ struct ProjectConfig {
     seed: u64,
     #[serde(default, deserialize_with = "deserialize_voices")]
     voices: Vec<Voice>,
+    #[serde(default, deserialize_with = "deserialize_parts")]
+    parts: Vec<Part>,
 }
 
 fn deserialize_voices<'de, D>(deserializer: D) -> Result<Vec<Voice>, D::Error>
@@ -465,6 +505,50 @@ where
     Ok(voices)
 }
 
+fn deserialize_parts<'de, D>(deserializer: D) -> Result<Vec<Part>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let parts = Vec::<Part>::deserialize(deserializer)?;
+
+    for (index, part) in parts.iter().enumerate() {
+        if part.name.as_str().trim().is_empty() {
+            return Err(serde::de::Error::custom("part names must not be empty"));
+        }
+        if part.length == 0 {
+            return Err(serde::de::Error::custom(format!(
+                "part {:?} must be at least one beat long",
+                part.name.as_str()
+            )));
+        }
+        if parts[..index]
+            .iter()
+            .any(|other| other.name.eq_ignore_ascii_case(&part.name))
+        {
+            return Err(serde::de::Error::custom(format!(
+                "part name {:?} is duplicated",
+                part.name.as_str()
+            )));
+        }
+        let part_file = part::csv_file_name(&part.name).map_err(|_| {
+            serde::de::Error::custom(format!(
+                "part {:?} cannot be used as a filename",
+                part.name.as_str()
+            ))
+        })?;
+        if parts[..index].iter().any(|other| {
+            part::csv_file_name(&other.name)
+                .is_ok_and(|other_file| other_file.eq_ignore_ascii_case(&part_file))
+        }) {
+            return Err(serde::de::Error::custom(format!(
+                "part filename {part_file:?} is duplicated"
+            )));
+        }
+    }
+
+    Ok(parts)
+}
+
 impl ProjectConfig {
     fn into_project(self) -> Project {
         Project::new(
@@ -475,6 +559,7 @@ impl ProjectConfig {
         )
         .with_description(self.description)
         .with_voices(self.voices)
+        .with_parts(self.parts)
     }
 }
 
@@ -490,7 +575,7 @@ mod tests {
         create_project, list_projects, load_project, project_directory_name, save_project,
         CreateProjectError, LoadProjectError, Project, Voice, VoiceType, PROJECT_CONFIG_FILE,
     };
-    use crate::{seed::Seed, voice_name::VoiceName};
+    use crate::{part::Part, seed::Seed, voice_name::VoiceName};
 
     #[test]
     fn project_stores_the_initial_music_settings() {
@@ -538,6 +623,17 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\n\n[[voices]]\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nname = \"bass\"\nvoice_type = \"sin\"\n"
+        );
+    }
+
+    #[test]
+    fn config_file_contents_store_part_metadata_without_redundant_filenames() {
+        let project = Project::new("test", 4000, 100, Seed::new(1234))
+            .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)]);
+
+        assert_eq!(
+            project.config_file_contents(),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\n\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
         );
     }
 

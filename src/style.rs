@@ -19,6 +19,8 @@ pub const S6: Pixels = gpui::px(32.0);
 pub const S7: Pixels = gpui::px(64.0);
 pub const S8: Pixels = gpui::px(128.0);
 pub const S9: Pixels = gpui::px(256.0);
+pub const S10: Pixels = gpui::px(512.0);
+pub const S11: Pixels = gpui::px(1024.0);
 
 pub const GREEN1: Rgba = rgba(palette::GREEN1);
 pub const GREEN2: Rgba = rgba(palette::GREEN2);

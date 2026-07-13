@@ -32,9 +32,17 @@ their styles locally.
 
 ## dialogs
 
+- use `S10` for standard dialog widths. Use `S11` by `S10` for the wider
+  list/detail management dialogs.
 - use `view::dialog::title_bar` for dialog title bars.
 - use `view::dialog::error_message` for errors within dialog content.
 - use `view::dialog::destructive_confirmation` for irreversible confirmation
   prompts. It groups the warning text and actions in a dark-red, sunken panel.
+- use `view::dialog::list_detail_dialog` and
+  `view::dialog::management_form_dialog` for management dialogs that pair a
+  selectable resource list and detail view with an add form.
+- use `view::selection_list::list` and `view::selection_list::row` for selectable
+  resource lists. The component owns the sunken container, empty state,
+  alternating row colors, and selected-row colors.
 - use `view::dialog::modal_overlay` for a modal dialog displayed over an active
   screen. Modal overlays block interaction with the screen beneath them.

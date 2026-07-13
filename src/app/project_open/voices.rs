@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    div, prelude::*, px, Context, CursorStyle, Entity, EventEmitter, MouseButton, MouseDownEvent,
-    Pixels, Window,
+    div, prelude::*, px, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Window,
 };
 
 use crate::{
@@ -10,8 +9,12 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
-        dialog::{destructive_confirmation, error_message, title_bar},
+        dialog::{
+            self, destructive_confirmation, error_message, list_detail_dialog,
+            management_form_dialog,
+        },
         field_group::field_group,
+        selection_list,
         text_input::TextInput,
     },
     voice_name::VoiceName,
@@ -49,9 +52,6 @@ enum DialogView {
         confirming_delete: bool,
     },
 }
-
-const DIALOG_WIDTH: Pixels = px(800.0);
-const DIALOG_HEIGHT: Pixels = px(500.0);
 
 pub struct VoicesDialog {
     original_project: Project,
@@ -497,42 +497,22 @@ impl VoicesDialog {
         edit_button: Entity<Button>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        s::raised(
-            div()
-                .flex()
-                .flex_col()
-                .w(DIALOG_WIDTH)
-                .h(DIALOG_HEIGHT)
-                .bg(s::GRAY2)
-                .child(title_bar("voices", Some(self.close_button.clone())))
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_h(px(0.0))
-                        .gap(s::CONTENT_PADDING)
-                        .p(s::CONTENT_PADDING)
-                        .child(voice_list(
-                            &self.original_project.voices,
-                            self.selected_voice.as_ref(),
-                            cx,
-                        ))
-                        .child(voice_details(
-                            self.selected_voice
-                                .as_ref()
-                                .and_then(|name| self.original_project.voice(name)),
-                            edit_button,
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .p(s::CONTENT_PADDING)
-                        .pt(s::S0)
-                        .child(add_new_button),
-                ),
-        )
+        list_detail_dialog(dialog::ListDetailArgs {
+            title: "voices",
+            close_button: self.close_button.clone(),
+            list: voice_list(
+                &self.original_project.voices,
+                self.selected_voice.as_ref(),
+                cx,
+            ),
+            details: voice_details(
+                self.selected_voice
+                    .as_ref()
+                    .and_then(|name| self.original_project.voice(name)),
+                edit_button,
+            ),
+            add_button: add_new_button,
+        })
     }
 
     fn voice_form_dialog(
@@ -563,26 +543,7 @@ impl VoicesDialog {
             form
         };
 
-        s::raised(
-            div()
-                .flex()
-                .flex_col()
-                .w(DIALOG_WIDTH)
-                .h(DIALOG_HEIGHT)
-                .bg(s::GRAY2)
-                .child(title_bar(title, Some(self.close_button.clone())))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .justify_between()
-                        .gap(s::CONTENT_PADDING)
-                        .p(s::CONTENT_PADDING)
-                        .child(form)
-                        .child(actions),
-                ),
-        )
+        management_form_dialog(title, self.close_button.clone(), form, actions)
     }
 
     fn delete_voice_actions(
@@ -628,33 +589,7 @@ fn voice_list(
         .map(|(index, voice)| voice_list_row(index, voice, selected_voice == Some(&voice.name), cx))
         .collect::<Vec<_>>();
 
-    let list_body = div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_h(px(0.0))
-        .bg(s::GREEN3);
-    let list_body = if rows.is_empty() {
-        list_body.child(
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(s::TEXT_DEFAULT)
-                .child("no voices yet"),
-        )
-    } else {
-        list_body.children(rows)
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_h(px(0.0))
-        .w(s::S9)
-        .child(s::sunken(list_body).flex().flex_1().overflow_hidden())
+    selection_list::list("no voices yet", rows)
 }
 
 fn voice_list_row(
@@ -664,27 +599,12 @@ fn voice_list_row(
     cx: &mut Context<VoicesDialog>,
 ) -> gpui::Div {
     let voice_name = voice.name.clone();
-    let background = if selected {
-        s::GREEN4
-    } else if index.is_multiple_of(2) {
-        s::GREEN2
-    } else {
-        s::GREEN3
-    };
-    let name_color = if selected { s::GRAY6 } else { s::GRAY5 };
-
-    div()
-        .bg(background)
-        .p(s::S4)
-        .text_color(name_color)
-        .cursor(CursorStyle::PointingHand)
-        .child(voice.name.as_str().to_owned())
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
-                dialog.select_voice(&voice_name, cx);
-            }),
-        )
+    selection_list::row(index, selected, voice.name.as_str().to_owned()).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
+            dialog.select_voice(&voice_name, cx);
+        }),
+    )
 }
 
 fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Div {

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, Window};
+use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
     project::{self, Project},
@@ -326,7 +326,7 @@ fn project_settings_dialog(
         div()
             .flex()
             .flex_col()
-            .w(px(570.0))
+            .w(s::S10)
             .bg(s::GRAY2)
             .child(title_bar("project settings", Some(close_button)))
             .child(

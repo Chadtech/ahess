@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Entity, SharedString};
+use gpui::{div, prelude::*, px, Entity, SharedString};
 
 use crate::{style as s, view::button::Button};
 
@@ -38,6 +38,87 @@ pub fn destructive_confirmation(
             .gap(s::S3)
             .child(div().child(message.into()))
             .child(actions),
+    )
+}
+
+pub struct ListDetailArgs<Title, List, Details> {
+    pub title: Title,
+    pub close_button: Entity<Button>,
+    pub list: List,
+    pub details: Details,
+    pub add_button: Entity<Button>,
+}
+
+pub fn list_detail_dialog<Title, List, Details>(
+    args: ListDetailArgs<Title, List, Details>,
+) -> gpui::Div
+where
+    Title: Into<SharedString>,
+    List: IntoElement,
+    Details: IntoElement,
+{
+    let ListDetailArgs {
+        title,
+        close_button,
+        list,
+        details,
+        add_button,
+    } = args;
+
+    s::raised(
+        div()
+            .flex()
+            .flex_col()
+            .w(s::S11)
+            .h(s::S10)
+            .bg(s::GRAY2)
+            .child(title_bar(title, Some(close_button)))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .gap(s::CONTENT_PADDING)
+                    .p(s::CONTENT_PADDING)
+                    .child(list)
+                    .child(details),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .p(s::CONTENT_PADDING)
+                    .pt(s::S0)
+                    .child(add_button),
+            ),
+    )
+}
+
+pub fn management_form_dialog(
+    title: impl Into<SharedString>,
+    close_button: Entity<Button>,
+    form: impl IntoElement,
+    actions: impl IntoElement,
+) -> gpui::Div {
+    s::raised(
+        div()
+            .flex()
+            .flex_col()
+            .w(s::S11)
+            .h(s::S10)
+            .bg(s::GRAY2)
+            .child(title_bar(title, Some(close_button)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .justify_between()
+                    .gap(s::CONTENT_PADDING)
+                    .p(s::CONTENT_PADDING)
+                    .child(form)
+                    .child(actions),
+            ),
     )
 }
 
