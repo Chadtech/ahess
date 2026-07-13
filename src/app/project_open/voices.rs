@@ -1,11 +1,8 @@
-use std::path::PathBuf;
-
 use gpui::{
     div, prelude::*, px, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Window,
 };
 
 use crate::{
-    project::{self, Project, Voice, VoiceType},
     style as s,
     view::{
         button::{self, Button},
@@ -17,11 +14,23 @@ use crate::{
         selection_list,
         text_input::TextInput,
     },
+    voice::{Voice, VoiceType},
     voice_name::VoiceName,
 };
 
 pub enum Event {
-    Updated(Project),
+    AddRequested {
+        name: String,
+        voice_type: VoiceType,
+    },
+    EditRequested {
+        original_name: VoiceName,
+        name: String,
+        voice_type: VoiceType,
+    },
+    DeleteRequested {
+        name: VoiceName,
+    },
     Closed,
 }
 
@@ -54,8 +63,7 @@ enum DialogView {
 }
 
 pub struct VoicesDialog {
-    original_project: Project,
-    project_directory: PathBuf,
+    voices: Vec<Voice>,
     selected_voice: Option<VoiceName>,
     view: DialogView,
     close_button: Entity<Button>,
@@ -64,15 +72,14 @@ pub struct VoicesDialog {
 impl EventEmitter<Event> for VoicesDialog {}
 
 impl VoicesDialog {
-    pub fn new(project: Project, project_directory: PathBuf, cx: &mut Context<Self>) -> Self {
-        let selected_voice = project.voices.first().map(|voice| voice.name.clone());
+    pub fn new(voices: Vec<Voice>, cx: &mut Context<Self>) -> Self {
+        let selected_voice = voices.first().map(|voice| voice.name.clone());
         let close_button = cx.new(|_| Button::x("close-voices"));
 
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
 
         Self {
-            original_project: project,
-            project_directory,
+            voices,
             selected_voice,
             view: Self::list_view(cx),
             close_button,
@@ -175,7 +182,7 @@ impl VoicesDialog {
         let Some(voice) = self
             .selected_voice
             .as_ref()
-            .and_then(|name| self.original_project.voice(name))
+            .and_then(|name| find_voice(&self.voices, name))
             .cloned()
         else {
             return;
@@ -238,45 +245,11 @@ impl VoicesDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let Some(name) = self.selected_voice.as_ref() else {
-            return;
-        };
-        let Some(index) = self
-            .original_project
-            .voices
-            .iter()
-            .position(|voice| &voice.name == name)
-        else {
-            return;
-        };
-        let Some(project) = delete_voice_from_project(&self.original_project, name) else {
+        let Some(name) = self.selected_voice.clone() else {
             return;
         };
 
-        match project::save_project(&self.project_directory, &project) {
-            Ok(()) => {
-                self.selected_voice = project
-                    .voices
-                    .get(index.min(project.voices.len().saturating_sub(1)))
-                    .map(|voice| voice.name.clone());
-                self.original_project = project.clone();
-                self.view = Self::list_view(cx);
-                cx.emit(Event::Updated(project));
-                cx.notify();
-            }
-            Err(error) => {
-                if let DialogView::Edit {
-                    delete_error,
-                    confirming_delete,
-                    ..
-                } = &mut self.view
-                {
-                    *delete_error = Some(error.to_string());
-                    *confirming_delete = false;
-                    cx.notify();
-                }
-            }
-        }
+        cx.emit(Event::DeleteRequested { name });
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -288,32 +261,10 @@ impl VoicesDialog {
         else {
             return;
         };
-        let result = add_voice_to_project(
-            &self.original_project,
-            &name.read(cx).value(),
-            *selected_voice_type,
-        )
-        .and_then(|project| {
-            project::save_project(&self.project_directory, &project)?;
-            Ok(project)
+        cx.emit(Event::AddRequested {
+            name: name.read(cx).value(),
+            voice_type: *selected_voice_type,
         });
-
-        match result {
-            Ok(project) => {
-                self.selected_voice = project.voices.last().map(|voice| voice.name.clone());
-                self.original_project = project.clone();
-                self.view = Self::list_view(cx);
-                self.suppress_add_new_hover(cx);
-                cx.emit(Event::Updated(project));
-                cx.notify();
-            }
-            Err(error) => {
-                if let DialogView::Add { form_error, .. } = &mut self.view {
-                    *form_error = Some(error.to_string());
-                    cx.notify();
-                }
-            }
-        }
     }
 
     fn on_save_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -328,39 +279,11 @@ impl VoicesDialog {
         else {
             return;
         };
-        let result = edit_voice_in_project(
-            &self.original_project,
-            &original_name,
-            &name.read(cx).value(),
-            *selected_voice_type,
-        )
-        .and_then(|project| {
-            project::save_project(&self.project_directory, &project)?;
-            Ok(project)
+        cx.emit(Event::EditRequested {
+            original_name,
+            name: name.read(cx).value(),
+            voice_type: *selected_voice_type,
         });
-
-        match result {
-            Ok(project) => {
-                let edited_index = self
-                    .original_project
-                    .voices
-                    .iter()
-                    .position(|voice| voice.name.eq_ignore_ascii_case(&original_name));
-                self.selected_voice = edited_index
-                    .and_then(|index| project.voices.get(index))
-                    .map(|voice| voice.name.clone());
-                self.original_project = project.clone();
-                self.view = Self::list_view(cx);
-                cx.emit(Event::Updated(project));
-                cx.notify();
-            }
-            Err(error) => {
-                if let DialogView::Edit { form_error, .. } = &mut self.view {
-                    *form_error = Some(error.to_string());
-                    cx.notify();
-                }
-            }
-        }
     }
 
     fn on_sin_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -399,7 +322,7 @@ impl VoicesDialog {
     }
 
     fn select_voice(&mut self, name: &VoiceName, cx: &mut Context<Self>) {
-        let Some(voice) = self.original_project.voice(name) else {
+        let Some(voice) = find_voice(&self.voices, name) else {
             return;
         };
         if self.selected_voice.as_ref() == Some(&voice.name) {
@@ -415,6 +338,69 @@ impl VoicesDialog {
             add_new_button.update(cx, |button, cx| {
                 button.suppress_hover_until_pointer_exit(cx);
             });
+        }
+    }
+
+    pub fn voice_added(&mut self, voices: Vec<Voice>, added: VoiceName, cx: &mut Context<Self>) {
+        self.voices = voices;
+        self.selected_voice = Some(added);
+        self.view = Self::list_view(cx);
+        self.suppress_add_new_hover(cx);
+        cx.notify();
+    }
+
+    pub fn add_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Add { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
+    pub fn voice_edited(&mut self, voices: Vec<Voice>, edited: VoiceName, cx: &mut Context<Self>) {
+        self.voices = voices;
+        self.selected_voice = Some(edited);
+        self.view = Self::list_view(cx);
+        cx.notify();
+    }
+
+    pub fn edit_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Edit { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
+    pub fn voice_deleted(
+        &mut self,
+        voices: Vec<Voice>,
+        deleted: &VoiceName,
+        cx: &mut Context<Self>,
+    ) {
+        let deleted_index = self
+            .voices
+            .iter()
+            .position(|voice| voice.name.eq_ignore_ascii_case(deleted));
+        self.voices = voices;
+        self.selected_voice = deleted_index
+            .and_then(|index| {
+                self.voices
+                    .get(index.min(self.voices.len().saturating_sub(1)))
+            })
+            .map(|voice| voice.name.clone());
+        self.view = Self::list_view(cx);
+        cx.notify();
+    }
+
+    pub fn delete_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Edit {
+            delete_error,
+            confirming_delete,
+            ..
+        } = &mut self.view
+        {
+            *delete_error = Some(error);
+            *confirming_delete = false;
+            cx.notify();
         }
     }
 }
@@ -500,15 +486,11 @@ impl VoicesDialog {
         list_detail_dialog(dialog::ListDetailArgs {
             title: "voices",
             close_button: self.close_button.clone(),
-            list: voice_list(
-                &self.original_project.voices,
-                self.selected_voice.as_ref(),
-                cx,
-            ),
+            list: voice_list(&self.voices, self.selected_voice.as_ref(), cx),
             details: voice_details(
                 self.selected_voice
                     .as_ref()
-                    .and_then(|name| self.original_project.voice(name)),
+                    .and_then(|name| find_voice(&self.voices, name)),
                 edit_button,
             ),
             add_button: add_new_button,
@@ -576,6 +558,12 @@ impl VoicesDialog {
             actions
         }
     }
+}
+
+fn find_voice<'a>(voices: &'a [Voice], name: &VoiceName) -> Option<&'a Voice> {
+    voices
+        .iter()
+        .find(|voice| voice.name.eq_ignore_ascii_case(name))
 }
 
 fn voice_list(
@@ -690,180 +678,4 @@ fn voice_type_button(
 
 fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context<VoicesDialog>) {
     button.update(cx, |button, cx| button.set_depressed(selected, cx));
-}
-
-#[derive(Debug)]
-enum VoiceFormError {
-    InvalidField(String),
-    SaveProject(project::SaveProjectError),
-}
-
-impl std::fmt::Display for VoiceFormError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidField(message) => write!(f, "{message}"),
-            Self::SaveProject(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl From<project::SaveProjectError> for VoiceFormError {
-    fn from(error: project::SaveProjectError) -> Self {
-        Self::SaveProject(error)
-    }
-}
-
-fn add_voice_to_project(
-    project: &Project,
-    name: &str,
-    voice_type: VoiceType,
-) -> Result<Project, VoiceFormError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(VoiceFormError::InvalidField(
-            "voice name must not be empty".to_string(),
-        ));
-    }
-
-    let name = VoiceName::new(name);
-    if project.voice(&name).is_some() {
-        return Err(VoiceFormError::InvalidField(format!(
-            "a voice named {:?} already exists",
-            name.as_str()
-        )));
-    }
-
-    let mut updated_project = project.clone();
-    updated_project.add_voice(Voice::new(name, voice_type));
-    Ok(updated_project)
-}
-
-fn edit_voice_in_project(
-    project: &Project,
-    original_name: &VoiceName,
-    name: &str,
-    voice_type: VoiceType,
-) -> Result<Project, VoiceFormError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(VoiceFormError::InvalidField(
-            "voice name must not be empty".to_string(),
-        ));
-    }
-
-    let Some(index) = project
-        .voices
-        .iter()
-        .position(|voice| voice.name.eq_ignore_ascii_case(original_name))
-    else {
-        return Err(VoiceFormError::InvalidField(
-            "the voice no longer exists".to_string(),
-        ));
-    };
-    let name = VoiceName::new(name);
-    if project
-        .voices
-        .iter()
-        .enumerate()
-        .any(|(other_index, voice)| other_index != index && voice.name.eq_ignore_ascii_case(&name))
-    {
-        return Err(VoiceFormError::InvalidField(format!(
-            "a voice named {:?} already exists",
-            name.as_str()
-        )));
-    }
-
-    let mut updated_project = project.clone();
-    updated_project.voices[index] = Voice::new(name, voice_type);
-    Ok(updated_project)
-}
-
-fn delete_voice_from_project(project: &Project, name: &VoiceName) -> Option<Project> {
-    let mut updated_project = project.clone();
-    updated_project.remove_voice(name)?;
-    Some(updated_project)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{add_voice_to_project, delete_voice_from_project, edit_voice_in_project};
-    use crate::{
-        project::{Project, Voice, VoiceType},
-        seed::Seed,
-        voice_name::VoiceName,
-    };
-
-    #[test]
-    fn adds_voices_in_column_order() {
-        let project = Project::new("test", 800, 0, Seed::new(1));
-        let project = add_voice_to_project(&project, " lead ", VoiceType::Saw).unwrap();
-        let project = add_voice_to_project(&project, "bass", VoiceType::Sin).unwrap();
-
-        assert_eq!(project.voices[0].name.as_str(), "lead");
-        assert_eq!(project.voices[0].voice_type, VoiceType::Saw);
-        assert_eq!(project.voices[1].name.as_str(), "bass");
-        assert_eq!(project.voices[1].voice_type, VoiceType::Sin);
-    }
-
-    #[test]
-    fn voice_names_must_be_present_and_unique() {
-        let project = Project::new("test", 800, 0, Seed::new(1));
-        let project = add_voice_to_project(&project, "lead", VoiceType::Sin).unwrap();
-
-        assert!(add_voice_to_project(&project, " ", VoiceType::Saw).is_err());
-        assert!(add_voice_to_project(&project, "LEAD", VoiceType::Saw).is_err());
-    }
-
-    #[test]
-    fn edits_a_voice_without_changing_its_column_order() {
-        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
-            Voice::new("lead", VoiceType::Saw),
-            Voice::new("bass", VoiceType::Sin),
-        ]);
-
-        let project = edit_voice_in_project(
-            &project,
-            &VoiceName::new("LEAD"),
-            " melody ",
-            VoiceType::Sin,
-        )
-        .unwrap();
-
-        assert_eq!(
-            project.voices,
-            vec![
-                Voice::new("melody", VoiceType::Sin),
-                Voice::new("bass", VoiceType::Sin),
-            ]
-        );
-    }
-
-    #[test]
-    fn edited_voice_names_must_be_present_and_unique() {
-        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
-            Voice::new("lead", VoiceType::Saw),
-            Voice::new("bass", VoiceType::Sin),
-        ]);
-
-        assert!(
-            edit_voice_in_project(&project, &VoiceName::new("lead"), " ", VoiceType::Sin,).is_err()
-        );
-        assert!(
-            edit_voice_in_project(&project, &VoiceName::new("lead"), "BASS", VoiceType::Sin,)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn deletes_the_voice_with_the_selected_name() {
-        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
-            Voice::new("lead", VoiceType::Saw),
-            Voice::new("bass", VoiceType::Sin),
-        ]);
-
-        let project = delete_voice_from_project(&project, &VoiceName::new("LEAD")).unwrap();
-
-        assert_eq!(project.voices, vec![Voice::new("bass", VoiceType::Sin)]);
-        assert!(delete_voice_from_project(&project, &VoiceName::new("missing")).is_none());
-    }
 }

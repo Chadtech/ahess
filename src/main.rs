@@ -7,6 +7,7 @@ pub mod project;
 pub mod seed;
 mod style;
 mod view;
+pub mod voice;
 pub mod voice_name;
 
 use clap::{Parser, Subcommand};

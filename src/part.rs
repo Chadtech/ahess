@@ -265,6 +265,39 @@ impl Error for DeletePartError {
     }
 }
 
+#[derive(Debug)]
+pub enum PartFileError {
+    Io { path: PathBuf, source: io::Error },
+    Csv { path: PathBuf, source: csv::Error },
+    Invalid { path: PathBuf, message: String },
+}
+
+impl fmt::Display for PartFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(f, "filesystem error at {}: {source}", path.display())
+            }
+            Self::Csv { path, source } => {
+                write!(f, "invalid CSV at {}: {source}", path.display())
+            }
+            Self::Invalid { path, message } => {
+                write!(f, "invalid part file {}: {message}", path.display())
+            }
+        }
+    }
+}
+
+impl Error for PartFileError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Csv { source, .. } => Some(source),
+            Self::Invalid { .. } => None,
+        }
+    }
+}
+
 pub fn create_part_file(
     project_directory: impl AsRef<Path>,
     parts: &[Part],
@@ -353,6 +386,236 @@ fn part_csv_contents(voices: &[Voice], length: u32) -> String {
     }
 
     contents
+}
+
+struct PartTable {
+    contents: Vec<u8>,
+    rows: Vec<Vec<String>>,
+}
+
+pub(crate) fn validate_part_file(
+    project_directory: &Path,
+    part: &Part,
+    voices: &[Voice],
+) -> Result<(), PartFileError> {
+    read_part_table(project_directory, part, voices).map(|_| ())
+}
+
+pub(crate) fn rewritten_part_file(
+    project_directory: &Path,
+    part: &Part,
+    old_voices: &[Voice],
+    new_voices: &[Voice],
+) -> Result<Vec<u8>, PartFileError> {
+    let table = read_part_table(project_directory, part, old_voices)?;
+    let schema_is_unchanged = old_voices.len() == new_voices.len()
+        && old_voices
+            .iter()
+            .zip(new_voices)
+            .all(|(old, new)| old.id() == new.id() && old.name.as_str() == new.name.as_str());
+    if schema_is_unchanged {
+        return Ok(table.contents);
+    }
+
+    let rows = table
+        .rows
+        .iter()
+        .map(|old_row| {
+            new_voices
+                .iter()
+                .map(|new_voice| {
+                    old_voices
+                        .iter()
+                        .position(|old_voice| old_voice.id() == new_voice.id())
+                        .map(|old_index| old_row[old_index].clone())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    serialize_part_table(new_voices, &rows).map_err(|source| PartFileError::Csv {
+        path: part_file_path(project_directory, part),
+        source,
+    })
+}
+
+fn read_part_table(
+    project_directory: &Path,
+    part: &Part,
+    voices: &[Voice],
+) -> Result<PartTable, PartFileError> {
+    let path = part_file_path(project_directory, part);
+    let contents = fs::read(&path).map_err(|source| PartFileError::Io {
+        path: path.clone(),
+        source,
+    })?;
+
+    if voices.is_empty() {
+        let unix_contents = "\n".repeat(part.length as usize + 1).into_bytes();
+        let windows_contents = "\r\n".repeat(part.length as usize + 1).into_bytes();
+        if contents != unix_contents && contents != windows_contents {
+            return Err(PartFileError::Invalid {
+                path,
+                message: format!("expected zero columns and {} beat rows", part.length),
+            });
+        }
+        return Ok(PartTable {
+            contents,
+            rows: vec![Vec::new(); part.length as usize],
+        });
+    }
+
+    let normalized_contents;
+    let csv_contents = if voices.len() == 1 {
+        normalized_contents = quote_blank_single_column_records(&contents);
+        normalized_contents.as_slice()
+    } else {
+        contents.as_slice()
+    };
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(csv_contents);
+    let mut records = reader.records();
+    let headers = records
+        .next()
+        .transpose()
+        .map_err(|source| PartFileError::Csv {
+            path: path.clone(),
+            source,
+        })?
+        .ok_or_else(|| PartFileError::Invalid {
+            path: path.clone(),
+            message: "missing voice header row".to_string(),
+        })?;
+
+    if headers.len() != voices.len()
+        || headers
+            .iter()
+            .zip(voices)
+            .any(|(header, voice)| header != voice.name.as_str())
+    {
+        let expected = voices
+            .iter()
+            .map(|voice| voice.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let actual = headers.iter().collect::<Vec<_>>().join(", ");
+        return Err(PartFileError::Invalid {
+            path,
+            message: format!(
+                "voice headers do not match the project (expected [{expected}], found [{actual}])"
+            ),
+        });
+    }
+
+    let mut rows = Vec::new();
+    for (row_index, result) in records.enumerate() {
+        let record = result.map_err(|source| PartFileError::Csv {
+            path: path.clone(),
+            source,
+        })?;
+        let row = if record.is_empty() && voices.len() == 1 {
+            vec![String::new()]
+        } else {
+            record.iter().map(str::to_string).collect::<Vec<_>>()
+        };
+        if row.len() != voices.len() {
+            return Err(PartFileError::Invalid {
+                path,
+                message: format!(
+                    "beat row {} has {} columns; expected {}",
+                    row_index + 1,
+                    row.len(),
+                    voices.len()
+                ),
+            });
+        }
+        rows.push(row);
+    }
+
+    if rows.len() != part.length as usize {
+        return Err(PartFileError::Invalid {
+            path,
+            message: format!(
+                "contains {} beat rows; expected {}",
+                rows.len(),
+                part.length
+            ),
+        });
+    }
+
+    Ok(PartTable { contents, rows })
+}
+
+fn quote_blank_single_column_records(contents: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(contents.len());
+    let mut in_quotes = false;
+    let mut at_record_start = true;
+    let mut index = 0;
+
+    while index < contents.len() {
+        let byte = contents[index];
+        if in_quotes {
+            normalized.push(byte);
+            if byte == b'"' {
+                if contents.get(index + 1) == Some(&b'"') {
+                    normalized.push(b'"');
+                    index += 1;
+                } else {
+                    in_quotes = false;
+                }
+            }
+            index += 1;
+            continue;
+        }
+
+        if at_record_start && (byte == b'\n' || byte == b'\r') {
+            normalized.extend_from_slice(b"\"\"");
+        }
+        normalized.push(byte);
+
+        if byte == b'"' && at_record_start {
+            in_quotes = true;
+            at_record_start = false;
+        } else if byte == b'\n' || byte == b'\r' {
+            at_record_start = true;
+            if byte == b'\r' && contents.get(index + 1) == Some(&b'\n') {
+                normalized.push(b'\n');
+                index += 1;
+            }
+        } else {
+            at_record_start = false;
+        }
+        index += 1;
+    }
+
+    normalized
+}
+
+fn serialize_part_table(voices: &[Voice], rows: &[Vec<String>]) -> Result<Vec<u8>, csv::Error> {
+    if voices.is_empty() {
+        return Ok("\n".repeat(rows.len() + 1).into_bytes());
+    }
+
+    let mut writer = csv::WriterBuilder::new()
+        .has_headers(false)
+        .from_writer(Vec::new());
+    writer.write_record(voices.iter().map(|voice| voice.name.as_str()))?;
+    for row in rows {
+        writer.write_record(row)?;
+    }
+    writer.flush().map_err(csv::Error::from)?;
+    writer
+        .into_inner()
+        .map_err(|error| csv::Error::from(error.into_error()))
+}
+
+fn part_file_path(project_directory: &Path, part: &Part) -> PathBuf {
+    let file_name = csv_file_name(&part.name)
+        .expect("validated project part names always produce CSV filenames");
+    project_directory.join(file_name)
 }
 
 fn escape_csv_value(value: &str) -> String {
@@ -446,7 +709,7 @@ mod tests {
         let discarded = create_part_file(
             &project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             "discarded",
             4,
         )
@@ -457,7 +720,7 @@ mod tests {
         let created = create_part_file(
             &project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             "intro",
             4,
         )
@@ -480,8 +743,8 @@ mod tests {
     fn creates_a_csv_with_voice_headers_and_one_row_per_beat() {
         let root = temp_root("create-part");
         let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
-            Voice::new("lead", VoiceType::Saw),
-            Voice::new("bass, low", VoiceType::Sin),
+            Voice::new(1, "lead", VoiceType::Saw),
+            Voice::new(2, "bass, low", VoiceType::Sin),
         ]);
         let project_directory = create_project(&root, &project).unwrap();
 
@@ -500,6 +763,47 @@ mod tests {
     }
 
     #[test]
+    fn single_voice_parts_with_blank_cells_load_successfully() {
+        let root = temp_root("single-voice-part");
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let project_directory = create_project(&root, &project).unwrap();
+
+        add_part(&project_directory, &mut project, "intro", 2);
+
+        assert_eq!(
+            fs::read_to_string(project_directory.join("intro.csv")).unwrap(),
+            "lead\n\n\n"
+        );
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+
+        fs::write(project_directory.join("intro.csv"), "lead\nC4\n\n").unwrap();
+        let table = super::read_part_table(&project_directory, &project.parts[0], project.voices())
+            .unwrap();
+        assert_eq!(
+            table.rows,
+            vec![vec!["C4".to_string()], vec![String::new()]]
+        );
+
+        fs::write(
+            project_directory.join("intro.csv"),
+            "lead\n\"C4\n\nheld\"\nD4\n",
+        )
+        .unwrap();
+        let table = super::read_part_table(&project_directory, &project.parts[0], project.voices())
+            .unwrap();
+        assert_eq!(
+            table.rows,
+            vec![vec!["C4\n\nheld".to_string()], vec!["D4".to_string()]]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rejects_zero_length_duplicate_and_colliding_parts_without_overwriting_files() {
         let root = temp_root("invalid-part");
         let mut project = Project::new("test", 800, 0, Seed::new(1));
@@ -508,7 +812,7 @@ mod tests {
         assert!(create_part_file(
             &project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             "intro",
             0,
         )
@@ -517,7 +821,7 @@ mod tests {
         assert!(create_part_file(
             &project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             "INTRO",
             4,
         )
@@ -525,7 +829,7 @@ mod tests {
         assert!(create_part_file(
             &project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             "intro!",
             4,
         )
@@ -589,7 +893,7 @@ mod tests {
         let created = create_part_file(
             project_directory,
             &project.parts,
-            &project.voices,
+            project.voices(),
             name,
             length,
         )

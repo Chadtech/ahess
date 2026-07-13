@@ -283,7 +283,6 @@ fn project_settings_dialog(
         .flex()
         .flex_col()
         .gap_5()
-        .child(section_label("project details"))
         .child(field_group("project name", fields.project_name.clone()))
         .child(field_group("description", fields.description.clone()))
         .child(section_label("generation settings"))

@@ -144,9 +144,8 @@ impl Model {
             None => {}
         }
 
-        let project = self.project.clone();
-        let project_directory = self.project_directory.clone();
-        let dialog = cx.new(move |cx| VoicesDialog::new(project, project_directory, cx));
+        let voices = self.project.voices().to_vec();
+        let dialog = cx.new(move |cx| VoicesDialog::new(voices, cx));
 
         cx.subscribe(&dialog, Self::on_voices_event).detach();
         self.dialog = Some(Dialog::Voices(dialog));
@@ -191,13 +190,86 @@ impl Model {
 
     fn on_voices_event(
         &mut self,
-        _: Entity<VoicesDialog>,
+        dialog: Entity<VoicesDialog>,
         event: &voices::Event,
         cx: &mut Context<Self>,
     ) {
         match event {
-            voices::Event::Updated(updated_project) => {
-                self.project = updated_project.clone();
+            voices::Event::AddRequested { name, voice_type } => {
+                match project::add_voice(&self.project_directory, &self.project, name, *voice_type)
+                {
+                    Ok(updated_project) => {
+                        let added = updated_project
+                            .voices()
+                            .last()
+                            .expect("adding a voice must append it to the project")
+                            .name
+                            .clone();
+                        self.project = updated_project;
+                        let voices = self.project.voices().to_vec();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.voice_added(voices, added, cx);
+                        });
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.add_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
+            voices::Event::EditRequested {
+                original_name,
+                name,
+                voice_type,
+            } => {
+                let edited_id = self.project.voice(original_name).map(|voice| voice.id());
+                match project::edit_voice(
+                    &self.project_directory,
+                    &self.project,
+                    original_name,
+                    name,
+                    *voice_type,
+                ) {
+                    Ok(updated_project) => {
+                        let edited = edited_id
+                            .and_then(|id| {
+                                updated_project
+                                    .voices()
+                                    .iter()
+                                    .find(|voice| voice.id() == id)
+                            })
+                            .expect("editing a voice must preserve its id")
+                            .name
+                            .clone();
+                        self.project = updated_project;
+                        let voices = self.project.voices().to_vec();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.voice_edited(voices, edited, cx);
+                        });
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.edit_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
+            voices::Event::DeleteRequested { name } => {
+                match project::delete_voice(&self.project_directory, &self.project, name) {
+                    Ok(updated_project) => {
+                        self.project = updated_project;
+                        let voices = self.project.voices().to_vec();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.voice_deleted(voices, name, cx);
+                        });
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.delete_failed(error.to_string(), cx);
+                        });
+                    }
+                }
             }
             voices::Event::Closed => {
                 self.dialog = None;
@@ -282,6 +354,7 @@ fn workspace() -> gpui::Div {
 
 #[derive(Debug)]
 enum PartChangeError {
+    Recovery(project::ProjectTransactionError),
     CreateFile(part::CreatePartError),
     DeleteFile(part::DeletePartError),
     MissingPart(String),
@@ -298,6 +371,7 @@ enum PartChangeError {
 impl fmt::Display for PartChangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
             Self::CreateFile(error) => write!(f, "{error}"),
             Self::DeleteFile(error) => write!(f, "{error}"),
             Self::MissingPart(name) => write!(f, "part {name:?} no longer exists"),
@@ -330,6 +404,7 @@ impl fmt::Display for PartChangeError {
 impl std::error::Error for PartChangeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Recovery(error) => Some(error),
             Self::CreateFile(error) => Some(error),
             Self::DeleteFile(error) => Some(error),
             Self::SaveCreated { source, .. } | Self::SaveDeleted { source, .. } => Some(source),
@@ -344,10 +419,12 @@ fn create_project_part(
     name: &str,
     length: u32,
 ) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
     let created = part::create_part_file(
         project_directory,
         &project.parts,
-        &project.voices,
+        project.voices(),
         name,
         length,
     )
@@ -371,6 +448,8 @@ fn delete_project_part(
     project: &mut Project,
     name: &part::PartName,
 ) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
     let index = project
         .parts
         .iter()
