@@ -18,7 +18,7 @@ use crate::{
     voice_name::VoiceName,
 };
 
-pub enum Event {
+pub enum Msg {
     AddRequested {
         name: String,
         voice_type: VoiceType,
@@ -69,7 +69,7 @@ pub struct VoicesDialog {
     close_button: Entity<Button>,
 }
 
-impl EventEmitter<Event> for VoicesDialog {}
+impl EventEmitter<Msg> for VoicesDialog {}
 
 impl VoicesDialog {
     pub fn new(voices: Vec<Voice>, cx: &mut Context<Self>) -> Self {
@@ -165,7 +165,7 @@ impl VoicesDialog {
     }
 
     fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Event::Closed);
+        cx.emit(Msg::Closed);
     }
 
     fn on_add_new_clicked(
@@ -249,7 +249,7 @@ impl VoicesDialog {
             return;
         };
 
-        cx.emit(Event::DeleteRequested { name });
+        cx.emit(Msg::DeleteRequested { name });
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -261,7 +261,7 @@ impl VoicesDialog {
         else {
             return;
         };
-        cx.emit(Event::AddRequested {
+        cx.emit(Msg::AddRequested {
             name: name.read(cx).value(),
             voice_type: *selected_voice_type,
         });
@@ -279,7 +279,7 @@ impl VoicesDialog {
         else {
             return;
         };
-        cx.emit(Event::EditRequested {
+        cx.emit(Msg::EditRequested {
             original_name,
             name: name.read(cx).value(),
             voice_type: *selected_voice_type,

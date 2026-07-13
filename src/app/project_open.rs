@@ -18,11 +18,11 @@ use crate::{
 
 use self::{
     parts::PartsDialog,
-    project_settings::{ProjectSettingsDialog, ProjectSettingsEvent},
+    project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
     voices::VoicesDialog,
 };
 
-pub enum Event {
+pub enum Msg {
     CloseRequested,
 }
 
@@ -43,7 +43,7 @@ enum Dialog {
     Voices(Entity<VoicesDialog>),
 }
 
-impl EventEmitter<Event> for Model {}
+impl EventEmitter<Msg> for Model {}
 
 impl Model {
     pub fn new(
@@ -122,7 +122,7 @@ impl Model {
             ProjectSettingsDialog::new(project, project_directory, workspace_root, cx)
         });
 
-        cx.subscribe(&dialog, Self::on_settings_event).detach();
+        cx.subscribe(&dialog, Self::on_settings_msg).detach();
         self.dialog = Some(Dialog::ProjectSettings(dialog));
         cx.notify();
     }
@@ -147,7 +147,7 @@ impl Model {
         let voices = self.project.voices().to_vec();
         let dialog = cx.new(move |cx| VoicesDialog::new(voices, cx));
 
-        cx.subscribe(&dialog, Self::on_voices_event).detach();
+        cx.subscribe(&dialog, Self::on_voices_msg).detach();
         self.dialog = Some(Dialog::Voices(dialog));
         self.set_voices_button_depressed(true, cx);
         cx.notify();
@@ -168,19 +168,19 @@ impl Model {
         let parts = self.project.parts.clone();
         let dialog = cx.new(move |cx| PartsDialog::new(parts, cx));
 
-        cx.subscribe(&dialog, Self::on_parts_event).detach();
+        cx.subscribe(&dialog, Self::on_parts_msg).detach();
         self.dialog = Some(Dialog::Parts(dialog));
         self.set_parts_button_depressed(true, cx);
         cx.notify();
     }
 
-    fn on_settings_event(
+    fn on_settings_msg(
         &mut self,
         _: Entity<ProjectSettingsDialog>,
-        event: &ProjectSettingsEvent,
+        msg: &ProjectSettingsMsg,
         cx: &mut Context<Self>,
     ) {
-        if let ProjectSettingsEvent::Saved(updated_project) = event {
+        if let ProjectSettingsMsg::Saved(updated_project) = msg {
             self.project = updated_project.clone();
         }
 
@@ -188,14 +188,14 @@ impl Model {
         cx.notify();
     }
 
-    fn on_voices_event(
+    fn on_voices_msg(
         &mut self,
         dialog: Entity<VoicesDialog>,
-        event: &voices::Event,
+        msg: &voices::Msg,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            voices::Event::AddRequested { name, voice_type } => {
+        match msg {
+            voices::Msg::AddRequested { name, voice_type } => {
                 match project::add_voice(&self.project_directory, &self.project, name, *voice_type)
                 {
                     Ok(updated_project) => {
@@ -218,7 +218,7 @@ impl Model {
                     }
                 }
             }
-            voices::Event::EditRequested {
+            voices::Msg::EditRequested {
                 original_name,
                 name,
                 voice_type,
@@ -255,7 +255,7 @@ impl Model {
                     }
                 }
             }
-            voices::Event::DeleteRequested { name } => {
+            voices::Msg::DeleteRequested { name } => {
                 match project::delete_voice(&self.project_directory, &self.project, name) {
                     Ok(updated_project) => {
                         self.project = updated_project;
@@ -271,7 +271,7 @@ impl Model {
                     }
                 }
             }
-            voices::Event::Closed => {
+            voices::Msg::Closed => {
                 self.dialog = None;
                 self.set_voices_button_depressed(false, cx);
             }
@@ -280,14 +280,14 @@ impl Model {
         cx.notify();
     }
 
-    fn on_parts_event(
+    fn on_parts_msg(
         &mut self,
         dialog: Entity<PartsDialog>,
-        event: &parts::Event,
+        msg: &parts::Msg,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            parts::Event::AddRequested { name, length } => {
+        match msg {
+            parts::Msg::AddRequested { name, length } => {
                 match create_project_part(&self.project_directory, &mut self.project, name, *length)
                 {
                     Ok(part) => {
@@ -303,7 +303,7 @@ impl Model {
                     }
                 }
             }
-            parts::Event::DeleteRequested { name } => {
+            parts::Msg::DeleteRequested { name } => {
                 match delete_project_part(&self.project_directory, &mut self.project, name) {
                     Ok(part) => {
                         let parts = self.project.parts.clone();
@@ -318,7 +318,7 @@ impl Model {
                     }
                 }
             }
-            parts::Event::Closed => {
+            parts::Msg::Closed => {
                 self.dialog = None;
                 self.set_parts_button_depressed(false, cx);
             }
@@ -344,7 +344,7 @@ impl Model {
             return;
         }
 
-        cx.emit(Event::CloseRequested);
+        cx.emit(Msg::CloseRequested);
     }
 }
 

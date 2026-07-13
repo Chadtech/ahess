@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-pub enum Event {
+pub enum Msg {
     AddRequested { name: String, length: u32 },
     DeleteRequested { name: PartName },
     Closed,
@@ -48,7 +48,7 @@ pub struct PartsDialog {
     close_button: Entity<Button>,
 }
 
-impl EventEmitter<Event> for PartsDialog {}
+impl EventEmitter<Msg> for PartsDialog {}
 
 impl PartsDialog {
     pub fn new(parts: Vec<Part>, cx: &mut Context<Self>) -> Self {
@@ -110,7 +110,7 @@ impl PartsDialog {
     }
 
     fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Event::Closed);
+        cx.emit(Msg::Closed);
     }
 
     fn on_add_new_clicked(
@@ -141,7 +141,7 @@ impl PartsDialog {
         let name = name.read(cx).value();
         let length = length.read(cx).value();
         match parse_part_length(&length) {
-            Ok(length) => cx.emit(Event::AddRequested { name, length }),
+            Ok(length) => cx.emit(Msg::AddRequested { name, length }),
             Err(error) => {
                 if let DialogView::Add { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
@@ -197,7 +197,7 @@ impl PartsDialog {
             return;
         };
 
-        cx.emit(Event::DeleteRequested { name });
+        cx.emit(Msg::DeleteRequested { name });
     }
 
     fn select_part(&mut self, name: &PartName, cx: &mut Context<Self>) {

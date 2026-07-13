@@ -91,14 +91,14 @@ impl AhessApp {
         }
     }
 
-    fn on_project_open_event(
+    fn on_project_open_msg(
         &mut self,
         _: Entity<project_open::Model>,
-        event: &project_open::Event,
+        msg: &project_open::Msg,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            project_open::Event::CloseRequested => {
+        match msg {
+            project_open::Msg::CloseRequested => {
                 self.set_project_start_mode(ProjectStartMode::Existing, cx);
             }
         }
@@ -151,7 +151,7 @@ impl AhessApp {
                         cx,
                     )
                 });
-                cx.subscribe(&model, Self::on_project_open_event).detach();
+                cx.subscribe(&model, Self::on_project_open_msg).detach();
                 AppMode::ProjectOpen(model)
             }
             Err(error) => AppMode::Error {
@@ -219,8 +219,7 @@ impl AppMode {
                         cx,
                     )
                 });
-                cx.subscribe(&model, AhessApp::on_project_open_event)
-                    .detach();
+                cx.subscribe(&model, AhessApp::on_project_open_msg).detach();
                 Self::ProjectOpen(model)
             }
             StoredAppMode::Error { message } => Self::Error { message },

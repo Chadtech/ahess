@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-pub enum ProjectSettingsEvent {
+pub enum ProjectSettingsMsg {
     Saved(Project),
     Closed,
 }
@@ -33,7 +33,7 @@ pub struct ProjectSettingsDialog {
     confirming_discard: bool,
 }
 
-impl EventEmitter<ProjectSettingsEvent> for ProjectSettingsDialog {}
+impl EventEmitter<ProjectSettingsMsg> for ProjectSettingsDialog {}
 
 impl ProjectSettingsDialog {
     pub fn new(
@@ -80,7 +80,7 @@ impl ProjectSettingsDialog {
             self.save_error = None;
             cx.notify();
         } else {
-            cx.emit(ProjectSettingsEvent::Closed);
+            cx.emit(ProjectSettingsMsg::Closed);
         }
     }
 
@@ -98,7 +98,7 @@ impl ProjectSettingsDialog {
         match result {
             Ok(project) => {
                 self.original_project = project.clone();
-                cx.emit(ProjectSettingsEvent::Saved(project));
+                cx.emit(ProjectSettingsMsg::Saved(project));
             }
             Err(error) => {
                 self.save_error = Some(error.to_string());
@@ -124,7 +124,7 @@ impl ProjectSettingsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(ProjectSettingsEvent::Closed);
+        cx.emit(ProjectSettingsMsg::Closed);
     }
 
     fn project_from_fields(
