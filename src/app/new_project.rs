@@ -56,8 +56,7 @@ impl NewProjectDialog {
         cx: &mut Context<Self>,
     ) -> Result<ProjectOpened, CreateProjectFormError> {
         let project_name = self.fields.project_name.read(cx).value().trim().to_string();
-        let beat_length =
-            parse_u32_field("beat length", &self.fields.beat_length.read(cx).value())?;
+        let beat_length = parse_beat_length_field(&self.fields.beat_length.read(cx).value())?;
         let timing_variance = parse_u32_field("variance", &self.fields.variance.read(cx).value())?;
         let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
         let description = self.fields.description.read(cx).value();
@@ -112,6 +111,16 @@ fn parse_u32_field(label: &'static str, value: &str) -> Result<u32, CreateProjec
     value.trim().parse::<u32>().map_err(|_| {
         CreateProjectFormError::InvalidField(format!("{label} must be a whole number"))
     })
+}
+
+fn parse_beat_length_field(value: &str) -> Result<u32, CreateProjectFormError> {
+    let beat_length = parse_u32_field("beat length", value)?;
+    if beat_length == 0 {
+        return Err(CreateProjectFormError::InvalidField(
+            "beat length must be at least one sample".to_string(),
+        ));
+    }
+    Ok(beat_length)
 }
 
 fn parse_seed_field(value: &str) -> Result<Seed, CreateProjectFormError> {
@@ -183,13 +192,15 @@ fn new_project_form(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_seed_field, parse_u32_field};
+    use super::{parse_beat_length_field, parse_seed_field, parse_u32_field};
     use crate::seed::Seed;
 
     #[test]
     fn parses_decimal_number_fields() {
         assert_eq!(parse_u32_field("beat length", " 4000 ").unwrap(), 4000);
         assert!(parse_u32_field("beat length", "4.0").is_err());
+        assert_eq!(parse_beat_length_field("800").unwrap(), 800);
+        assert!(parse_beat_length_field("0").is_err());
     }
 
     #[test]

@@ -8,7 +8,10 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::project::{self, Voice};
+use crate::{
+    note::{Note, ParseNoteError},
+    project::{self, Voice},
+};
 
 pub const DELETED_PARTS_DIRECTORY: &str = "deleted";
 
@@ -270,6 +273,158 @@ pub enum PartFileError {
     Io { path: PathBuf, source: io::Error },
     Csv { path: PathBuf, source: csv::Error },
     Invalid { path: PathBuf, message: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartScore {
+    rows: Vec<Vec<String>>,
+}
+
+impl PartScore {
+    pub fn from_rows(rows: Vec<Vec<String>>) -> Self {
+        Self { rows }
+    }
+
+    pub fn load(
+        project_directory: impl AsRef<Path>,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<Self, PartFileError> {
+        read_part_table(project_directory.as_ref(), part, voices)
+            .map(|table| Self { rows: table.rows })
+    }
+
+    pub fn rows(&self) -> &[Vec<String>] {
+        &self.rows
+    }
+
+    pub fn parsed_rows(
+        &self,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<Vec<Vec<Option<Note>>>, ScoreError> {
+        self.validate_shape(part, voices)?;
+
+        self.rows
+            .iter()
+            .enumerate()
+            .map(|(beat_index, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(|(voice_index, value)| {
+                        Note::parse_cell(value).map_err(|source| ScoreError::InvalidNote {
+                            beat: beat_index + 1,
+                            voice: voices[voice_index].name.as_str().to_string(),
+                            source,
+                        })
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    pub fn save(
+        &self,
+        project_directory: impl AsRef<Path>,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<(), ScoreError> {
+        self.parsed_rows(part, voices)?;
+        let contents =
+            serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv {
+                path: part_file_path(project_directory.as_ref(), part),
+                source,
+            })?;
+        atomic_write_part_score(project_directory.as_ref(), part, &contents)
+    }
+
+    fn validate_shape(&self, part: &Part, voices: &[Voice]) -> Result<(), ScoreError> {
+        if self.rows.len() != part.length as usize {
+            return Err(ScoreError::InvalidShape {
+                message: format!(
+                    "score has {} beat rows; expected {}",
+                    self.rows.len(),
+                    part.length
+                ),
+            });
+        }
+
+        if let Some((row_index, row)) = self
+            .rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.len() != voices.len())
+        {
+            return Err(ScoreError::InvalidShape {
+                message: format!(
+                    "beat row {} has {} voice cells; expected {}",
+                    row_index + 1,
+                    row.len(),
+                    voices.len()
+                ),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum ScoreError {
+    InvalidShape {
+        message: String,
+    },
+    InvalidNote {
+        beat: usize,
+        voice: String,
+        source: ParseNoteError,
+    },
+    Csv {
+        path: PathBuf,
+        source: csv::Error,
+    },
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
+}
+
+impl fmt::Display for ScoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidShape { message } => formatter.write_str(message),
+            Self::InvalidNote {
+                beat,
+                voice,
+                source,
+            } => write!(formatter, "beat {beat}, voice {voice:?}: {source}"),
+            Self::Csv { path, source } => {
+                write!(
+                    formatter,
+                    "failed to encode score at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Io { path, source } => {
+                write!(
+                    formatter,
+                    "filesystem error at {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl Error for ScoreError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidNote { source, .. } => Some(source),
+            Self::Csv { source, .. } => Some(source),
+            Self::Io { source, .. } => Some(source),
+            Self::InvalidShape { .. } => None,
+        }
+    }
 }
 
 impl fmt::Display for PartFileError {
@@ -618,6 +773,45 @@ fn part_file_path(project_directory: &Path, part: &Part) -> PathBuf {
     project_directory.join(file_name)
 }
 
+fn atomic_write_part_score(
+    project_directory: &Path,
+    part: &Part,
+    contents: &[u8],
+) -> Result<(), ScoreError> {
+    let path = part_file_path(project_directory, part);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("validated part paths always have UTF-8 filenames");
+    let pending_path = project_directory.join(format!(".{file_name}.pending"));
+    let mut pending = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&pending_path)
+        .map_err(|source| ScoreError::Io {
+            path: pending_path.clone(),
+            source,
+        })?;
+
+    let write_result = pending.write_all(contents).and_then(|_| pending.sync_all());
+    drop(pending);
+    if let Err(source) = write_result {
+        fs::remove_file(&pending_path).ok();
+        return Err(ScoreError::Io {
+            path: pending_path,
+            source,
+        });
+    }
+
+    if let Err(source) = fs::rename(&pending_path, &path) {
+        fs::remove_file(&pending_path).ok();
+        return Err(ScoreError::Io { path, source });
+    }
+
+    Ok(())
+}
+
 fn escape_csv_value(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
         format!("\"{}\"", value.replace('"', "\"\""))
@@ -670,9 +864,10 @@ mod tests {
 
     use super::{
         available_deleted_path, create_part_file, csv_file_name, soft_delete_part_file,
-        DeletedPartPathError, Part, PartName, DELETED_PARTS_DIRECTORY,
+        DeletedPartPathError, Part, PartName, PartScore, DELETED_PARTS_DIRECTORY,
     };
     use crate::{
+        note::Note,
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
         seed::Seed,
     };
@@ -760,6 +955,55 @@ mod tests {
         assert_eq!(load_project(&project_directory).unwrap().project, project);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn part_scores_load_validate_and_save_note_cells() {
+        let root = temp_root("score-round-trip");
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
+            Voice::new(1, "lead", VoiceType::Saw),
+            Voice::new(2, "bass", VoiceType::Sin),
+        ]);
+        let project_directory = create_project(&root, &project).unwrap();
+        let part = add_part(&project_directory, &mut project, "intro", 2);
+        let score = PartScore::from_rows(vec![
+            vec!["C4".to_string(), "36".to_string()],
+            vec![String::new(), "rest".to_string()],
+        ]);
+
+        score
+            .save(&project_directory, &part, project.voices())
+            .unwrap();
+
+        assert_eq!(
+            PartScore::load(&project_directory, &part, project.voices()).unwrap(),
+            score
+        );
+        assert_eq!(
+            score.parsed_rows(&part, project.voices()).unwrap(),
+            vec![
+                vec![Some(Note::from_midi(60)), Some(Note::from_midi(36))],
+                vec![None, None],
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(project_directory.join("intro.csv")).unwrap(),
+            "lead,bass\nC4,36\n,rest\n"
+        );
+        assert!(!project_directory.join(".intro.csv.pending").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn part_scores_report_the_beat_and_voice_for_invalid_notes() {
+        let part = Part::new("intro", 1);
+        let voices = vec![Voice::new(1, "lead", VoiceType::Saw)];
+        let score = PartScore::from_rows(vec![vec!["not a note".to_string()]]);
+
+        let error = score.parsed_rows(&part, &voices).unwrap_err();
+
+        assert!(error.to_string().contains("beat 1, voice \"lead\""));
     }
 
     #[test]

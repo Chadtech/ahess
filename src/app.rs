@@ -424,10 +424,10 @@ impl Render for AhessApp {
                 AppFrame::new(project_start_screen(project_start), "")
             }
             AppMode::ProjectOpen(model) => {
-                let model = model.read(cx);
-                AppFrame::new(model.view(), model.project().name.clone())
-                    .with_actions(model.bar_actions())
-                    .with_dialog(model.active_dialog())
+                let project_model = model.read(cx);
+                AppFrame::new(model.clone(), project_model.project().name.clone())
+                    .with_actions(project_model.bar_actions())
+                    .with_dialog(project_model.active_dialog())
             }
             AppMode::Error { message } => {
                 AppFrame::new(error_screen(message.clone().into()), "error")

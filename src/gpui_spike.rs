@@ -795,7 +795,7 @@ impl Render for SpreadsheetSpike {
                                     .flex()
                                     .flex_row()
                                     .child(row_header(row_ix))
-                                    .children(row.iter().map(|cell| cell.clone()))
+                                    .children(row.iter().cloned())
                             })),
                     ),
             )

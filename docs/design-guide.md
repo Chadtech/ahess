@@ -30,6 +30,47 @@ their styles locally.
 - arrange the label above the input.
 - style field labels with `FIELD_LABEL_TEXT`.
 
+## dropdowns
+
+- use `view::dropdown::Dropdown` for a compact choice among a short list of
+  mutually exclusive options.
+- the trigger displays the selected option and the menu uses a solid `GRAY1`
+  border.
+- menu rows use the selection-list colors: `GREEN4` identifies the selected
+  option, while hover uses the brighter `GREEN5` background and
+  `TEXT_HOVERED` text.
+- keep the option text concise; use a dialog or full selection list when the
+  choices require supporting detail.
+
+## data grids
+
+- use `view::data_grid::editable` for an editable row-and-column table.
+- the component owns scrolling, row numbering, column headers, cell dimensions,
+  and raised/sunken table chrome.
+- give each independently scrollable grid view its own `ScrollHandle`.
+
+## score transport
+
+- put shared score playback controls in the project bar, not inside individual
+  score panes.
+- play targets the active pane; changing the active pane does not implicitly
+  change the part that is already playing.
+
+## status bars
+
+- use `view::status_bar::bar` for a fixed-height status area at the bottom of a
+  workspace.
+- keep the bar present in its neutral, blank state so status changes never
+  reflow the workspace.
+- place workspace status bars outside content padding so they span the full
+  width and meet the bottom and side edges of the window.
+- separate the bar from workspace content with a top border only; do not frame
+  its left, right, or bottom edges.
+- use the warning state for unsaved changes and the error state for parse,
+  playback, and project-operation failures.
+- pair cell-specific errors with an error highlight on every affected cell;
+  the bar explains the first issue and may navigate to it.
+
 ## dialogs
 
 - use `S10` for standard dialog widths. Use `S11` by `S10` for the wider

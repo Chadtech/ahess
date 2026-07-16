@@ -3,9 +3,9 @@ use std::ops::Range;
 use gpui::{
     actions, div, fill, point, prelude::*, px, relative, rgba, size, App, Bounds, ClipboardItem,
     Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style,
-    TextRun, UTF16Selection, UnderlineStyle, Window,
+    EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
+    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -64,6 +64,10 @@ pub struct TextInput {
     is_selecting: bool,
 }
 
+pub struct Changed;
+
+impl EventEmitter<Changed> for TextInput {}
+
 impl TextInput {
     pub fn new(
         content: impl Into<SharedString>,
@@ -85,6 +89,23 @@ impl TextInput {
 
     pub fn value(&self) -> String {
         self.content.to_string()
+    }
+
+    pub fn focus(&self, window: &mut Window) {
+        self.focus_handle.focus(window);
+    }
+
+    pub(crate) fn sync_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let value = value.into();
+        if self.content == value {
+            return;
+        }
+
+        self.content = value;
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.notify();
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -368,6 +389,7 @@ impl EntityInputHandler for TextInput {
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.selection_reversed = false;
         self.marked_range.take();
+        cx.emit(Changed);
         cx.notify();
     }
 
@@ -401,6 +423,7 @@ impl EntityInputHandler for TextInput {
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
         self.selection_reversed = false;
 
+        cx.emit(Changed);
         cx.notify();
     }
 

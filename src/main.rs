@@ -1,8 +1,10 @@
 mod app;
 mod cpal_spike;
 mod gpui_spike;
+pub mod note;
 mod palette;
 pub mod part;
+mod playback;
 pub mod project;
 pub mod seed;
 mod style;

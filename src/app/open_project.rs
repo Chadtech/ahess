@@ -203,7 +203,7 @@ fn project_list_row(
 ) -> gpui::Div {
     let background = if selected {
         s::GREEN4
-    } else if index % 2 == 0 {
+    } else if index.is_multiple_of(2) {
         s::GREEN2
     } else {
         s::GREEN3

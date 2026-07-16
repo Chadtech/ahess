@@ -65,6 +65,16 @@ impl Button {
         cx.notify();
     }
 
+    pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let label = label.into();
+        if self.label == label {
+            return;
+        }
+
+        self.label = label;
+        cx.notify();
+    }
+
     pub fn suppress_hover_until_pointer_exit(&mut self, cx: &mut Context<Self>) {
         let changed = self.hovered || !self.hover_suppressed_until_exit;
         self.hovered = false;
