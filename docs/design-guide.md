@@ -30,6 +30,15 @@ their styles locally.
 - arrange the label above the input.
 - style field labels with `FIELD_LABEL_TEXT`.
 
+## buttons
+
+- use the shared `view::button::Button` disabled state for unavailable actions
+  that must keep a stable position. Disabled buttons use the lighter `GRAY3`
+  background, do not react to hover or presses, and cannot become depressed.
+- use shared square buttons for compact, familiar symbols. When multiple square
+  buttons express directions within a toolbar, give the group a nearby text
+  label rather than repeating text in every button.
+
 ## dropdowns
 
 - use `view::dropdown::Dropdown` for a compact choice among a short list of
@@ -82,6 +91,23 @@ their styles locally.
 - use `view::dialog::list_detail_dialog` and
   `view::dialog::management_form_dialog` for management dialogs that pair a
   selectable resource list and detail view with an add form.
+- use `view::dialog::column_with_actions` to place controls that act on one
+  column in a single horizontal toolbar directly beneath that column's content.
+  Keep controls for the same operation adjacent and use a larger spacing token
+  to distinguish separate control groups within the toolbar.
+- a list/detail management dialog may use its auxiliary third column for an
+  ordered workflow that directly consumes the selected resource. Keep the
+  resource list, details, and workflow visible together instead of opening a
+  second management dialog. When present, all three columns have fixed equal
+  widths; changing content in one column must not resize the others.
+- in the parts dialog, the auxiliary column is the project arrangement. Show
+  every part occurrence as its own numbered row and provide explicit controls
+  to move, repeat, and remove the selected occurrence. The arrangement list
+  fills the full width available to its column. Keep the delete part control
+  visible and disabled while the selected part has arrangement occurrences.
+  Put add-new actions under the parts list, part actions under the details, and
+  arrangement actions under the arrangement list. Part details describe the
+  part and its arrangement usage; do not expose storage filenames.
 - use `view::selection_list::list` and `view::selection_list::row` for selectable
   resource lists. The component owns the sunken container, empty state,
   alternating row colors, and selected-row colors.

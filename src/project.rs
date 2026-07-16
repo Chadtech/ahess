@@ -35,6 +35,7 @@ pub struct Project {
     next_voice_id: u64,
     voices: Vec<Voice>,
     pub parts: Vec<Part>,
+    sequence: Vec<PartName>,
 }
 
 impl Project {
@@ -53,6 +54,7 @@ impl Project {
             next_voice_id: 1,
             voices: Vec::new(),
             parts: Vec::new(),
+            sequence: Vec::new(),
         }
     }
 
@@ -79,12 +81,27 @@ impl Project {
 
     #[cfg(test)]
     pub(crate) fn with_parts(mut self, parts: Vec<Part>) -> Self {
+        self.sequence = parts.iter().map(|part| part.name.clone()).collect();
         self.parts = parts;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_sequence(mut self, sequence: Vec<PartName>) -> Self {
+        self.sequence = sequence;
         self
     }
 
     pub fn parts(&self) -> &[Part] {
         &self.parts
+    }
+
+    pub fn sequence(&self) -> &[PartName] {
+        &self.sequence
+    }
+
+    pub fn set_sequence(&mut self, sequence: Vec<PartName>) {
+        self.sequence = sequence;
     }
 
     pub fn add_part(&mut self, part: Part) {
@@ -113,7 +130,7 @@ impl Project {
 
     pub fn config_file_contents(&self) -> String {
         let mut contents = format!(
-            "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nseed = {}\nnext_voice_id = {}\n",
+            "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
             toml_string(&self.name),
             toml_string(&self.description),
             self.beat_length,
@@ -121,6 +138,14 @@ impl Project {
             self.seed.value(),
             self.next_voice_id
         );
+
+        for (index, part_name) in self.sequence.iter().enumerate() {
+            if index > 0 {
+                contents.push_str(", ");
+            }
+            contents.push_str(&toml_string(part_name.as_str()));
+        }
+        contents.push_str("]\n");
 
         for voice in &self.voices {
             contents.push_str("\n[[voices]]\n");
@@ -236,6 +261,10 @@ pub enum LoadProjectError {
     InvalidConfig {
         path: PathBuf,
         source: toml::de::Error,
+    },
+    InvalidSequence {
+        path: PathBuf,
+        message: String,
     },
     InvalidPart(part::PartFileError),
     Recovery(ProjectTransactionError),
@@ -366,6 +395,14 @@ impl fmt::Display for LoadProjectError {
                     source
                 )
             }
+            Self::InvalidSequence { path, message } => {
+                write!(
+                    f,
+                    "invalid project config at {}: {}",
+                    path.display(),
+                    message
+                )
+            }
             Self::InvalidPart(error) => write!(f, "{error}"),
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
         }
@@ -377,6 +414,7 @@ impl Error for LoadProjectError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::InvalidConfig { source, .. } => Some(source),
+            Self::InvalidSequence { .. } => None,
             Self::InvalidPart(error) => Some(error),
             Self::Recovery(error) => Some(error),
         }
@@ -454,12 +492,18 @@ pub fn load_project(project_directory: impl AsRef<Path>) -> Result<ProjectEntry,
     })?;
     let project_config = toml::from_str::<ProjectConfig>(&config).map_err(|source| {
         LoadProjectError::InvalidConfig {
-            path: config_path,
+            path: config_path.clone(),
             source,
         }
     })?;
 
-    let project = project_config.into_project();
+    let project =
+        project_config
+            .into_project()
+            .map_err(|message| LoadProjectError::InvalidSequence {
+                path: config_path,
+                message,
+            })?;
     for project_part in &project.parts {
         part::validate_part_file(project_directory, project_part, &project.voices)
             .map_err(LoadProjectError::InvalidPart)?;
@@ -835,6 +879,8 @@ struct ProjectConfig {
     voices: Vec<Voice>,
     #[serde(default, deserialize_with = "deserialize_parts")]
     parts: Vec<Part>,
+    #[serde(default)]
+    sequence: Option<Vec<PartName>>,
 }
 
 #[derive(Deserialize)]
@@ -953,7 +999,22 @@ where
 }
 
 impl ProjectConfig {
-    fn into_project(self) -> Project {
+    fn into_project(self) -> Result<Project, String> {
+        let sequence = match self.sequence {
+            Some(sequence) => sequence
+                .into_iter()
+                .map(|part_name| {
+                    self.parts
+                        .iter()
+                        .find(|part| part.name.eq_ignore_ascii_case(&part_name))
+                        .map(|part| part.name.clone())
+                        .ok_or_else(|| {
+                            format!("sequence references missing part {:?}", part_name.as_str())
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            None => self.parts.iter().map(|part| part.name.clone()).collect(),
+        };
         let mut project = Project::new(
             self.name,
             self.beat_length,
@@ -974,7 +1035,8 @@ impl ProjectConfig {
             .unwrap_or(minimum_next_voice_id)
             .max(minimum_next_voice_id);
         project.parts = self.parts;
-        project
+        project.sequence = sequence;
+        Ok(project)
     }
 }
 
@@ -993,7 +1055,7 @@ mod tests {
         TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
-        part::{self, Part},
+        part::{self, Part, PartName},
         seed::Seed,
         voice_name::VoiceName,
     };
@@ -1008,6 +1070,7 @@ mod tests {
         assert_eq!(project.seed, Seed::new(19));
         assert_eq!(project.description, "sketch");
         assert!(project.voices.is_empty());
+        assert!(project.sequence().is_empty());
     }
 
     #[test]
@@ -1030,7 +1093,7 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\n"
+            "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = []\n"
         );
     }
 
@@ -1043,7 +1106,7 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\n\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\nsequence = []\n\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
         );
     }
 
@@ -1054,8 +1117,19 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\n\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
         );
+    }
+
+    #[test]
+    fn config_file_contents_preserve_repeated_part_occurrences() {
+        let project = Project::new("test", 4000, 100, Seed::new(1234))
+            .with_parts(vec![Part::new("part-a", 8), Part::new("part-b", 16)])
+            .with_sequence(vec!["part-a".into(), "part-b".into(), "part-b".into()]);
+
+        assert!(project
+            .config_file_contents()
+            .contains("sequence = [\"part-a\", \"part-b\", \"part-b\"]\n"));
     }
 
     #[test]
@@ -1118,6 +1192,95 @@ mod tests {
         assert_eq!(loaded_project.project, project);
         assert!(loaded_project.project.voices.is_empty());
         assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_projects_default_the_sequence_to_each_part_once() {
+        let root = temp_root("legacy-part-sequence");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 2);
+        add_test_part(&project_directory, &mut project, "verse", 2);
+        let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+        let legacy_config = fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("sequence = []\n", "");
+        fs::write(&config_path, legacy_config).unwrap();
+
+        let loaded = load_project(&project_directory).unwrap().project;
+
+        assert_eq!(
+            loaded
+                .sequence()
+                .iter()
+                .map(PartName::as_str)
+                .collect::<Vec<_>>(),
+            vec!["intro", "verse"]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_empty_sequence_remains_empty() {
+        let root = temp_root("empty-part-sequence");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 2);
+
+        let loaded = load_project(&project_directory).unwrap().project;
+
+        assert!(loaded.sequence().is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rejects_sequence_references_to_missing_parts() {
+        let root = temp_root("missing-sequence-part");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 2);
+        let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+        let invalid_config = fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("sequence = []", "sequence = [\"missing\"]");
+        fs::write(&config_path, invalid_config).unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(matches!(error, LoadProjectError::InvalidSequence { .. }));
+        assert!(error
+            .to_string()
+            .contains("sequence references missing part \"missing\""));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sequence_references_use_the_part_name_casing() {
+        let root = temp_root("sequence-name-casing");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "Intro", 2);
+        let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+        let config = fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("sequence = []", "sequence = [\"INTRO\", \"intro\"]");
+        fs::write(&config_path, config).unwrap();
+
+        let loaded = load_project(&project_directory).unwrap().project;
+
+        assert_eq!(
+            loaded
+                .sequence()
+                .iter()
+                .map(PartName::as_str)
+                .collect::<Vec<_>>(),
+            vec!["Intro", "Intro"]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

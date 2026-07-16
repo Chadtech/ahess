@@ -28,7 +28,7 @@ use crate::{
 use self::{
     parts::PartsDialog,
     project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
-    score::{DocumentEvent, ScoreDocument, ScoreEditor},
+    score::{DocumentEvent, PartSelected, ScoreDocument, ScoreEditor},
     voices::VoicesDialog,
 };
 
@@ -457,17 +457,62 @@ impl Model {
             Ok(document) => document,
             Err(error) => {
                 self.workspace_error = Some(error);
+                self.sync_score_editor_parts(cx);
                 cx.notify();
                 return;
             }
         };
-        let editor = cx.new(move |cx| ScoreEditor::new(document, cx));
+        let part_names = self
+            .project
+            .parts()
+            .iter()
+            .map(|part| part.name.clone())
+            .collect::<Vec<_>>();
+        let editor = cx.new(move |cx| ScoreEditor::new(view_index, document, part_names, cx));
+        cx.subscribe(&editor, Self::on_score_editor_part_selected)
+            .detach();
         if let Some(view) = self.score_views.get_mut(view_index) {
             view.part_name = Some(part_name);
             view.editor = Some(editor);
             self.workspace_error = None;
         }
         cx.notify();
+    }
+
+    fn on_score_editor_part_selected(
+        &mut self,
+        editor: Entity<ScoreEditor>,
+        selected: &PartSelected,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view_index) = self
+            .score_views
+            .iter()
+            .position(|view| view.editor.as_ref() == Some(&editor))
+        else {
+            return;
+        };
+        self.activate_score_view(view_index, cx);
+        self.assign_part_to_view(view_index, selected.part_name.clone(), cx);
+    }
+
+    fn sync_score_editor_parts(&self, cx: &mut Context<Self>) {
+        let part_names = self
+            .project
+            .parts()
+            .iter()
+            .map(|part| part.name.clone())
+            .collect::<Vec<_>>();
+        for editor in self
+            .score_views
+            .iter()
+            .filter_map(|view| view.editor.as_ref())
+        {
+            let part_names = part_names.clone();
+            editor.update(cx, |editor, cx| {
+                editor.set_available_parts(part_names, cx);
+            });
+        }
     }
 
     fn activate_score_view(&mut self, view_index: usize, cx: &mut Context<Self>) {
@@ -623,7 +668,8 @@ impl Model {
         }
 
         let parts = self.project.parts.clone();
-        let dialog = cx.new(move |cx| PartsDialog::new(parts, cx));
+        let sequence = self.project.sequence().to_vec();
+        let dialog = cx.new(move |cx| PartsDialog::new(parts, sequence, cx));
 
         cx.subscribe(&dialog, Self::on_parts_msg).detach();
         self.dialog = Some(Dialog::Parts(dialog));
@@ -771,6 +817,7 @@ impl Model {
                             dialog.part_added(parts, part.name, cx);
                         });
                         self.select_part(added_name, cx);
+                        self.sync_score_editor_parts(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -819,6 +866,7 @@ impl Model {
                                 self.assign_part_to_view(view_index, part_name, cx);
                             }
                         }
+                        self.sync_score_editor_parts(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -827,6 +875,26 @@ impl Model {
                     }
                 }
             }
+            parts::Msg::SequenceChangeRequested {
+                sequence,
+                selected_occurrence,
+            } => match update_project_sequence(
+                &self.project_directory,
+                &mut self.project,
+                sequence.clone(),
+            ) {
+                Ok(sequence) => {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.sequence_changed(sequence, *selected_occurrence, cx);
+                    });
+                    self.update_score_documents_for_project_settings(cx);
+                }
+                Err(error) => {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.sequence_change_failed(error.to_string(), cx);
+                    });
+                }
+            },
             parts::Msg::Closed => {
                 self.dialog = None;
                 self.set_parts_button_depressed(false, cx);
@@ -1014,6 +1082,10 @@ enum PartChangeError {
     CreateFile(part::CreatePartError),
     DeleteFile(part::DeletePartError),
     MissingPart(String),
+    PartInSequence {
+        name: String,
+        occurrence_count: usize,
+    },
     SaveCreated {
         source: project::SaveProjectError,
         rollback_error: Option<part::PartFileRollbackError>,
@@ -1031,6 +1103,20 @@ impl fmt::Display for PartChangeError {
             Self::CreateFile(error) => write!(f, "{error}"),
             Self::DeleteFile(error) => write!(f, "{error}"),
             Self::MissingPart(name) => write!(f, "part {name:?} no longer exists"),
+            Self::PartInSequence {
+                name,
+                occurrence_count,
+            } => {
+                let occurrence_label = if *occurrence_count == 1 {
+                    "occurrence"
+                } else {
+                    "occurrences"
+                };
+                write!(
+                    f,
+                    "remove {occurrence_count} {occurrence_label} of part {name:?} from the arrangement before deleting it"
+                )
+            }
             Self::SaveCreated {
                 source,
                 rollback_error: None,
@@ -1064,9 +1150,58 @@ impl std::error::Error for PartChangeError {
             Self::CreateFile(error) => Some(error),
             Self::DeleteFile(error) => Some(error),
             Self::SaveCreated { source, .. } | Self::SaveDeleted { source, .. } => Some(source),
-            Self::MissingPart(_) => None,
+            Self::MissingPart(_) | Self::PartInSequence { .. } => None,
         }
     }
+}
+
+#[derive(Debug)]
+enum ArrangementChangeError {
+    MissingPart(String),
+    Save(project::SaveProjectError),
+}
+
+impl fmt::Display for ArrangementChangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPart(name) => write!(f, "part {name:?} no longer exists"),
+            Self::Save(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ArrangementChangeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MissingPart(_) => None,
+            Self::Save(error) => Some(error),
+        }
+    }
+}
+
+fn update_project_sequence(
+    project_directory: &Path,
+    project: &mut Project,
+    sequence: Vec<PartName>,
+) -> Result<Vec<PartName>, ArrangementChangeError> {
+    let sequence = sequence
+        .into_iter()
+        .map(|name| {
+            project
+                .part(&name)
+                .map(|part| part.name.clone())
+                .ok_or_else(|| ArrangementChangeError::MissingPart(name.as_str().to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let original_sequence = project.sequence().to_vec();
+    project.set_sequence(sequence.clone());
+
+    if let Err(error) = project::save_project(project_directory, project) {
+        project.set_sequence(original_sequence);
+        return Err(ArrangementChangeError::Save(error));
+    }
+
+    Ok(sequence)
 }
 
 fn create_project_part(
@@ -1111,6 +1246,17 @@ fn delete_project_part(
         .iter()
         .position(|part| part.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| PartChangeError::MissingPart(name.as_str().to_string()))?;
+    let occurrence_count = project
+        .sequence()
+        .iter()
+        .filter(|part_name| part_name.eq_ignore_ascii_case(name))
+        .count();
+    if occurrence_count > 0 {
+        return Err(PartChangeError::PartInSequence {
+            name: project.parts[index].name.as_str().to_string(),
+            occurrence_count,
+        });
+    }
     let deleted = part::soft_delete_part_file(project_directory, &project.parts[index])
         .map_err(PartChangeError::DeleteFile)?;
     let removed_part = project.parts.remove(index);
@@ -1130,19 +1276,78 @@ fn delete_project_part(
 mod tests {
     use std::{
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use gpui::{px, size, TestAppContext};
 
-    use super::{Model, StatusTarget};
+    use super::{
+        create_project_part, delete_project_part, update_project_sequence, Model, PartChangeError,
+        StatusTarget,
+    };
     use crate::{
         part::{Part, PartScore},
-        project::{Project, Voice, VoiceType},
+        project::{self, Project, Voice, VoiceType},
         seed::Seed,
         view::status_bar,
     };
+
+    #[test]
+    fn arrangement_changes_persist_and_prevent_deleting_referenced_parts() {
+        let root = temp_root("part-arrangement");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let part = create_project_part(&project_directory, &mut project, "part-a", 4).unwrap();
+
+        update_project_sequence(
+            &project_directory,
+            &mut project,
+            vec![part.name.clone(), part.name.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(project.sequence().len(), 2);
+        assert_eq!(
+            project::load_project(&project_directory)
+                .unwrap()
+                .project
+                .sequence(),
+            project.sequence()
+        );
+        let error = delete_project_part(&project_directory, &mut project, &part.name).unwrap_err();
+        assert!(matches!(
+            error,
+            PartChangeError::PartInSequence {
+                occurrence_count: 2,
+                ..
+            }
+        ));
+        assert!(project_directory.join("part-a.csv").is_file());
+
+        update_project_sequence(&project_directory, &mut project, Vec::new()).unwrap();
+        delete_project_part(&project_directory, &mut project, &part.name).unwrap();
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_arrangement_saves_restore_the_in_memory_sequence() {
+        let part = Part::new("part-a", 4);
+        let mut project =
+            Project::new("test project", 800, 0, Seed::new(12)).with_parts(vec![part.clone()]);
+        let original_sequence = project.sequence().to_vec();
+
+        let error = update_project_sequence(
+            Path::new("/a/project/directory/that/does/not/exist"),
+            &mut project,
+            vec![part.name.clone(), part.name],
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::ArrangementChangeError::Save(_)));
+        assert_eq!(project.sequence(), original_sequence);
+    }
 
     #[gpui::test]
     fn three_score_views_share_width_and_stay_inside_the_workspace(cx: &mut TestAppContext) {
@@ -1185,6 +1390,61 @@ mod tests {
         assert!((panes[0].size.width / panes[1].size.width - 1.0).abs() < 0.01);
         assert!((panes[1].size.width / panes[2].size.width - 1.0).abs() < 0.01);
         assert!(third_right <= workspace_right + px(1.0));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn each_score_view_can_select_its_own_part(cx: &mut TestAppContext) {
+        let root = temp_root("score-view-part-selectors");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let first_part = Part::new("part-a", 4);
+        let second_part = Part::new("part-b", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![first_part.clone(), second_part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]; 4])
+            .save(&project_directory, &first_part, project.voices())
+            .unwrap();
+        PartScore::from_rows(vec![vec![String::new()]; 2])
+            .save(&project_directory, &second_part, project.voices())
+            .unwrap();
+
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        model.update(cx, |model, cx| model.set_view_count(2, cx));
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let trigger = cx.debug_bounds("score-part-1-trigger").unwrap();
+        cx.simulate_click(trigger.center(), Default::default());
+        let second_option = cx.debug_bounds("score-part-1-option-1").unwrap();
+        cx.simulate_click(second_option.center(), Default::default());
+        cx.run_until_parked();
+
+        let (first_selection, second_selection, active_view) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.score_views[0]
+                    .part_name
+                    .as_ref()
+                    .unwrap()
+                    .as_str()
+                    .to_string(),
+                model.score_views[1]
+                    .part_name
+                    .as_ref()
+                    .unwrap()
+                    .as_str()
+                    .to_string(),
+                model.active_score_view,
+            )
+        });
+        assert_eq!(first_selection, "part-a");
+        assert_eq!(second_selection, "part-b");
+        assert_eq!(active_view, 1);
 
         fs::remove_dir_all(root).unwrap();
     }

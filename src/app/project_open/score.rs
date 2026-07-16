@@ -13,6 +13,7 @@ use crate::{
     view::{
         button::{self, Button},
         data_grid,
+        dropdown::{self, Dropdown},
         text_input::{Changed, TextInput},
     },
 };
@@ -51,6 +52,11 @@ pub enum DocumentEvent {
 }
 
 impl EventEmitter<DocumentEvent> for ScoreDocument {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartSelected {
+    pub part_name: crate::part::PartName,
+}
 
 impl ScoreDocument {
     pub fn new(project: Project, project_directory: PathBuf, part: Part, score: PartScore) -> Self {
@@ -187,28 +193,92 @@ impl ScoreDocument {
 pub struct ScoreEditor {
     editor_id: u64,
     document: Entity<ScoreDocument>,
+    part_names: Vec<crate::part::PartName>,
+    part_dropdown: Entity<Dropdown>,
     cells: Vec<Vec<Entity<TextInput>>>,
     scroll_handle: ScrollHandle,
     save_button: Entity<Button>,
 }
 
+impl EventEmitter<PartSelected> for ScoreEditor {}
+
 impl ScoreEditor {
-    pub fn new(document: Entity<ScoreDocument>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        view_index: usize,
+        document: Entity<ScoreDocument>,
+        part_names: Vec<crate::part::PartName>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let editor_id = NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed);
-        let score = document.read(cx).score().clone();
+        let document_state = document.read(cx);
+        let score = document_state.score().clone();
+        let selected_part = document_state.part().name.clone();
+        let selected_index = part_names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(&selected_part))
+            .expect("the editor part must be present in the project");
+        let dropdown_options = part_names
+            .iter()
+            .map(|name| name.as_str().to_string())
+            .collect::<Vec<_>>();
+        let part_dropdown = cx.new(move |cx| {
+            Dropdown::new(
+                ("score-part", view_index),
+                dropdown_options,
+                selected_index,
+                cx,
+            )
+        });
         let cells = Self::build_cells(editor_id, &score, cx);
         let save_button = cx.new(|_| Button::new(("save-score", editor_id), "save"));
 
         cx.subscribe(&document, Self::on_document_event).detach();
+        cx.subscribe(&part_dropdown, Self::on_part_selected)
+            .detach();
         cx.subscribe(&save_button, Self::on_save_clicked).detach();
 
         Self {
             editor_id,
             document,
+            part_names,
+            part_dropdown,
             cells,
             scroll_handle: ScrollHandle::new(),
             save_button,
         }
+    }
+
+    pub fn set_available_parts(
+        &mut self,
+        part_names: Vec<crate::part::PartName>,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_part = &self.document.read(cx).part().name;
+        let selected_index = part_names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(selected_part))
+            .expect("the editor part must be present in the project");
+        let options = part_names
+            .iter()
+            .map(|name| name.as_str().to_string())
+            .collect::<Vec<_>>();
+        self.part_names = part_names;
+        self.part_dropdown.update(cx, |dropdown, cx| {
+            dropdown.set_options(options, selected_index, cx);
+        });
+        cx.notify();
+    }
+
+    fn on_part_selected(
+        &mut self,
+        _: Entity<Dropdown>,
+        selected: &dropdown::Selected,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(part_name) = self.part_names.get(selected.index).cloned() else {
+            return;
+        };
+        cx.emit(PartSelected { part_name });
     }
 
     fn build_cells(
@@ -301,7 +371,6 @@ impl ScoreEditor {
 impl Render for ScoreEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let document = self.document.read(cx);
-        let part_name = document.part().name.as_str().to_string();
         let column_labels = document
             .project()
             .voices()
@@ -319,7 +388,7 @@ impl Render for ScoreEditor {
             .items_center()
             .justify_between()
             .gap_4()
-            .child(div().text_color(s::TEXT_HEADER).child(part_name))
+            .child(self.part_dropdown.clone())
             .child(self.save_button.clone());
         let score_content = if !has_voices {
             div()

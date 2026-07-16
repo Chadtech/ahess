@@ -65,6 +65,29 @@ impl Dropdown {
         self.selected_index
     }
 
+    pub fn set_options(
+        &mut self,
+        options: impl IntoIterator<Item = impl Into<SharedString>>,
+        selected_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let options = options.into_iter().map(Into::into).collect::<Vec<_>>();
+        assert!(
+            !options.is_empty(),
+            "a dropdown requires at least one option"
+        );
+        assert!(
+            selected_index < options.len(),
+            "the selected dropdown index must identify an option"
+        );
+
+        self.options = options;
+        self.selected_index = selected_index;
+        self.set_expanded(false, cx);
+        self.sync_trigger(cx);
+        cx.notify();
+    }
+
     pub fn set_selected_index(&mut self, index: usize, cx: &mut Context<Self>) {
         assert!(
             index < self.options.len(),
@@ -273,5 +296,21 @@ mod tests {
         cx.simulate_click(trigger.center(), Modifiers::default());
 
         assert!(!cx.update(|_, cx| dropdown.read(cx).expanded));
+    }
+
+    #[gpui::test]
+    fn replacing_options_updates_the_trigger_and_selection(cx: &mut TestAppContext) {
+        let (dropdown, cx) =
+            cx.add_window_view(|_, cx| Dropdown::new("replace-dropdown", ["one", "two"], 0, cx));
+
+        dropdown.update(cx, |dropdown, cx| {
+            dropdown.set_options(["alpha", "beta", "gamma"], 2, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, cx| dropdown.read(cx).selected_index()), 2);
+        let trigger = cx.debug_bounds("replace-dropdown-trigger").unwrap();
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        assert!(cx.debug_bounds("replace-dropdown-option-2").is_some());
     }
 }

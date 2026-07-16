@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, px, Entity, SharedString};
+use gpui::{div, prelude::*, px, AnyElement, Entity, SharedString};
 
 use crate::{style as s, view::button::Button};
 
@@ -46,7 +46,8 @@ pub struct ListDetailArgs<Title, List, Details> {
     pub close_button: Entity<Button>,
     pub list: List,
     pub details: Details,
-    pub add_button: Entity<Button>,
+    pub auxiliary: Option<AnyElement>,
+    pub footer: Option<AnyElement>,
 }
 
 pub fn list_detail_dialog<Title, List, Details>(
@@ -62,36 +63,71 @@ where
         close_button,
         list,
         details,
-        add_button,
+        auxiliary,
+        footer,
     } = args;
-
-    s::raised(
-        div()
+    let content = match auxiliary {
+        Some(auxiliary) => div()
             .flex()
-            .flex_col()
-            .w(s::S11)
-            .h(s::S10)
-            .bg(s::GRAY2)
-            .child(title_bar(title, Some(close_button)))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .gap(s::CONTENT_PADDING)
-                    .p(s::CONTENT_PADDING)
-                    .child(list)
-                    .child(details),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .p(s::CONTENT_PADDING)
-                    .pt(s::S0)
-                    .child(add_button),
-            ),
-    )
+            .flex_1()
+            .min_h(px(0.0))
+            .gap(s::CONTENT_PADDING)
+            .p(s::CONTENT_PADDING)
+            .child(equal_width_column(list))
+            .child(equal_width_column(details))
+            .child(equal_width_column(auxiliary)),
+        None => div()
+            .flex()
+            .flex_1()
+            .min_h(px(0.0))
+            .gap(s::CONTENT_PADDING)
+            .p(s::CONTENT_PADDING)
+            .child(list)
+            .child(details),
+    };
+
+    let dialog = div()
+        .flex()
+        .flex_col()
+        .w(s::S11)
+        .h(s::S10)
+        .bg(s::GRAY2)
+        .child(title_bar(title, Some(close_button)))
+        .child(content);
+    let dialog = if let Some(footer) = footer {
+        dialog.child(
+            div()
+                .flex()
+                .justify_end()
+                .p(s::CONTENT_PADDING)
+                .pt(s::S0)
+                .child(footer),
+        )
+    } else {
+        dialog
+    };
+
+    s::raised(dialog)
+}
+
+pub fn column_with_actions(content: impl IntoElement, actions: impl IntoElement) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.0))
+        .child(content)
+        .child(div().flex().pt(s::S4).child(actions))
+}
+
+fn equal_width_column(child: impl IntoElement) -> gpui::Div {
+    div()
+        .flex()
+        .flex_1()
+        .w(s::S0)
+        .min_w(s::S0)
+        .min_h(px(0.0))
+        .child(child)
 }
 
 pub fn management_form_dialog(

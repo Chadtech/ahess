@@ -493,7 +493,8 @@ impl VoicesDialog {
                     .and_then(|name| find_voice(&self.voices, name)),
                 edit_button,
             ),
-            add_button: add_new_button,
+            auxiliary: None,
+            footer: Some(add_new_button.into_any_element()),
         })
     }
 
