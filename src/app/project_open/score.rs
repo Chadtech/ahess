@@ -1,9 +1,13 @@
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
 
-use gpui::{div, prelude::*, Context, Entity, EventEmitter, ScrollHandle, SharedString, Window};
+use gpui::{
+    div, prelude::*, AsyncApp, Context, Entity, EventEmitter, ScrollHandle, SharedString, Task,
+    WeakEntity, Window,
+};
 
 use crate::{
     note::Note,
@@ -19,6 +23,17 @@ use crate::{
 };
 
 static NEXT_EDITOR_ID: AtomicU64 = AtomicU64::new(1);
+const AUTOSAVE_DEBOUNCE: Duration = Duration::from_millis(750);
+const AUTOSAVE_MAX_DELAY: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SaveState {
+    Idle,
+    Saving,
+    SavingRecovered,
+    RecoverySaved,
+    Saved,
+}
 
 pub struct ScoreDocument {
     project: Project,
@@ -27,6 +42,9 @@ pub struct ScoreDocument {
     score: PartScore,
     dirty: bool,
     last_save_error: Option<String>,
+    save_state: SaveState,
+    pending_autosave_since: Option<Instant>,
+    autosave_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +64,7 @@ pub enum DocumentEvent {
         value: String,
     },
     Saved,
+    RecoverySaved,
     SaveFailed,
     Reset,
     ProjectChanged,
@@ -67,6 +86,9 @@ impl ScoreDocument {
             score,
             dirty: false,
             last_save_error: None,
+            save_state: SaveState::Idle,
+            pending_autosave_since: None,
+            autosave_task: None,
         }
     }
 
@@ -88,6 +110,17 @@ impl ScoreDocument {
 
     pub fn last_save_error(&self) -> Option<&str> {
         self.last_save_error.as_deref()
+    }
+
+    pub(super) fn save_state(&self) -> SaveState {
+        self.save_state
+    }
+
+    pub(super) fn autosave_recovered_score(&mut self, cx: &mut Context<Self>) {
+        self.dirty = true;
+        self.save_state = SaveState::SavingRecovered;
+        self.schedule_autosave(cx);
+        cx.notify();
     }
 
     pub fn parse_issues(&self) -> Vec<ParseIssue> {
@@ -136,6 +169,7 @@ impl ScoreDocument {
         self.score = PartScore::from_rows(rows);
         self.dirty = true;
         self.last_save_error = None;
+        self.schedule_autosave(cx);
         cx.emit(DocumentEvent::CellChanged {
             source_editor,
             row,
@@ -146,24 +180,95 @@ impl ScoreDocument {
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> Result<(), ScoreError> {
+        self.autosave_task.take();
+        self.pending_autosave_since = None;
+        if let Err(error) =
+            self.score
+                .save_recovery(&self.project_directory, &self.part, self.project.voices())
+        {
+            return self.save_failed(error, cx);
+        }
+
+        match self
+            .score
+            .save(&self.project_directory, &self.part, self.project.voices())
+        {
+            Ok(()) => self.finish_save(cx),
+            Err(error) => {
+                self.save_state = SaveState::RecoverySaved;
+                self.save_failed(error, cx)
+            }
+        }
+    }
+
+    fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let pending_since = *self.pending_autosave_since.get_or_insert(now);
+        let remaining =
+            AUTOSAVE_MAX_DELAY.saturating_sub(now.saturating_duration_since(pending_since));
+        let delay = AUTOSAVE_DEBOUNCE.min(remaining);
+        if self.save_state != SaveState::SavingRecovered {
+            self.save_state = SaveState::Saving;
+        }
+
+        self.autosave_task = Some(cx.spawn(
+            async move |document: WeakEntity<ScoreDocument>, cx: &mut AsyncApp| {
+                cx.background_executor().timer(delay).await;
+                document
+                    .update(cx, |document, cx| document.autosave(cx))
+                    .ok();
+            },
+        ));
+    }
+
+    fn autosave(&mut self, cx: &mut Context<Self>) {
+        self.pending_autosave_since = None;
+        if let Err(error) =
+            self.score
+                .save_recovery(&self.project_directory, &self.part, self.project.voices())
+        {
+            let _ = self.save_failed(error, cx);
+            return;
+        }
+
         match self
             .score
             .save(&self.project_directory, &self.part, self.project.voices())
         {
             Ok(()) => {
-                self.dirty = false;
+                let _ = self.finish_save(cx);
+            }
+            Err(ScoreError::InvalidNote { .. }) => {
+                self.last_save_error = None;
+                self.save_state = SaveState::RecoverySaved;
+                cx.emit(DocumentEvent::RecoverySaved);
+                cx.notify();
+            }
+            Err(error) => {
+                let _ = self.save_failed(error, cx);
+            }
+        }
+    }
+
+    fn finish_save(&mut self, cx: &mut Context<Self>) -> Result<(), ScoreError> {
+        self.dirty = false;
+        self.save_state = SaveState::Saved;
+        match PartScore::clear_recovery(&self.project_directory, &self.part) {
+            Ok(()) => {
                 self.last_save_error = None;
                 cx.emit(DocumentEvent::Saved);
                 cx.notify();
                 Ok(())
             }
-            Err(error) => {
-                self.last_save_error = Some(error.to_string());
-                cx.emit(DocumentEvent::SaveFailed);
-                cx.notify();
-                Err(error)
-            }
+            Err(error) => self.save_failed(error, cx),
         }
+    }
+
+    fn save_failed(&mut self, error: ScoreError, cx: &mut Context<Self>) -> Result<(), ScoreError> {
+        self.last_save_error = Some(error.to_string());
+        cx.emit(DocumentEvent::SaveFailed);
+        cx.notify();
+        Err(error)
     }
 
     pub fn replace_project_and_score(
@@ -178,6 +283,9 @@ impl ScoreDocument {
         self.score = score;
         self.dirty = false;
         self.last_save_error = None;
+        self.save_state = SaveState::Idle;
+        self.pending_autosave_since = None;
+        self.autosave_task.take();
         cx.emit(DocumentEvent::Reset);
         cx.notify();
     }
@@ -196,6 +304,7 @@ pub struct ScoreEditor {
     part_names: Vec<crate::part::PartName>,
     part_dropdown: Entity<Dropdown>,
     cells: Vec<Vec<Entity<TextInput>>>,
+    playing_row: Option<usize>,
     scroll_handle: ScrollHandle,
     save_button: Entity<Button>,
 }
@@ -243,6 +352,7 @@ impl ScoreEditor {
             part_names,
             part_dropdown,
             cells,
+            playing_row: None,
             scroll_handle: ScrollHandle::new(),
             save_button,
         }
@@ -344,7 +454,10 @@ impl ScoreEditor {
                 let score = self.document.read(cx).score().clone();
                 self.cells = Self::build_cells(self.editor_id, &score, cx);
             }
-            DocumentEvent::Saved | DocumentEvent::SaveFailed | DocumentEvent::ProjectChanged => {}
+            DocumentEvent::Saved
+            | DocumentEvent::RecoverySaved
+            | DocumentEvent::SaveFailed
+            | DocumentEvent::ProjectChanged => {}
         }
         cx.notify();
     }
@@ -365,6 +478,18 @@ impl ScoreEditor {
             cell.read(cx).focus(window);
         }
         cx.notify();
+    }
+
+    pub(super) fn set_playing_row(&mut self, row: Option<usize>, cx: &mut Context<Self>) {
+        if self.playing_row != row {
+            self.playing_row = row;
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn playing_row(&self) -> Option<usize> {
+        self.playing_row
     }
 }
 
@@ -404,6 +529,7 @@ impl Render for ScoreEditor {
                 column_labels,
                 &self.cells,
                 &invalid_cells,
+                self.playing_row,
                 &self.scroll_handle,
             )
         };

@@ -10,6 +10,7 @@ pub fn editable(
     column_labels: Vec<String>,
     rows: &[Vec<Entity<TextInput>>],
     invalid_cells: &[(usize, usize)],
+    playing_row: Option<usize>,
     scroll_handle: &ScrollHandle,
 ) -> gpui::Div {
     let content_width = ROW_LABEL_WIDTH + CELL_WIDTH * column_labels.len() as f32;
@@ -24,6 +25,7 @@ pub fn editable(
         );
     let body_rows = rows.iter().enumerate().map(|(row_index, row)| {
         div()
+            .relative()
             .flex()
             .flex_row()
             .child(header_cell((row_index + 1).to_string(), ROW_LABEL_WIDTH))
@@ -35,6 +37,7 @@ pub fn editable(
                         input_cell(input, invalid_cells.contains(&(row_index, column_index)))
                     }),
             )
+            .children((playing_row == Some(row_index)).then(|| playback_row_border(row_index)))
     });
     let content = div()
         .flex()
@@ -61,6 +64,15 @@ pub fn editable(
     .min_w(s::S0)
     .min_h(s::S0)
     .overflow_hidden()
+}
+
+fn playback_row_border(row: usize) -> gpui::Div {
+    div()
+        .absolute()
+        .inset_0()
+        .border_2()
+        .border_color(s::PLAYBACK_ROW_BORDER)
+        .debug_selector(move || format!("score-playback-row-{row}"))
 }
 
 fn header_cell(label: String, width: Pixels) -> gpui::Div {

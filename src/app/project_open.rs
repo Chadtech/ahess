@@ -1,3 +1,4 @@
+mod loop_range;
 mod parts;
 mod project_settings;
 mod score;
@@ -6,16 +7,17 @@ mod voices;
 use std::{
     fmt,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use gpui::{
-    div, prelude::*, AnyElement, App, AppContext, Context, CursorStyle, Entity, EventEmitter,
-    MouseButton, MouseDownEvent, Window,
+    div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
+    EventEmitter, MouseButton, MouseDownEvent, Task, WeakEntity, Window,
 };
 
 use crate::{
     part::{self, PartName, PartScore},
-    playback::{Playback, PlaybackLoop},
+    playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
     style as s,
     view::{
@@ -26,11 +28,14 @@ use crate::{
 };
 
 use self::{
+    loop_range::{LoopRangeDialog, Msg as LoopRangeMsg},
     parts::PartsDialog,
     project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
-    score::{DocumentEvent, PartSelected, ScoreDocument, ScoreEditor},
+    score::{DocumentEvent, PartSelected, SaveState, ScoreDocument, ScoreEditor},
     voices::VoicesDialog,
 };
+
+const PLAYHEAD_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 
 pub enum Msg {
     CloseRequested,
@@ -45,14 +50,16 @@ pub struct Model {
     voices_button: Entity<Button>,
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
+    loop_range_button: Entity<Button>,
     play_button: Entity<Button>,
     stop_button: Entity<Button>,
     dialog: Option<Dialog>,
     score_documents: Vec<ScoreDocumentEntry>,
     score_views: Vec<ScoreViewEntry>,
     active_score_view: usize,
+    loop_range: Option<BeatRange>,
     playback: Option<Playback>,
-    playing_document: Option<Entity<ScoreDocument>>,
+    playhead_task: Option<Task<()>>,
     transport_error: Option<String>,
     workspace_error: Option<String>,
 }
@@ -77,6 +84,7 @@ struct StatusTarget {
 type ProjectStatus = status_bar::Status<StatusTarget>;
 
 enum Dialog {
+    LoopRange(Entity<LoopRangeDialog>),
     Parts(Entity<PartsDialog>),
     ProjectSettings(Entity<ProjectSettingsDialog>),
     Voices(Entity<VoicesDialog>),
@@ -97,6 +105,10 @@ impl Model {
         let close_button = cx.new(|_| Button::new("close-project", "close project"));
         let pane_count_dropdown =
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
+        let arrangement_beat_count = project.arrangement_beat_count();
+        let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
+        let loop_range_button =
+            cx.new(|_| Button::new("loop-range", loop_range_button_label(loop_range)));
         let play_button = cx.new(|_| Button::new("play-score", "play"));
         let stop_button = cx.new(|_| Button::new("stop-score", "stop"));
 
@@ -107,6 +119,8 @@ impl Model {
             .detach();
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
+            .detach();
+        cx.subscribe(&loop_range_button, Self::on_loop_range_clicked)
             .detach();
         cx.subscribe(&play_button, Self::on_play_clicked).detach();
         cx.subscribe(&stop_button, Self::on_stop_clicked).detach();
@@ -121,6 +135,7 @@ impl Model {
             voices_button,
             close_button,
             pane_count_dropdown,
+            loop_range_button,
             play_button,
             stop_button,
             dialog: None,
@@ -130,13 +145,26 @@ impl Model {
                 editor: None,
             }],
             active_score_view: 0,
+            loop_range,
             playback: None,
-            playing_document: None,
+            playhead_task: None,
             transport_error: None,
             workspace_error: None,
         };
         if let Some(part_name) = initial_part {
             model.assign_part_to_view(0, part_name, cx);
+        }
+        let part_names = model
+            .project
+            .parts()
+            .iter()
+            .map(|part| part.name.clone())
+            .collect::<Vec<_>>();
+        for part_name in part_names {
+            if let Err(error) = model.score_document(&part_name, cx) {
+                model.workspace_error = Some(error);
+                break;
+            }
         }
         model
     }
@@ -152,6 +180,7 @@ impl Model {
     pub fn bar_actions(&self) -> Vec<AnyElement> {
         vec![
             self.pane_count_dropdown.clone().into_any_element(),
+            self.loop_range_button.clone().into_any_element(),
             self.play_button.clone().into_any_element(),
             self.stop_button.clone().into_any_element(),
             self.parts_button.clone().into_any_element(),
@@ -163,6 +192,7 @@ impl Model {
 
     pub fn active_dialog(&self) -> Option<AnyElement> {
         self.dialog.as_ref().map(|dialog| match dialog {
+            Dialog::LoopRange(dialog) => dialog.clone().into_any_element(),
             Dialog::Parts(dialog) => dialog.clone().into_any_element(),
             Dialog::ProjectSettings(dialog) => dialog.clone().into_any_element(),
             Dialog::Voices(dialog) => dialog.clone().into_any_element(),
@@ -256,12 +286,42 @@ impl Model {
             .filter(|entry| entry.document.read(cx).is_dirty())
             .count();
         if dirty_document_count > 0 {
-            let message = if dirty_document_count == 1 {
+            let save_states = self
+                .score_documents
+                .iter()
+                .filter_map(|entry| {
+                    let document = entry.document.read(cx);
+                    document.is_dirty().then(|| document.save_state())
+                })
+                .collect::<Vec<_>>();
+            let message = if save_states.contains(&SaveState::SavingRecovered) {
+                "saving recovered score changes…".to_string()
+            } else if save_states.contains(&SaveState::Saving) {
+                if dirty_document_count == 1 {
+                    "saving score changes…".to_string()
+                } else {
+                    format!("saving score changes in {dirty_document_count} parts…")
+                }
+            } else if save_states.contains(&SaveState::RecoverySaved) {
+                if dirty_document_count == 1 {
+                    "score recovery saved".to_string()
+                } else {
+                    format!("score recovery saved for {dirty_document_count} parts")
+                }
+            } else if dirty_document_count == 1 {
                 "unsaved score changes".to_string()
             } else {
                 format!("unsaved score changes in {dirty_document_count} parts")
             };
             return ProjectStatus::Warning(message.into());
+        }
+
+        if self
+            .score_documents
+            .iter()
+            .any(|entry| entry.document.read(cx).save_state() == SaveState::Saved)
+        {
+            return ProjectStatus::Message("score changes saved".into());
         }
 
         ProjectStatus::default()
@@ -318,13 +378,19 @@ impl Model {
             .part(part_name)
             .cloned()
             .ok_or_else(|| format!("part {:?} no longer exists", part_name.as_str()))?;
-        let score = PartScore::load(&self.project_directory, &part, self.project.voices())
-            .map_err(|error| error.to_string())?;
+        let (score, recovered) =
+            PartScore::load_with_recovery(&self.project_directory, &part, self.project.voices())
+                .map_err(|error| error.to_string())?;
         let project = self.project.clone();
         let project_directory = self.project_directory.clone();
         let document = cx.new(move |_| ScoreDocument::new(project, project_directory, part, score));
         cx.subscribe(&document, Self::on_score_document_event)
             .detach();
+        if recovered {
+            document.update(cx, |document, cx| {
+                document.autosave_recovered_score(cx);
+            });
+        }
         self.score_documents.push(ScoreDocumentEntry {
             part_name: part_name.clone(),
             document: document.clone(),
@@ -332,17 +398,9 @@ impl Model {
         Ok(document)
     }
 
-    fn active_document(&self) -> Option<Entity<ScoreDocument>> {
-        let part_name = self.active_part()?;
-        self.score_documents
-            .iter()
-            .find(|entry| entry.part_name.eq_ignore_ascii_case(part_name))
-            .map(|entry| entry.document.clone())
-    }
-
     fn on_score_document_event(
         &mut self,
-        document: Entity<ScoreDocument>,
+        _: Entity<ScoreDocument>,
         event: &DocumentEvent,
         cx: &mut Context<Self>,
     ) {
@@ -355,7 +413,7 @@ impl Model {
         if matches!(event, DocumentEvent::Saved) && !self.has_unsaved_score(cx) {
             self.workspace_error = None;
         }
-        if self.playing_document.as_ref() == Some(&document)
+        if self.playback.is_some()
             && matches!(
                 event,
                 DocumentEvent::CellChanged { .. }
@@ -363,25 +421,32 @@ impl Model {
                     | DocumentEvent::ProjectChanged
             )
         {
-            self.update_live_playback(&document, cx);
+            self.update_live_playback(cx);
         }
         cx.notify();
     }
 
-    fn playback_loop(
-        document: &Entity<ScoreDocument>,
-        cx: &Context<Self>,
-    ) -> Result<PlaybackLoop, String> {
-        let document = document.read(cx);
-        PlaybackLoop::from_project_score(document.project(), document.part(), document.score())
+    fn playback_loop(&mut self, cx: &mut Context<Self>) -> Result<PlaybackLoop, String> {
+        let range = self.loop_range.ok_or_else(|| {
+            "add at least one part to the arrangement before starting playback".to_string()
+        })?;
+        let sequence = self.project.sequence().to_vec();
+        let mut arrangement_scores = Vec::with_capacity(sequence.len());
+        for part_name in sequence {
+            let document = self.score_document(&part_name, cx)?;
+            let document = document.read(cx);
+            arrangement_scores.push((document.part().clone(), document.score().clone()));
+        }
+
+        PlaybackLoop::from_project_arrangement(&self.project, &arrangement_scores, range)
             .map_err(|error| error.to_string())
     }
 
-    fn update_live_playback(&mut self, document: &Entity<ScoreDocument>, cx: &mut Context<Self>) {
+    fn update_live_playback(&mut self, cx: &mut Context<Self>) {
         if self.playback.is_none() {
             return;
         }
-        match Self::playback_loop(document, cx) {
+        match self.playback_loop(cx) {
             Ok(playback_loop) => {
                 if let Some(playback) = &self.playback {
                     playback.update(playback_loop);
@@ -397,13 +462,7 @@ impl Model {
     }
 
     fn on_play_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let Some(document) = self.active_document() else {
-            self.transport_error =
-                Some("open a part in the active view before playing".to_string());
-            cx.notify();
-            return;
-        };
-        let playback_loop = match Self::playback_loop(&document, cx) {
+        let playback_loop = match self.playback_loop(cx) {
             Ok(playback_loop) => playback_loop,
             Err(error) => {
                 self.transport_error = Some(error);
@@ -412,14 +471,15 @@ impl Model {
             }
         };
 
+        self.playhead_task.take();
+        self.clear_playhead_highlights(cx);
         self.playback = None;
-        self.playing_document = None;
         match Playback::start(playback_loop) {
             Ok(playback) => {
                 self.playback = Some(playback);
-                self.playing_document = Some(document);
                 self.transport_error = None;
                 self.set_transport_playing(true, cx);
+                self.start_playhead_tracking(cx);
             }
             Err(error) => {
                 self.transport_error = Some(error.to_string());
@@ -434,8 +494,9 @@ impl Model {
     }
 
     fn stop_playback(&mut self, cx: &mut Context<Self>) {
+        self.playhead_task.take();
         self.playback = None;
-        self.playing_document = None;
+        self.clear_playhead_highlights(cx);
         self.transport_error = None;
         self.set_transport_playing(false, cx);
         cx.notify();
@@ -445,6 +506,58 @@ impl Model {
         self.play_button.update(cx, |button, cx| {
             button.set_depressed(playing, cx);
         });
+    }
+
+    fn start_playhead_tracking(&mut self, cx: &mut Context<Self>) {
+        self.playhead_task.take();
+        self.sync_playhead_highlights(cx);
+        self.playhead_task = Some(cx.spawn(
+            async move |model: WeakEntity<Model>, cx: &mut AsyncApp| loop {
+                cx.background_executor()
+                    .timer(PLAYHEAD_REFRESH_INTERVAL)
+                    .await;
+                let keep_tracking = model
+                    .update(cx, |model, cx| {
+                        if model.playback.is_none() {
+                            return false;
+                        }
+                        model.sync_playhead_highlights(cx);
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep_tracking {
+                    break;
+                }
+            },
+        ));
+    }
+
+    fn sync_playhead_highlights(&self, cx: &mut Context<Self>) {
+        let playing_position = self.playback.as_ref().and_then(|playback| {
+            playing_score_row(&self.project, playback.current_arrangement_beat())
+        });
+        for view in &self.score_views {
+            let playing_row = view.part_name.as_ref().and_then(|view_part| {
+                playing_position.as_ref().and_then(|(playing_part, row)| {
+                    view_part.eq_ignore_ascii_case(playing_part).then_some(*row)
+                })
+            });
+            if let Some(editor) = &view.editor {
+                editor.update(cx, |editor, cx| {
+                    editor.set_playing_row(playing_row, cx);
+                });
+            }
+        }
+    }
+
+    fn clear_playhead_highlights(&self, cx: &mut Context<Self>) {
+        for editor in self
+            .score_views
+            .iter()
+            .filter_map(|view| view.editor.as_ref())
+        {
+            editor.update(cx, |editor, cx| editor.set_playing_row(None, cx));
+        }
     }
 
     fn assign_part_to_view(
@@ -475,6 +588,9 @@ impl Model {
             view.part_name = Some(part_name);
             view.editor = Some(editor);
             self.workspace_error = None;
+        }
+        if self.playback.is_some() {
+            self.sync_playhead_highlights(cx);
         }
         cx.notify();
     }
@@ -591,16 +707,97 @@ impl Model {
     }
 
     fn remove_score_document(&mut self, name: &PartName, cx: &mut Context<Self>) {
-        let removed = self
-            .score_documents
-            .iter()
-            .find(|entry| entry.part_name.eq_ignore_ascii_case(name))
-            .map(|entry| entry.document.clone());
-        if removed.as_ref() == self.playing_document.as_ref() {
-            self.stop_playback(cx);
-        }
         self.score_documents
             .retain(|entry| !entry.part_name.eq_ignore_ascii_case(name));
+        if self.playback.is_some() {
+            self.update_live_playback(cx);
+        }
+    }
+
+    fn on_loop_range_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        match self.dialog {
+            Some(Dialog::LoopRange(_)) => {
+                self.dialog = None;
+                self.set_loop_range_button_depressed(false, cx);
+                cx.notify();
+                return;
+            }
+            Some(_) => return,
+            None => {}
+        }
+
+        let arrangement_beat_count = self.project.arrangement_beat_count();
+        let range = self.loop_range;
+        let dialog = cx.new(move |cx| LoopRangeDialog::new(arrangement_beat_count, range, cx));
+        cx.subscribe(&dialog, Self::on_loop_range_msg).detach();
+        self.dialog = Some(Dialog::LoopRange(dialog));
+        self.set_loop_range_button_depressed(true, cx);
+        cx.notify();
+    }
+
+    fn on_loop_range_msg(
+        &mut self,
+        _: Entity<LoopRangeDialog>,
+        msg: &LoopRangeMsg,
+        cx: &mut Context<Self>,
+    ) {
+        if let LoopRangeMsg::Applied(range) = msg {
+            self.loop_range = Some(*range);
+            self.sync_loop_range_button(cx);
+            if self.playback.is_some() {
+                self.update_live_playback(cx);
+            } else {
+                self.transport_error = None;
+            }
+        }
+
+        self.dialog = None;
+        self.set_loop_range_button_depressed(false, cx);
+        cx.notify();
+    }
+
+    fn reconcile_loop_range(
+        &mut self,
+        previous_arrangement_beat_count: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let arrangement_beat_count = self.project.arrangement_beat_count();
+        let followed_entire_arrangement = self.loop_range.is_none_or(|range| {
+            previous_arrangement_beat_count == 0
+                || (range.first() == 1 && range.last() == previous_arrangement_beat_count)
+        });
+        self.loop_range = if arrangement_beat_count == 0 {
+            None
+        } else if followed_entire_arrangement {
+            BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok()
+        } else {
+            self.loop_range.and_then(|range| {
+                let first = range.first().min(arrangement_beat_count);
+                let last = range.last().max(first).min(arrangement_beat_count);
+                BeatRange::new(first, last, arrangement_beat_count).ok()
+            })
+        };
+        self.sync_loop_range_button(cx);
+        if self.playback.is_some() {
+            self.update_live_playback(cx);
+        }
+    }
+
+    fn sync_loop_range_button(&self, cx: &mut Context<Self>) {
+        self.loop_range_button.update(cx, |button, cx| {
+            button.set_label(loop_range_button_label(self.loop_range), cx);
+        });
+    }
+
+    fn set_loop_range_button_depressed(&self, depressed: bool, cx: &mut Context<Self>) {
+        self.loop_range_button.update(cx, |button, cx| {
+            button.set_depressed(depressed, cx);
+        });
     }
 
     fn on_settings_clicked(
@@ -638,7 +835,9 @@ impl Model {
                 cx.notify();
                 return;
             }
-            Some(Dialog::Parts(_)) | Some(Dialog::ProjectSettings(_)) => return,
+            Some(Dialog::LoopRange(_))
+            | Some(Dialog::Parts(_))
+            | Some(Dialog::ProjectSettings(_)) => return,
             None => {}
         }
 
@@ -663,7 +862,9 @@ impl Model {
                 cx.notify();
                 return;
             }
-            Some(Dialog::ProjectSettings(_)) | Some(Dialog::Voices(_)) => return,
+            Some(Dialog::LoopRange(_))
+            | Some(Dialog::ProjectSettings(_))
+            | Some(Dialog::Voices(_)) => return,
             None => {}
         }
 
@@ -826,6 +1027,40 @@ impl Model {
                     }
                 }
             }
+            parts::Msg::DuplicateRequested { source, name } => {
+                if self.part_has_unsaved_score(source, cx) {
+                    self.workspace_error =
+                        Some("save score changes before duplicating this part".to_string());
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.duplicate_failed(
+                            "save score changes before duplicating this part".to_string(),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                match duplicate_project_part(
+                    &self.project_directory,
+                    &mut self.project,
+                    source,
+                    name,
+                ) {
+                    Ok(part) => {
+                        let duplicated_name = part.name.clone();
+                        let parts = self.project.parts.clone();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.part_added(parts, part.name, cx);
+                        });
+                        self.select_part(duplicated_name, cx);
+                        self.sync_score_editor_parts(cx);
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.duplicate_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
             parts::Msg::DeleteRequested { name } => {
                 if self.part_has_unsaved_score(name, cx) {
                     self.workspace_error =
@@ -878,23 +1113,27 @@ impl Model {
             parts::Msg::SequenceChangeRequested {
                 sequence,
                 selected_occurrence,
-            } => match update_project_sequence(
-                &self.project_directory,
-                &mut self.project,
-                sequence.clone(),
-            ) {
-                Ok(sequence) => {
-                    dialog.update(cx, |dialog, cx| {
-                        dialog.sequence_changed(sequence, *selected_occurrence, cx);
-                    });
-                    self.update_score_documents_for_project_settings(cx);
+            } => {
+                let previous_arrangement_beat_count = self.project.arrangement_beat_count();
+                match update_project_sequence(
+                    &self.project_directory,
+                    &mut self.project,
+                    sequence.clone(),
+                ) {
+                    Ok(sequence) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.sequence_changed(sequence, *selected_occurrence, cx);
+                        });
+                        self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                        self.update_score_documents_for_project_settings(cx);
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.sequence_change_failed(error.to_string(), cx);
+                        });
+                    }
                 }
-                Err(error) => {
-                    dialog.update(cx, |dialog, cx| {
-                        dialog.sequence_change_failed(error.to_string(), cx);
-                    });
-                }
-            },
+            }
             parts::Msg::Closed => {
                 self.dialog = None;
                 self.set_parts_button_depressed(false, cx);
@@ -993,6 +1232,29 @@ impl Render for Model {
     }
 }
 
+fn loop_range_button_label(range: Option<BeatRange>) -> String {
+    match range {
+        Some(range) => format!("loop {}–{}", range.first(), range.last()),
+        None => "set loop".to_string(),
+    }
+}
+
+fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartName, usize)> {
+    let mut occurrence_first = 1_u64;
+    for part_name in project.sequence() {
+        let part = project.part(part_name)?;
+        let occurrence_last = occurrence_first + u64::from(part.length) - 1;
+        if (occurrence_first..=occurrence_last).contains(&arrangement_beat) {
+            return Some((
+                part.name.clone(),
+                (arrangement_beat - occurrence_first) as usize,
+            ));
+        }
+        occurrence_first = occurrence_last + 1;
+    }
+    None
+}
+
 fn workspace(
     score_views: &[ScoreViewEntry],
     project_status: ProjectStatus,
@@ -1043,7 +1305,7 @@ fn workspace(
         .children(panes);
     let status_is_actionable = match &project_status {
         ProjectStatus::Error { target, .. } => target.is_some(),
-        ProjectStatus::Empty | ProjectStatus::Warning(_) => false,
+        ProjectStatus::Empty | ProjectStatus::Message(_) | ProjectStatus::Warning(_) => false,
     };
     let project_status_bar = status_bar::bar(project_status)
         .id("project-status-bar")
@@ -1234,6 +1496,34 @@ fn create_project_part(
     Ok(created.commit())
 }
 
+fn duplicate_project_part(
+    project_directory: &Path,
+    project: &mut Project,
+    source_name: &PartName,
+    name: &str,
+) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
+    let source_part = project
+        .part(source_name)
+        .cloned()
+        .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))?;
+    let created = part::duplicate_part_file(project_directory, &project.parts, &source_part, name)
+        .map_err(PartChangeError::CreateFile)?;
+    let part = created.part().clone();
+    project.add_part(part.clone());
+
+    if let Err(source) = project::save_project(project_directory, project) {
+        project.remove_part(&part.name);
+        return Err(PartChangeError::SaveCreated {
+            source,
+            rollback_error: created.rollback().err(),
+        });
+    }
+
+    Ok(created.commit())
+}
+
 fn delete_project_part(
     project_directory: &Path,
     project: &mut Project,
@@ -1277,14 +1567,14 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use gpui::{px, size, TestAppContext};
 
     use super::{
-        create_project_part, delete_project_part, update_project_sequence, Model, PartChangeError,
-        StatusTarget,
+        create_project_part, delete_project_part, duplicate_project_part, playing_score_row,
+        update_project_sequence, Model, PartChangeError, StatusTarget,
     };
     use crate::{
         part::{Part, PartScore},
@@ -1292,6 +1582,31 @@ mod tests {
         seed::Seed,
         view::status_bar,
     };
+
+    #[test]
+    fn maps_arrangement_beats_to_part_score_rows() {
+        let first = Part::new("first", 2);
+        let second = Part::new("second", 3);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_parts(vec![first.clone(), second.clone()])
+            .with_sequence(vec![
+                first.name.clone(),
+                second.name.clone(),
+                first.name.clone(),
+            ]);
+
+        let position = |beat| {
+            playing_score_row(&project, beat).map(|(part, row)| (part.as_str().to_string(), row))
+        };
+        assert_eq!(position(1), Some(("first".to_string(), 0)));
+        assert_eq!(position(2), Some(("first".to_string(), 1)));
+        assert_eq!(position(3), Some(("second".to_string(), 0)));
+        assert_eq!(position(5), Some(("second".to_string(), 2)));
+        assert_eq!(position(6), Some(("first".to_string(), 0)));
+        assert_eq!(position(7), Some(("first".to_string(), 1)));
+        assert_eq!(position(0), None);
+        assert_eq!(position(8), None);
+    }
 
     #[test]
     fn arrangement_changes_persist_and_prevent_deleting_referenced_parts() {
@@ -1327,6 +1642,39 @@ mod tests {
 
         update_project_sequence(&project_directory, &mut project, Vec::new()).unwrap();
         delete_project_part(&project_directory, &mut project, &part.name).unwrap();
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicated_parts_copy_the_score_and_persist_project_metadata() {
+        let root = temp_root("duplicate-project-part");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let source = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        score
+            .save(&project_directory, &source, project.voices())
+            .unwrap();
+
+        let duplicated = duplicate_project_part(
+            &project_directory,
+            &mut project,
+            &source.name,
+            "intro variation",
+        )
+        .unwrap();
+
+        assert_eq!(duplicated.length, source.length);
+        assert_eq!(
+            PartScore::load(&project_directory, &duplicated, project.voices()).unwrap(),
+            score
+        );
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1390,6 +1738,43 @@ mod tests {
         assert!((panes[0].size.width / panes[1].size.width - 1.0).abs() < 0.01);
         assert!((panes[1].size.width / panes[2].size.width - 1.0).abs() < 0.01);
         assert!(third_right <= workspace_right + px(1.0));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_editor_outlines_only_the_current_playback_row(cx: &mut TestAppContext) {
+        let root = temp_root("score-playback-row");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 3);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]; 3])
+            .save(&project_directory, &part, project.voices())
+            .unwrap();
+
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        let editor = cx.update(|_, cx| model.read(cx).score_views[0].editor.clone().unwrap());
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("score-playback-row-0").is_none());
+        assert!(cx.debug_bounds("score-playback-row-1").is_none());
+        assert!(cx.debug_bounds("score-playback-row-2").is_none());
+
+        editor.update(cx, |editor, cx| editor.set_playing_row(Some(1), cx));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("score-playback-row-0").is_none());
+        assert!(cx.debug_bounds("score-playback-row-1").is_some());
+        assert!(cx.debug_bounds("score-playback-row-2").is_none());
+
+        editor.update(cx, |editor, cx| editor.set_playing_row(None, cx));
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| editor.read(cx).playing_row()), None);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1524,11 +1909,133 @@ mod tests {
         cx.run_until_parked();
 
         let clean_status = cx.update(|_, cx| model.read(cx).project_status(cx));
-        assert_eq!(clean_status, status_bar::Status::Empty);
+        assert_eq!(
+            clean_status,
+            status_bar::Status::Message("score changes saved".into())
+        );
         assert_eq!(cx.debug_bounds("score-view-0").unwrap(), pane_before);
         assert_eq!(
             cx.debug_bounds("project-status-bar").unwrap(),
             status_bar_before
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_changes_autosave_and_invalid_edits_restore_from_recovery(cx: &mut TestAppContext) {
+        let root = temp_root("score-autosave");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &part, project.voices())
+            .unwrap();
+
+        let project_for_restore = project.clone();
+        let directory_for_restore = project_directory.clone();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+        });
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n"
+        );
+
+        cx.executor().advance_clock(Duration::from_millis(749));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n"
+        );
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert!(!project_directory.join(".part-a.csv.recovery").exists());
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project_status(cx)),
+            status_bar::Status::Message("score changes saved".into())
+        );
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "half-typed".to_string(), cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(750));
+        cx.run_until_parked();
+
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(project_directory.join(".part-a.csv.recovery").is_file());
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
+
+        let (restored_model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project_for_restore, directory_for_restore, root.clone(), cx)
+        });
+        let restored_document =
+            cx.update(|_, cx| restored_model.read(cx).score_documents[0].document.clone());
+        assert_eq!(
+            cx.update(|_, cx| restored_document.read(cx).score().rows()[0][0].clone()),
+            "half-typed"
+        );
+        assert!(cx.update(|_, cx| restored_document.read(cx).is_dirty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn continuous_score_edits_checkpoint_within_the_maximum_delay(cx: &mut TestAppContext) {
+        let root = temp_root("continuous-score-autosave");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &part, project.voices())
+            .unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+
+        for midi_note in 60..70 {
+            document.update(cx, |document, cx| {
+                document.update_cell(u64::MAX, 0, 0, midi_note.to_string(), cx);
+            });
+            if midi_note < 69 {
+                cx.executor().advance_clock(Duration::from_millis(500));
+            }
+        }
+
+        cx.executor().advance_clock(Duration::from_millis(499));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n"
+        );
+
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n69\n"
         );
 
         fs::remove_dir_all(root).unwrap();

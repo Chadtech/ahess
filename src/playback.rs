@@ -1,7 +1,10 @@
 use std::{
     error::Error,
     fmt, io,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use cpal::{
@@ -21,12 +24,14 @@ const MASTER_GAIN: f32 = 0.22;
 pub struct Playback {
     _stream: Stream,
     shared_loop: Arc<Mutex<PlaybackLoop>>,
+    playhead: Arc<AtomicU64>,
 }
 
 impl Playback {
     pub fn start(playback_loop: PlaybackLoop) -> Result<Self, PlaybackError> {
+        let playhead = Arc::new(AtomicU64::new(playback_loop.first_arrangement_beat));
         let shared_loop = Arc::new(Mutex::new(playback_loop));
-        let stream = build_stream(Arc::clone(&shared_loop))?;
+        let stream = build_stream(Arc::clone(&shared_loop), Arc::clone(&playhead))?;
         stream.play().map_err(|error| {
             PlaybackError::new(format!("failed to start audio output: {error}"))
         })?;
@@ -34,6 +39,7 @@ impl Playback {
         Ok(Self {
             _stream: stream,
             shared_loop,
+            playhead,
         })
     }
 
@@ -45,6 +51,10 @@ impl Playback {
         playback_loop.version = current.version.wrapping_add(1);
         *current = playback_loop;
     }
+
+    pub fn current_arrangement_beat(&self) -> u64 {
+        self.playhead.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,14 +62,92 @@ pub struct PlaybackLoop {
     beat_length: u32,
     voices: Vec<PlaybackVoice>,
     beat_count: usize,
+    first_arrangement_beat: u64,
     version: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BeatRange {
+    first: u64,
+    last: u64,
+}
+
+impl BeatRange {
+    pub fn new(first: u64, last: u64, arrangement_beat_count: u64) -> Result<Self, PlaybackError> {
+        if arrangement_beat_count == 0 {
+            return Err(PlaybackError::new(
+                "add at least one part to the arrangement before setting a loop",
+            ));
+        }
+        if first == 0 {
+            return Err(PlaybackError::new("from beat must be at least 1"));
+        }
+        if last < first {
+            return Err(PlaybackError::new(
+                "to beat must be the same as or later than from beat",
+            ));
+        }
+        if last > arrangement_beat_count {
+            return Err(PlaybackError::new(format!(
+                "to beat must be no greater than arrangement beat {arrangement_beat_count}",
+            )));
+        }
+
+        Ok(Self { first, last })
+    }
+
+    pub fn first(self) -> u64 {
+        self.first
+    }
+
+    pub fn last(self) -> u64 {
+        self.last
+    }
+}
+
 impl PlaybackLoop {
-    pub fn from_project_score(
+    pub fn from_project_arrangement(
         project: &Project,
-        part: &Part,
-        score: &PartScore,
+        arrangement_scores: &[(Part, PartScore)],
+        range: BeatRange,
+    ) -> Result<Self, PlaybackError> {
+        let arrangement_beat_count = project.arrangement_beat_count();
+        let range = BeatRange::new(range.first, range.last, arrangement_beat_count)?;
+        if arrangement_scores.len() != project.sequence().len() {
+            return Err(PlaybackError::new(
+                "the available scores do not match the project arrangement",
+            ));
+        }
+
+        let mut rows = Vec::new();
+        let mut occurrence_first = 1_u64;
+        for (expected_part_name, (part, score)) in project.sequence().iter().zip(arrangement_scores)
+        {
+            if !part.name.eq_ignore_ascii_case(expected_part_name) {
+                return Err(PlaybackError::new(
+                    "the available scores do not match the project arrangement",
+                ));
+            }
+
+            let occurrence_last = occurrence_first + u64::from(part.length) - 1;
+            if range.first <= occurrence_last && range.last >= occurrence_first {
+                let parsed_rows = score.parsed_rows(part, project.voices()).map_err(|error| {
+                    PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
+                })?;
+                let first_row = range.first.saturating_sub(occurrence_first) as usize;
+                let last_row = (range.last.min(occurrence_last) - occurrence_first) as usize;
+                rows.extend_from_slice(&parsed_rows[first_row..=last_row]);
+            }
+            occurrence_first = occurrence_last + 1;
+        }
+
+        Self::from_rows(project, rows, range.first)
+    }
+
+    fn from_rows(
+        project: &Project,
+        rows: Vec<Vec<Option<Note>>>,
+        first_arrangement_beat: u64,
     ) -> Result<Self, PlaybackError> {
         if project.beat_length == 0 {
             return Err(PlaybackError::new(
@@ -71,10 +159,6 @@ impl PlaybackLoop {
                 "add a sin or saw voice before starting playback",
             ));
         }
-
-        let rows = score
-            .parsed_rows(part, project.voices())
-            .map_err(|error| PlaybackError::new(error.to_string()))?;
         if rows.is_empty() {
             return Err(PlaybackError::new("a loop must contain at least one beat"));
         }
@@ -114,6 +198,7 @@ impl PlaybackLoop {
             beat_length: project.beat_length,
             voices,
             beat_count: rows.len(),
+            first_arrangement_beat,
             version: 0,
         })
     }
@@ -147,7 +232,10 @@ impl fmt::Display for PlaybackError {
 
 impl Error for PlaybackError {}
 
-fn build_stream(shared_loop: Arc<Mutex<PlaybackLoop>>) -> Result<Stream, PlaybackError> {
+fn build_stream(
+    shared_loop: Arc<Mutex<PlaybackLoop>>,
+    playhead: Arc<AtomicU64>,
+) -> Result<Stream, PlaybackError> {
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or_else(|| {
         PlaybackError::new(
@@ -165,18 +253,18 @@ fn build_stream(shared_loop: Arc<Mutex<PlaybackLoop>>) -> Result<Stream, Playbac
     let config: StreamConfig = supported_config.into();
 
     match sample_format {
-        SampleFormat::I8 => build_typed_stream::<i8>(&device, config, shared_loop),
-        SampleFormat::I16 => build_typed_stream::<i16>(&device, config, shared_loop),
-        SampleFormat::I24 => build_typed_stream::<I24>(&device, config, shared_loop),
-        SampleFormat::I32 => build_typed_stream::<i32>(&device, config, shared_loop),
-        SampleFormat::I64 => build_typed_stream::<i64>(&device, config, shared_loop),
-        SampleFormat::U8 => build_typed_stream::<u8>(&device, config, shared_loop),
-        SampleFormat::U16 => build_typed_stream::<u16>(&device, config, shared_loop),
-        SampleFormat::U24 => build_typed_stream::<U24>(&device, config, shared_loop),
-        SampleFormat::U32 => build_typed_stream::<u32>(&device, config, shared_loop),
-        SampleFormat::U64 => build_typed_stream::<u64>(&device, config, shared_loop),
-        SampleFormat::F32 => build_typed_stream::<f32>(&device, config, shared_loop),
-        SampleFormat::F64 => build_typed_stream::<f64>(&device, config, shared_loop),
+        SampleFormat::I8 => build_typed_stream::<i8>(&device, config, shared_loop, playhead),
+        SampleFormat::I16 => build_typed_stream::<i16>(&device, config, shared_loop, playhead),
+        SampleFormat::I24 => build_typed_stream::<I24>(&device, config, shared_loop, playhead),
+        SampleFormat::I32 => build_typed_stream::<i32>(&device, config, shared_loop, playhead),
+        SampleFormat::I64 => build_typed_stream::<i64>(&device, config, shared_loop, playhead),
+        SampleFormat::U8 => build_typed_stream::<u8>(&device, config, shared_loop, playhead),
+        SampleFormat::U16 => build_typed_stream::<u16>(&device, config, shared_loop, playhead),
+        SampleFormat::U24 => build_typed_stream::<U24>(&device, config, shared_loop, playhead),
+        SampleFormat::U32 => build_typed_stream::<u32>(&device, config, shared_loop, playhead),
+        SampleFormat::U64 => build_typed_stream::<u64>(&device, config, shared_loop, playhead),
+        SampleFormat::F32 => build_typed_stream::<f32>(&device, config, shared_loop, playhead),
+        SampleFormat::F64 => build_typed_stream::<f64>(&device, config, shared_loop, playhead),
         other => Err(PlaybackError::new(format!(
             "unsupported audio output sample format: {other}"
         ))),
@@ -187,13 +275,14 @@ fn build_typed_stream<T>(
     device: &Device,
     config: StreamConfig,
     shared_loop: Arc<Mutex<PlaybackLoop>>,
+    playhead: Arc<AtomicU64>,
 ) -> Result<Stream, PlaybackError>
 where
     T: SizedSample + FromSample<f32>,
 {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate as f32;
-    let mut engine = AudioEngine::new(sample_rate, shared_loop);
+    let mut engine = AudioEngine::new(sample_rate, shared_loop, playhead);
     let error_callback = |error| eprintln!("audio stream error: {error}");
 
     device
@@ -213,10 +302,15 @@ struct AudioEngine {
     sample_in_beat: u32,
     playback_loop: PlaybackLoop,
     shared_loop: Arc<Mutex<PlaybackLoop>>,
+    playhead: Arc<AtomicU64>,
 }
 
 impl AudioEngine {
-    fn new(sample_rate: f32, shared_loop: Arc<Mutex<PlaybackLoop>>) -> Self {
+    fn new(
+        sample_rate: f32,
+        shared_loop: Arc<Mutex<PlaybackLoop>>,
+        playhead: Arc<AtomicU64>,
+    ) -> Self {
         let playback_loop = shared_loop
             .lock()
             .expect("playback loop mutex was poisoned")
@@ -229,6 +323,7 @@ impl AudioEngine {
             sample_in_beat: 0,
             playback_loop,
             shared_loop,
+            playhead,
         }
     }
 
@@ -253,9 +348,18 @@ impl AudioEngine {
             return;
         }
 
+        let range_changed = playback_loop.first_arrangement_beat
+            != self.playback_loop.first_arrangement_beat
+            || playback_loop.beat_count != self.playback_loop.beat_count;
         self.playback_loop = playback_loop.clone();
-        self.beat_index %= self.playback_loop.beat_count;
-        self.sample_in_beat %= self.playback_loop.beat_length;
+        if range_changed {
+            self.beat_index = 0;
+            self.sample_in_beat = 0;
+            self.publish_playhead();
+        } else {
+            self.beat_index %= self.playback_loop.beat_count;
+            self.sample_in_beat %= self.playback_loop.beat_length;
+        }
         self.oscillator_phases
             .resize(self.playback_loop.voices.len(), 0.0);
     }
@@ -297,7 +401,15 @@ impl AudioEngine {
         if self.sample_in_beat >= self.playback_loop.beat_length {
             self.sample_in_beat = 0;
             self.beat_index = (self.beat_index + 1) % self.playback_loop.beat_count;
+            self.publish_playhead();
         }
+    }
+
+    fn publish_playhead(&self) {
+        self.playhead.store(
+            self.playback_loop.first_arrangement_beat + self.beat_index as u64,
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -323,9 +435,12 @@ fn midi_note_frequency(note: u8) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    };
 
-    use super::{AudioEngine, PlaybackLoop};
+    use super::{AudioEngine, BeatRange, PlaybackLoop};
     use crate::{
         note::Note,
         part::{Part, PartScore},
@@ -345,13 +460,69 @@ mod tests {
             vec![String::new(), "G2".to_string()],
         ]);
 
-        let playback_loop = PlaybackLoop::from_project_score(&project, &part, &score).unwrap();
+        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
 
         assert_eq!(playback_loop.beat_count, 2);
         assert_eq!(playback_loop.voices.len(), 2);
         assert_eq!(playback_loop.voices[0].notes[0], Some(Note::from_midi(60)));
         assert_eq!(playback_loop.voices[0].notes[1], None);
         assert_eq!(playback_loop.voices[1].notes[1], Some(Note::from_midi(43)));
+    }
+
+    #[test]
+    fn builds_an_inclusive_loop_across_arrangement_part_boundaries() {
+        let first_part = Part::new("first", 2);
+        let second_part = Part::new("second", 3);
+        let project = Project::new("test", 800, 0, Seed::new(1))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![first_part.clone(), second_part.clone()])
+            .with_sequence(vec![
+                first_part.name.clone(),
+                second_part.name.clone(),
+                first_part.name.clone(),
+            ]);
+        let first_score =
+            PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        let second_score = PartScore::from_rows(vec![
+            vec!["E4".to_string()],
+            vec!["F4".to_string()],
+            vec!["G4".to_string()],
+        ]);
+        let arrangement_scores = vec![
+            (first_part.clone(), first_score.clone()),
+            (second_part, second_score),
+            (first_part, first_score),
+        ];
+        let range = BeatRange::new(2, 6, project.arrangement_beat_count()).unwrap();
+
+        let playback_loop =
+            PlaybackLoop::from_project_arrangement(&project, &arrangement_scores, range).unwrap();
+
+        assert_eq!(playback_loop.beat_count, 5);
+        assert_eq!(playback_loop.first_arrangement_beat, 2);
+        assert_eq!(
+            playback_loop.voices[0].notes,
+            [62, 64, 65, 67, 60]
+                .map(|midi| Some(Note::from_midi(midi)))
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn beat_ranges_must_be_ordered_and_inside_the_arrangement() {
+        assert_eq!(
+            BeatRange::new(0, 1, 8).unwrap_err().to_string(),
+            "from beat must be at least 1"
+        );
+        assert_eq!(
+            BeatRange::new(5, 4, 8).unwrap_err().to_string(),
+            "to beat must be the same as or later than from beat"
+        );
+        assert_eq!(
+            BeatRange::new(5, 9, 8).unwrap_err().to_string(),
+            "to beat must be no greater than arrangement beat 8"
+        );
     }
 
     #[test]
@@ -363,14 +534,43 @@ mod tests {
         )]);
         let part = Part::new("intro", 1);
         let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
-        let playback_loop = PlaybackLoop::from_project_score(&project, &part, &score).unwrap();
+        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
-        let mut engine = AudioEngine::new(44_100.0, shared);
+        let playhead = Arc::new(AtomicU64::new(1));
+        let mut engine = AudioEngine::new(44_100.0, shared, playhead);
 
         let samples = (0..24).map(|_| engine.next_sample()).collect::<Vec<_>>();
 
         assert!(samples.iter().all(|sample| (-1.0..=1.0).contains(sample)));
         assert_eq!(engine.beat_index, 0);
         assert_eq!(engine.sample_in_beat, 0);
+    }
+
+    #[test]
+    fn renderer_publishes_the_current_arrangement_beat() {
+        let project = Project::new("test", 2, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Sin,
+        )]);
+        let part = Part::new("intro", 3);
+        let score = PartScore::from_rows(vec![vec![String::new()]; 3]);
+        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 4).unwrap();
+        let shared = Arc::new(Mutex::new(playback_loop));
+        let playhead = Arc::new(AtomicU64::new(4));
+        let mut engine = AudioEngine::new(44_100.0, shared, Arc::clone(&playhead));
+
+        engine.next_sample();
+        assert_eq!(playhead.load(Ordering::Relaxed), 4);
+        engine.next_sample();
+        assert_eq!(playhead.load(Ordering::Relaxed), 5);
+        engine.next_sample();
+        engine.next_sample();
+        assert_eq!(playhead.load(Ordering::Relaxed), 6);
+        engine.next_sample();
+        engine.next_sample();
+        assert_eq!(playhead.load(Ordering::Relaxed), 4);
     }
 }

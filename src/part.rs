@@ -294,6 +294,34 @@ impl PartScore {
             .map(|table| Self { rows: table.rows })
     }
 
+    pub fn load_with_recovery(
+        project_directory: impl AsRef<Path>,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<(Self, bool), PartFileError> {
+        let project_directory = project_directory.as_ref();
+        let saved_score = Self::load(project_directory, part, voices)?;
+        let recovery_path = part_recovery_path(project_directory, part);
+        let recovery_exists = recovery_path
+            .try_exists()
+            .map_err(|source| PartFileError::Io {
+                path: recovery_path.clone(),
+                source,
+            })?;
+        if !recovery_exists {
+            return Ok((saved_score, false));
+        }
+
+        let recovery_score = read_part_table_at_path(recovery_path.clone(), part, voices)
+            .map(|table| Self { rows: table.rows })?;
+        if recovery_score == saved_score {
+            fs::remove_file(&recovery_path).ok();
+            return Ok((saved_score, false));
+        }
+
+        Ok((recovery_score, true))
+    }
+
     pub fn rows(&self) -> &[Vec<String>] {
         &self.rows
     }
@@ -336,6 +364,36 @@ impl PartScore {
                 source,
             })?;
         atomic_write_part_score(project_directory.as_ref(), part, &contents)
+    }
+
+    pub fn save_recovery(
+        &self,
+        project_directory: impl AsRef<Path>,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<(), ScoreError> {
+        self.validate_shape(part, voices)?;
+        let project_directory = project_directory.as_ref();
+        let path = part_recovery_path(project_directory, part);
+        let contents =
+            serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv {
+                path: path.clone(),
+                source,
+            })?;
+        atomic_write_score(project_directory, &path, &contents)
+    }
+
+    pub fn clear_recovery(
+        project_directory: impl AsRef<Path>,
+        part: &Part,
+    ) -> Result<(), ScoreError> {
+        let project_directory = project_directory.as_ref();
+        let path = part_recovery_path(project_directory, part);
+        match fs::remove_file(&path) {
+            Ok(()) => sync_directory(project_directory),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(ScoreError::Io { path, source }),
+        }
     }
 
     fn validate_shape(&self, part: &Part, voices: &[Voice]) -> Result<(), ScoreError> {
@@ -496,6 +554,50 @@ pub fn create_part_file(
     })
 }
 
+pub fn duplicate_part_file(
+    project_directory: impl AsRef<Path>,
+    parts: &[Part],
+    source_part: &Part,
+    name: &str,
+) -> Result<CreatedPartFile, CreatePartError> {
+    let name = name.trim();
+    let part_name = PartName::new(name);
+    let file_name = csv_file_name(&part_name).map_err(|_| CreatePartError::EmptyName)?;
+    if parts
+        .iter()
+        .any(|part| part.name.eq_ignore_ascii_case(&part_name))
+    {
+        return Err(CreatePartError::DuplicateName(name.to_string()));
+    }
+
+    let project_directory = project_directory.as_ref();
+    let source_path = part_file_path(project_directory, source_part);
+    let contents = fs::read(&source_path).map_err(|source| CreatePartError::Io {
+        path: source_path,
+        source,
+    })?;
+    let path = project_directory.join(file_name);
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(file) => file,
+        Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(CreatePartError::CsvAlreadyExists(path));
+        }
+        Err(source) => return Err(CreatePartError::Io { path, source }),
+    };
+
+    if let Err(source) = file.write_all(&contents) {
+        drop(file);
+        fs::remove_file(&path).ok();
+        return Err(CreatePartError::Io { path, source });
+    }
+    drop(file);
+
+    Ok(CreatedPartFile {
+        part: Part::new(part_name, source_part.length),
+        path,
+    })
+}
+
 pub fn soft_delete_part_file(
     project_directory: impl AsRef<Path>,
     part: &Part,
@@ -601,6 +703,14 @@ fn read_part_table(
     voices: &[Voice],
 ) -> Result<PartTable, PartFileError> {
     let path = part_file_path(project_directory, part);
+    read_part_table_at_path(path, part, voices)
+}
+
+fn read_part_table_at_path(
+    path: PathBuf,
+    part: &Part,
+    voices: &[Voice],
+) -> Result<PartTable, PartFileError> {
     let contents = fs::read(&path).map_err(|source| PartFileError::Io {
         path: path.clone(),
         source,
@@ -773,17 +883,36 @@ fn part_file_path(project_directory: &Path, part: &Part) -> PathBuf {
     project_directory.join(file_name)
 }
 
+fn part_recovery_path(project_directory: &Path, part: &Part) -> PathBuf {
+    let file_name = csv_file_name(&part.name)
+        .expect("validated project part names always produce CSV filenames");
+    project_directory.join(format!(".{file_name}.recovery"))
+}
+
 fn atomic_write_part_score(
     project_directory: &Path,
     part: &Part,
     contents: &[u8],
 ) -> Result<(), ScoreError> {
     let path = part_file_path(project_directory, part);
+    atomic_write_score(project_directory, &path, contents)
+}
+
+fn atomic_write_score(
+    project_directory: &Path,
+    path: &Path,
+    contents: &[u8],
+) -> Result<(), ScoreError> {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .expect("validated part paths always have UTF-8 filenames");
-    let pending_path = project_directory.join(format!(".{file_name}.pending"));
+    let pending_file_name = if file_name.starts_with('.') {
+        format!("{file_name}.pending")
+    } else {
+        format!(".{file_name}.pending")
+    };
+    let pending_path = project_directory.join(pending_file_name);
     let mut pending = OpenOptions::new()
         .write(true)
         .create(true)
@@ -806,10 +935,24 @@ fn atomic_write_part_score(
 
     if let Err(source) = fs::rename(&pending_path, &path) {
         fs::remove_file(&pending_path).ok();
-        return Err(ScoreError::Io { path, source });
+        return Err(ScoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        });
     }
 
-    Ok(())
+    sync_directory(project_directory)
+}
+
+fn sync_directory(path: &Path) -> Result<(), ScoreError> {
+    let directory = fs::File::open(path).map_err(|source| ScoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    directory.sync_all().map_err(|source| ScoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 fn escape_csv_value(value: &str) -> String {
@@ -863,8 +1006,9 @@ mod tests {
     };
 
     use super::{
-        available_deleted_path, create_part_file, csv_file_name, soft_delete_part_file,
-        DeletedPartPathError, Part, PartName, PartScore, DELETED_PARTS_DIRECTORY,
+        available_deleted_path, create_part_file, csv_file_name, duplicate_part_file,
+        soft_delete_part_file, DeletedPartPathError, Part, PartName, PartScore,
+        DELETED_PARTS_DIRECTORY,
     };
     use crate::{
         note::Note,
@@ -958,6 +1102,40 @@ mod tests {
     }
 
     #[test]
+    fn duplicates_a_part_file_with_its_score_and_length() {
+        let root = temp_root("duplicate-part");
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let project_directory = create_project(&root, &project).unwrap();
+        let source = add_part(&project_directory, &mut project, "intro", 2);
+        PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]])
+            .save(&project_directory, &source, project.voices())
+            .unwrap();
+
+        let duplicated = duplicate_part_file(
+            &project_directory,
+            &project.parts,
+            &source,
+            "intro variation",
+        )
+        .unwrap();
+
+        assert_eq!(duplicated.part().name.as_str(), "intro variation");
+        assert_eq!(duplicated.part().length, source.length);
+        assert_eq!(
+            fs::read(project_directory.join("intro-variation.csv")).unwrap(),
+            fs::read(project_directory.join("intro.csv")).unwrap()
+        );
+        assert_eq!(project.parts, vec![source]);
+
+        duplicated.rollback().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn part_scores_load_validate_and_save_note_cells() {
         let root = temp_root("score-round-trip");
         let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
@@ -991,6 +1169,42 @@ mod tests {
             "lead,bass\nC4,36\n,rest\n"
         );
         assert!(!project_directory.join(".intro.csv.pending").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raw_score_recovery_preserves_invalid_cells_without_replacing_the_saved_score() {
+        let root = temp_root("raw-score-recovery");
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
+            Voice::new(1, "lead", VoiceType::Saw),
+            Voice::new(2, "bass", VoiceType::Sin),
+        ]);
+        let project_directory = create_project(&root, &project).unwrap();
+        let part = add_part(&project_directory, &mut project, "intro", 1);
+        let saved_score = PartScore::load(&project_directory, &part, project.voices()).unwrap();
+        let recovery_score =
+            PartScore::from_rows(vec![vec!["half-typed".to_string(), "C4".to_string()]]);
+
+        recovery_score
+            .save_recovery(&project_directory, &part, project.voices())
+            .unwrap();
+
+        assert_eq!(
+            PartScore::load(&project_directory, &part, project.voices()).unwrap(),
+            saved_score
+        );
+        assert_eq!(
+            PartScore::load_with_recovery(&project_directory, &part, project.voices()).unwrap(),
+            (recovery_score, true)
+        );
+        assert!(project_directory.join(".intro.csv.recovery").is_file());
+        assert!(!project_directory
+            .join(".intro.csv.recovery.pending")
+            .exists());
+
+        PartScore::clear_recovery(&project_directory, &part).unwrap();
+        assert!(!project_directory.join(".intro.csv.recovery").exists());
 
         fs::remove_dir_all(root).unwrap();
     }

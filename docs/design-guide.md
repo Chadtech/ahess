@@ -1,13 +1,18 @@
 # ahess design guide
 
-The design system is implemented in `src/style.rs` and the shared components in
-`src/view`. Screens should use those tokens and components instead of recreating
-their styles locally.
+This guide records the reusable visual language, interaction principles, and
+component contracts for ahess. The design system is implemented in
+`src/style.rs` and the shared components in `src/view`; screens should compose
+those tokens and components instead of recreating their styles locally.
+
+Keep feature behavior and the requirements of individual screens out of this
+guide. Add a rule here when it should apply consistently to multiple features
+or when it defines how a shared component is used.
 
 ## text
 
 - do not capitalize english words by default in the interface.
-- keep product or project names in their chosen casing.
+- keep proper names in their chosen casing.
 - use `TEXT_SIZE` for all interface text.
 - do not use bold text.
 - use `TEXT_DEFAULT` for ordinary content text.
@@ -58,12 +63,12 @@ their styles locally.
   and raised/sunken table chrome.
 - give each independently scrollable grid view its own `ScrollHandle`.
 
-## score transport
+## selection lists
 
-- put shared score playback controls in the project bar, not inside individual
-  score panes.
-- play targets the active pane; changing the active pane does not implicitly
-  change the part that is already playing.
+- use `view::selection_list::list` and `view::selection_list::row` for selectable
+  resource lists.
+- the component owns the sunken container, empty state, alternating row colors,
+  and selected-row colors.
 
 ## status bars
 
@@ -75,10 +80,13 @@ their styles locally.
   width and meet the bottom and side edges of the window.
 - separate the bar from workspace content with a top border only; do not frame
   its left, right, or bottom edges.
-- use the warning state for unsaved changes and the error state for parse,
-  playback, and project-operation failures.
-- pair cell-specific errors with an error highlight on every affected cell;
-  the bar explains the first issue and may navigate to it.
+- use the neutral message state for routine, non-actionable feedback; it keeps
+  the ordinary status-bar colors.
+- use the warning state for conditions that need attention but do not prevent
+  continued work. Use the error state for invalid input and failed operations.
+- when an error belongs to a specific control or data cell, pair the status
+  message with a local error highlight and make navigation available when
+  helpful.
 
 ## dialogs
 
@@ -100,16 +108,5 @@ their styles locally.
   resource list, details, and workflow visible together instead of opening a
   second management dialog. When present, all three columns have fixed equal
   widths; changing content in one column must not resize the others.
-- in the parts dialog, the auxiliary column is the project arrangement. Show
-  every part occurrence as its own numbered row and provide explicit controls
-  to move, repeat, and remove the selected occurrence. The arrangement list
-  fills the full width available to its column. Keep the delete part control
-  visible and disabled while the selected part has arrangement occurrences.
-  Put add-new actions under the parts list, part actions under the details, and
-  arrangement actions under the arrangement list. Part details describe the
-  part and its arrangement usage; do not expose storage filenames.
-- use `view::selection_list::list` and `view::selection_list::row` for selectable
-  resource lists. The component owns the sunken container, empty state,
-  alternating row colors, and selected-row colors.
 - use `view::dialog::modal_overlay` for a modal dialog displayed over an active
   screen. Modal overlays block interaction with the screen beneath them.

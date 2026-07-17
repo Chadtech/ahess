@@ -1,13 +1,19 @@
-use gpui::{div, prelude::*, px, CursorStyle, SharedString};
+use gpui::{div, prelude::*, px, CursorStyle, ElementId, SharedString};
 
 use crate::style as s;
 
-pub fn list(empty_message: impl Into<SharedString>, rows: Vec<gpui::Div>) -> gpui::Div {
+pub fn list(
+    id: impl Into<ElementId>,
+    empty_message: impl Into<SharedString>,
+    rows: Vec<gpui::Div>,
+) -> gpui::Div {
     let body = div()
+        .id(id)
         .flex()
         .flex_col()
         .flex_1()
         .min_h(px(0.0))
+        .overflow_y_scroll()
         .bg(s::GREEN3);
     let body = if rows.is_empty() {
         body.child(
@@ -43,6 +49,7 @@ pub fn row(index: usize, selected: bool, label: impl Into<SharedString>) -> gpui
     let text_color = if selected { s::GRAY6 } else { s::GRAY5 };
 
     div()
+        .flex_none()
         .bg(background)
         .p(s::S4)
         .text_color(text_color)

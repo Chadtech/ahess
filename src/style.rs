@@ -60,6 +60,7 @@ pub const TEXT_HOVERED: Rgba = WHITE;
 pub const FIELD_LABEL_TEXT: Rgba = GRAY5;
 pub const BUTTON_TEXT: Rgba = GRAY6;
 pub const DIALOG_TITLE_TEXT: Rgba = GRAY2;
+pub const PLAYBACK_ROW_BORDER: Rgba = GRAY5;
 
 pub const CONTENT_PADDING: Pixels = S5;
 pub const MODAL_BACKDROP: Rgba = Rgba {

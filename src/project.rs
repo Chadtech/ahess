@@ -100,6 +100,14 @@ impl Project {
         &self.sequence
     }
 
+    pub fn arrangement_beat_count(&self) -> u64 {
+        self.sequence
+            .iter()
+            .filter_map(|name| self.part(name))
+            .map(|part| u64::from(part.length))
+            .sum()
+    }
+
     pub fn set_sequence(&mut self, sequence: Vec<PartName>) {
         self.sequence = sequence;
     }

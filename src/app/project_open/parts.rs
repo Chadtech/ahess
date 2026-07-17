@@ -22,6 +22,10 @@ pub enum Msg {
         name: String,
         length: u32,
     },
+    DuplicateRequested {
+        source: PartName,
+        name: String,
+    },
     DeleteRequested {
         name: PartName,
     },
@@ -32,26 +36,40 @@ pub enum Msg {
     Closed,
 }
 
+struct ListView {
+    add_new_button: Entity<Button>,
+    duplicate_button: Entity<Button>,
+    delete_button: Entity<Button>,
+    delete_confirmation: Option<DeleteConfirmation>,
+    add_to_arrangement_button: Entity<Button>,
+    move_earlier_button: Entity<Button>,
+    move_later_button: Entity<Button>,
+    repeat_button: Entity<Button>,
+    remove_occurrence_button: Entity<Button>,
+    delete_error: Option<String>,
+    arrangement_error: Option<String>,
+}
+
+#[derive(Clone)]
+struct DeleteConfirmation {
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+}
+
 enum DialogView {
-    List {
-        add_new_button: Entity<Button>,
-        delete_button: Entity<Button>,
-        cancel_delete_button: Entity<Button>,
-        confirm_delete_button: Entity<Button>,
-        add_to_arrangement_button: Entity<Button>,
-        move_earlier_button: Entity<Button>,
-        move_later_button: Entity<Button>,
-        repeat_button: Entity<Button>,
-        remove_occurrence_button: Entity<Button>,
-        delete_error: Option<String>,
-        arrangement_error: Option<String>,
-        confirming_delete: bool,
-    },
+    List(Box<ListView>),
     Add {
         name: Entity<TextInput>,
         length: Entity<TextInput>,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
+        form_error: Option<String>,
+    },
+    Duplicate {
+        source: PartName,
+        name: Entity<TextInput>,
+        cancel_button: Entity<Button>,
+        duplicate_button: Entity<Button>,
         form_error: Option<String>,
     },
 }
@@ -89,9 +107,8 @@ impl PartsDialog {
 
     fn list_view(cx: &mut Context<Self>) -> DialogView {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
+        let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate part"));
         let delete_button = cx.new(|_| Button::new("delete-part", "delete part"));
-        let cancel_delete_button = cx.new(|_| Button::new("cancel-delete-part", "keep part"));
-        let confirm_delete_button = cx.new(|_| Button::new("confirm-delete-part", "delete part"));
         let add_to_arrangement_button =
             cx.new(|_| Button::new("add-to-arrangement", "add to arrangement"));
         let move_earlier_button =
@@ -103,11 +120,9 @@ impl PartsDialog {
 
         cx.subscribe(&add_new_button, Self::on_add_new_clicked)
             .detach();
+        cx.subscribe(&duplicate_button, Self::on_duplicate_clicked)
+            .detach();
         cx.subscribe(&delete_button, Self::on_delete_clicked)
-            .detach();
-        cx.subscribe(&cancel_delete_button, Self::on_cancel_delete_clicked)
-            .detach();
-        cx.subscribe(&confirm_delete_button, Self::on_confirm_delete_clicked)
             .detach();
         cx.subscribe(
             &add_to_arrangement_button,
@@ -126,11 +141,11 @@ impl PartsDialog {
         )
         .detach();
 
-        DialogView::List {
+        DialogView::List(Box::new(ListView {
             add_new_button,
+            duplicate_button,
             delete_button,
-            cancel_delete_button,
-            confirm_delete_button,
+            delete_confirmation: None,
             add_to_arrangement_button,
             move_earlier_button,
             move_later_button,
@@ -138,7 +153,40 @@ impl PartsDialog {
             remove_occurrence_button,
             delete_error: None,
             arrangement_error: None,
-            confirming_delete: false,
+        }))
+    }
+
+    fn delete_confirmation(cx: &mut Context<Self>) -> DeleteConfirmation {
+        let cancel_button = cx.new(|_| Button::new("cancel-delete-part", "keep part"));
+        let confirm_button = cx.new(|_| Button::new("confirm-delete-part", "delete part"));
+        cx.subscribe(&cancel_button, Self::on_cancel_delete_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_delete_clicked)
+            .detach();
+
+        DeleteConfirmation {
+            cancel_button,
+            confirm_button,
+        }
+    }
+
+    fn duplicate_view(source: PartName, cx: &mut Context<Self>) -> DialogView {
+        let placeholder = format!("{} copy", source.as_str());
+        let name = cx.new(|cx| TextInput::new("", placeholder, cx));
+        let cancel_button = cx.new(|_| Button::new("cancel-duplicate-part", "cancel"));
+        let duplicate_button = cx.new(|_| Button::new("confirm-duplicate-part", "duplicate part"));
+
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&duplicate_button, Self::on_duplicate_confirmed)
+            .detach();
+
+        DialogView::Duplicate {
+            source,
+            name,
+            cancel_button,
+            duplicate_button,
+            form_error: None,
         }
     }
 
@@ -175,6 +223,20 @@ impl PartsDialog {
         cx.notify();
     }
 
+    fn on_duplicate_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.selected_part.clone() else {
+            return;
+        };
+
+        self.view = Self::duplicate_view(source, cx);
+        cx.notify();
+    }
+
     fn on_cancel_clicked(
         &mut self,
         _: Entity<Button>,
@@ -204,48 +266,81 @@ impl PartsDialog {
         }
     }
 
+    fn on_duplicate_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Duplicate { source, name, .. } = &self.view else {
+            return;
+        };
+        cx.emit(Msg::DuplicateRequested {
+            source: source.clone(),
+            name: name.read(cx).value(),
+        });
+    }
+
     fn on_delete_clicked(
         &mut self,
         _: Entity<Button>,
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        if let DialogView::List {
-            confirming_delete,
-            delete_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = true;
-            *delete_error = None;
+        let should_start = matches!(
+            &self.view,
+            DialogView::List(view) if view.delete_confirmation.is_none()
+        );
+        if !should_start {
+            return;
+        }
+        let confirmation = Self::delete_confirmation(cx);
+        if let DialogView::List(view) = &mut self.view {
+            view.delete_confirmation = Some(confirmation);
+            view.delete_error = None;
             cx.notify();
         }
     }
 
     fn on_cancel_delete_clicked(
         &mut self,
-        _: Entity<Button>,
+        button: Entity<Button>,
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        if let DialogView::List {
-            confirming_delete,
-            delete_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = false;
-            *delete_error = None;
+        let is_current = matches!(
+            &self.view,
+            DialogView::List(view)
+                if view.delete_confirmation.as_ref().is_some_and(|confirmation| {
+                    confirmation.cancel_button == button
+                })
+        );
+        if !is_current {
+            return;
+        }
+        if let DialogView::List(view) = &mut self.view {
+            view.delete_confirmation = None;
+            view.delete_error = None;
             cx.notify();
         }
     }
 
     fn on_confirm_delete_clicked(
         &mut self,
-        _: Entity<Button>,
+        button: Entity<Button>,
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
+        let is_current = matches!(
+            &self.view,
+            DialogView::List(view)
+                if view.delete_confirmation.as_ref().is_some_and(|confirmation| {
+                    confirmation.confirm_button == button
+                })
+        );
+        if !is_current {
+            return;
+        }
         let Some(name) = self.selected_part.clone() else {
             return;
         };
@@ -359,16 +454,10 @@ impl PartsDialog {
         }
 
         self.selected_part = Some(part.name.clone());
-        if let DialogView::List {
-            confirming_delete,
-            delete_error,
-            arrangement_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = false;
-            *delete_error = None;
-            *arrangement_error = None;
+        if let DialogView::List(view) = &mut self.view {
+            view.delete_confirmation = None;
+            view.delete_error = None;
+            view.arrangement_error = None;
         }
         self.sync_button_states(cx);
         cx.notify();
@@ -380,24 +469,15 @@ impl PartsDialog {
         }
 
         self.selected_occurrence = Some(index);
-        if let DialogView::List {
-            arrangement_error, ..
-        } = &mut self.view
-        {
-            *arrangement_error = None;
+        if let DialogView::List(view) = &mut self.view {
+            view.arrangement_error = None;
         }
         self.sync_button_states(cx);
         cx.notify();
     }
 
     fn sync_button_states(&self, cx: &mut Context<Self>) {
-        let DialogView::List {
-            delete_button,
-            move_earlier_button,
-            move_later_button,
-            ..
-        } = &self.view
-        else {
+        let DialogView::List(view) = &self.view else {
             return;
         };
         let can_move_earlier = self.selected_occurrence.is_some_and(|index| index > 0);
@@ -410,20 +490,20 @@ impl PartsDialog {
                 .iter()
                 .any(|name| name.eq_ignore_ascii_case(selected))
         });
-        delete_button.update(cx, |button, cx| {
+        view.delete_button.update(cx, |button, cx| {
             button.set_disabled(!can_delete, cx);
         });
-        move_earlier_button.update(cx, |button, cx| {
+        view.move_earlier_button.update(cx, |button, cx| {
             button.set_disabled(!can_move_earlier, cx);
         });
-        move_later_button.update(cx, |button, cx| {
+        view.move_later_button.update(cx, |button, cx| {
             button.set_disabled(!can_move_later, cx);
         });
     }
 
     fn suppress_add_new_hover(&self, cx: &mut Context<Self>) {
-        if let DialogView::List { add_new_button, .. } = &self.view {
-            add_new_button.update(cx, |button, cx| {
+        if let DialogView::List(view) = &self.view {
+            view.add_new_button.update(cx, |button, cx| {
                 button.suppress_hover_until_pointer_exit(cx);
             });
         }
@@ -440,6 +520,13 @@ impl PartsDialog {
 
     pub fn add_failed(&mut self, error: String, cx: &mut Context<Self>) {
         if let DialogView::Add { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
+    pub fn duplicate_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Duplicate { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -463,14 +550,9 @@ impl PartsDialog {
     }
 
     pub fn delete_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::List {
-            confirming_delete,
-            delete_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = false;
-            *delete_error = Some(error);
+        if let DialogView::List(view) = &mut self.view {
+            view.delete_confirmation = None;
+            view.delete_error = Some(error);
             cx.notify();
         }
     }
@@ -484,21 +566,15 @@ impl PartsDialog {
         self.sequence = sequence;
         self.selected_occurrence = selected_occurrence.filter(|index| *index < self.sequence.len());
         self.sync_button_states(cx);
-        if let DialogView::List {
-            arrangement_error, ..
-        } = &mut self.view
-        {
-            *arrangement_error = None;
+        if let DialogView::List(view) = &mut self.view {
+            view.arrangement_error = None;
         }
         cx.notify();
     }
 
     pub fn sequence_change_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::List {
-            arrangement_error, ..
-        } = &mut self.view
-        {
-            *arrangement_error = Some(error);
+        if let DialogView::List(view) = &mut self.view {
+            view.arrangement_error = Some(error);
             cx.notify();
         }
     }
@@ -507,20 +583,7 @@ impl PartsDialog {
 impl Render for PartsDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.view {
-            DialogView::List {
-                add_new_button,
-                delete_button,
-                cancel_delete_button,
-                confirm_delete_button,
-                add_to_arrangement_button,
-                move_earlier_button,
-                move_later_button,
-                repeat_button,
-                remove_occurrence_button,
-                delete_error,
-                arrangement_error,
-                confirming_delete,
-            } => list_detail_dialog(dialog::ListDetailArgs {
+            DialogView::List(view) => list_detail_dialog(dialog::ListDetailArgs {
                 title: "parts",
                 close_button: self.close_button.clone(),
                 list: dialog::column_with_actions(
@@ -528,18 +591,19 @@ impl Render for PartsDialog {
                     div()
                         .flex()
                         .debug_selector(|| "part-list-actions".to_string())
-                        .child(add_new_button.clone()),
+                        .child(view.add_new_button.clone()),
                 ),
                 details: part_details(
                     self.selected_part
                         .as_ref()
                         .and_then(|name| find_part(&self.parts, name)),
-                    delete_button.clone(),
-                    cancel_delete_button.clone(),
-                    confirm_delete_button.clone(),
-                    *confirming_delete,
-                    delete_error.clone(),
-                    add_to_arrangement_button.clone(),
+                    PartDetailsButtons {
+                        duplicate: view.duplicate_button.clone(),
+                        delete: view.delete_button.clone(),
+                        delete_confirmation: view.delete_confirmation.clone(),
+                        add_to_arrangement: view.add_to_arrangement_button.clone(),
+                    },
+                    view.delete_error.clone(),
                     &self.sequence,
                 ),
                 auxiliary: Some(
@@ -547,11 +611,11 @@ impl Render for PartsDialog {
                         &self.parts,
                         &self.sequence,
                         self.selected_occurrence,
-                        move_earlier_button.clone(),
-                        move_later_button.clone(),
-                        repeat_button.clone(),
-                        remove_occurrence_button.clone(),
-                        arrangement_error.clone(),
+                        view.move_earlier_button.clone(),
+                        view.move_later_button.clone(),
+                        view.repeat_button.clone(),
+                        view.remove_occurrence_button.clone(),
+                        view.arrangement_error.clone(),
                         cx,
                     )
                     .into_any_element(),
@@ -589,6 +653,41 @@ impl Render for PartsDialog {
                         .child(add_button.clone()),
                 )
             }
+            DialogView::Duplicate {
+                source,
+                name,
+                cancel_button,
+                duplicate_button,
+                form_error,
+            } => {
+                let form = div()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .child(
+                        div()
+                            .text_color(s::TEXT_DEFAULT)
+                            .child(format!("copying {:?}", source.as_str())),
+                    )
+                    .child(field_group("new part name", name.clone()));
+                let form = if let Some(error) = form_error {
+                    form.child(error_message(error.clone()))
+                } else {
+                    form
+                };
+
+                management_form_dialog(
+                    "duplicate part",
+                    self.close_button.clone(),
+                    form,
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_3()
+                        .child(cancel_button.clone())
+                        .child(duplicate_button.clone()),
+                )
+            }
         }
     }
 }
@@ -604,7 +703,7 @@ fn part_list(
         .map(|(index, part)| part_list_row(index, part, selected_part == Some(&part.name), cx))
         .collect::<Vec<_>>();
 
-    selection_list::list("no parts yet", rows)
+    selection_list::list("parts-list-scroll", "no parts yet", rows)
         .w_full()
         .debug_selector(|| "parts-list-column".to_string())
 }
@@ -616,59 +715,83 @@ fn part_list_row(
     cx: &mut Context<PartsDialog>,
 ) -> gpui::Div {
     let part_name = part.name.clone();
-    selection_list::row(index, selected, part.name.as_str().to_owned()).on_mouse_down(
-        MouseButton::Left,
-        cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
-            dialog.select_part(&part_name, cx);
-        }),
-    )
+    selection_list::row(index, selected, part.name.as_str().to_owned())
+        .debug_selector(move || format!("part-list-row-{index}"))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
+                dialog.select_part(&part_name, cx);
+            }),
+        )
+}
+
+struct PartDetailsButtons {
+    duplicate: Entity<Button>,
+    delete: Entity<Button>,
+    delete_confirmation: Option<DeleteConfirmation>,
+    add_to_arrangement: Entity<Button>,
 }
 
 fn part_details(
     part: Option<&Part>,
-    delete_button: Entity<Button>,
-    cancel_delete_button: Entity<Button>,
-    confirm_delete_button: Entity<Button>,
-    confirming_delete: bool,
+    buttons: PartDetailsButtons,
     delete_error: Option<String>,
-    add_to_arrangement_button: Entity<Button>,
     sequence: &[PartName],
 ) -> gpui::Div {
+    let PartDetailsButtons {
+        duplicate,
+        delete,
+        delete_confirmation,
+        add_to_arrangement,
+    } = buttons;
     let details = match part {
         Some(part) => {
             let occurrence_count = sequence
                 .iter()
                 .filter(|name| name.eq_ignore_ascii_case(&part.name))
                 .count();
-            let actions = if occurrence_count == 0 && confirming_delete {
-                destructive_confirmation(
-                    format!(
-                        "delete {:?}? its csv file will be moved to the deleted folder.",
-                        part.name.as_str()
-                    ),
+            let actions =
+                if let Some(confirmation) = delete_confirmation.filter(|_| occurrence_count == 0) {
+                    destructive_confirmation(
+                        format!(
+                            "delete {:?}? its csv file will be moved to the deleted folder.",
+                            part.name.as_str()
+                        ),
+                        div()
+                            .flex()
+                            .gap_3()
+                            .child(confirmation.cancel_button)
+                            .child(confirmation.confirm_button),
+                    )
+                    .debug_selector(|| "part-details-actions".to_string())
+                } else {
                     div()
                         .flex()
+                        .flex_col()
+                        .items_start()
                         .gap_3()
-                        .child(cancel_delete_button)
-                        .child(confirm_delete_button),
-                )
-                .debug_selector(|| "part-details-actions".to_string())
-            } else {
-                div()
-                    .flex()
-                    .gap_3()
-                    .debug_selector(|| "part-details-actions".to_string())
-                    .child(
-                        div()
-                            .debug_selector(|| "add-to-arrangement-control".to_string())
-                            .child(add_to_arrangement_button),
-                    )
-                    .child(
-                        div()
-                            .debug_selector(|| "delete-part-control".to_string())
-                            .child(delete_button),
-                    )
-            };
+                        .debug_selector(|| "part-details-actions".to_string())
+                        .child(
+                            div()
+                                .debug_selector(|| "add-to-arrangement-control".to_string())
+                                .child(add_to_arrangement),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .debug_selector(|| "duplicate-part-control".to_string())
+                                        .child(duplicate),
+                                )
+                                .child(
+                                    div()
+                                        .debug_selector(|| "delete-part-control".to_string())
+                                        .child(delete),
+                                ),
+                        )
+                };
             let actions = if let Some(error) = delete_error {
                 div()
                     .flex()
@@ -822,7 +945,7 @@ fn arrangement_panel(
                 ))),
         )
         .child(
-            selection_list::list("no arranged parts yet", rows)
+            selection_list::list("arrangement-list-scroll", "no arranged parts yet", rows)
                 .w_full()
                 .debug_selector(|| "arrangement-list".to_string()),
         )
@@ -923,13 +1046,16 @@ fn parse_part_length(value: &str) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, size, TestAppContext};
+    use gpui::{point, px, size, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
         parse_part_length, sequence_with_inserted_part, sequence_with_moved_part,
         sequence_with_removed_part, sequence_with_repeated_part, DialogView, PartsDialog,
     };
-    use crate::part::{Part, PartName};
+    use crate::{
+        part::{Part, PartName},
+        view::button,
+    };
 
     #[test]
     fn part_length_is_a_positive_whole_number() {
@@ -1011,8 +1137,12 @@ mod tests {
         assert!(details.origin.x < arrangement.origin.x);
         assert_eq!(part_list_actions.origin.x, part_list.origin.x);
         assert!(part_list.origin.y + part_list.size.height < part_list_actions.origin.y);
-        assert_eq!(part_list_actions.origin.y, part_details_actions.origin.y);
-        assert_eq!(part_details_actions.origin.y, arrangement_actions.origin.y);
+        assert!(part_details_actions.origin.y < part_list_actions.origin.y);
+        assert_eq!(part_list_actions.origin.y, arrangement_actions.origin.y);
+        assert_eq!(
+            part_list_actions.origin.y + part_list_actions.size.height,
+            part_details_actions.origin.y + part_details_actions.size.height
+        );
         assert_eq!(movement_actions.origin.y, occurrence_actions.origin.y);
         assert!(movement_actions.origin.x < occurrence_actions.origin.x);
         assert!(
@@ -1038,19 +1168,14 @@ mod tests {
             arrangement.size.width
         );
         assert!(cx.debug_bounds("arrangement-occurrence-2").is_some());
-        assert_eq!(
-            cx.debug_bounds("add-to-arrangement-control")
-                .unwrap()
-                .origin
-                .y,
-            cx.debug_bounds("delete-part-control").unwrap().origin.y
-        );
+        let add_to_arrangement = cx.debug_bounds("add-to-arrangement-control").unwrap();
+        let duplicate_part = cx.debug_bounds("duplicate-part-control").unwrap();
+        let delete_part_control = cx.debug_bounds("delete-part-control").unwrap();
+        assert!(add_to_arrangement.origin.y < duplicate_part.origin.y);
+        assert_eq!(duplicate_part.origin.y, delete_part_control.origin.y);
         assert!(
-            cx.debug_bounds("add-to-arrangement-control")
-                .unwrap()
-                .size
-                .width
-                < details.size.width
+            add_to_arrangement.size.width < details.size.width
+                && duplicate_part.size.width < details.size.width
         );
 
         dialog.update(cx, |dialog, cx| {
@@ -1072,19 +1197,13 @@ mod tests {
         );
 
         let (delete_part, move_earlier, move_later) = cx.update(|_, cx| {
-            let DialogView::List {
-                delete_button,
-                move_earlier_button,
-                move_later_button,
-                ..
-            } = &dialog.read(cx).view
-            else {
+            let DialogView::List(view) = &dialog.read(cx).view else {
                 panic!("parts dialog should show its list view");
             };
             (
-                delete_button.clone(),
-                move_earlier_button.clone(),
-                move_later_button.clone(),
+                view.delete_button.clone(),
+                view.move_earlier_button.clone(),
+                view.move_later_button.clone(),
             )
         });
         assert!(cx.debug_bounds("delete-part-control").is_some());
@@ -1114,6 +1233,106 @@ mod tests {
         cx.run_until_parked();
 
         assert!(!cx.update(|_, cx| delete_part.read(cx).is_disabled()));
+    }
+
+    #[gpui::test]
+    fn part_and_arrangement_lists_scroll_independently(cx: &mut TestAppContext) {
+        let parts = (0..24)
+            .map(|index| Part::new(format!("part-{index}"), 16))
+            .collect::<Vec<_>>();
+        let sequence = parts.iter().map(|part| part.name.clone()).collect();
+        let (_, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, sequence, cx));
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let parts_list = cx.debug_bounds("parts-list-column").unwrap();
+        let arrangement_list = cx.debug_bounds("arrangement-list").unwrap();
+        let last_part_before = cx.debug_bounds("part-list-row-23").unwrap();
+        let last_occurrence_before = cx.debug_bounds("arrangement-occurrence-23").unwrap();
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: parts_list.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-500.0))),
+            ..Default::default()
+        });
+
+        let last_part_after = cx.debug_bounds("part-list-row-23").unwrap();
+        assert!(last_part_after.origin.y < last_part_before.origin.y);
+        assert_eq!(
+            cx.debug_bounds("arrangement-occurrence-23").unwrap(),
+            last_occurrence_before
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: arrangement_list.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-500.0))),
+            ..Default::default()
+        });
+
+        assert!(
+            cx.debug_bounds("arrangement-occurrence-23")
+                .unwrap()
+                .origin
+                .y
+                < last_occurrence_before.origin.y
+        );
+    }
+
+    #[gpui::test]
+    fn duplicate_part_action_opens_a_new_name_form(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(|_, cx| {
+            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
+        });
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let duplicate = cx.debug_bounds("duplicate-part-control").unwrap();
+        cx.simulate_click(duplicate.center(), Default::default());
+
+        cx.update(|_, cx| {
+            let DialogView::Duplicate { source, name, .. } = &dialog.read(cx).view else {
+                panic!("duplicate action should open its form");
+            };
+            assert_eq!(source.as_str(), "intro");
+            assert_eq!(name.read(cx).value(), "");
+        });
+    }
+
+    #[gpui::test]
+    fn delete_confirmation_owns_its_controls_only_while_active(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(|_, cx| {
+            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
+        });
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            assert!(view.delete_confirmation.is_none());
+        });
+        let delete = cx.debug_bounds("delete-part-control").unwrap();
+        cx.simulate_click(delete.center(), Default::default());
+        cx.run_until_parked();
+
+        let cancel_button = cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            let confirmation = view.delete_confirmation.as_ref().unwrap();
+            confirmation.cancel_button.clone()
+        });
+
+        cancel_button.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            assert!(view.delete_confirmation.is_none());
+        });
     }
 
     fn names<const N: usize>(names: [&str; N]) -> Vec<PartName> {

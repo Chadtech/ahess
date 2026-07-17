@@ -578,7 +578,7 @@ fn voice_list(
         .map(|(index, voice)| voice_list_row(index, voice, selected_voice == Some(&voice.name), cx))
         .collect::<Vec<_>>();
 
-    selection_list::list("no voices yet", rows)
+    selection_list::list("voices-list-scroll", "no voices yet", rows)
 }
 
 fn voice_list_row(

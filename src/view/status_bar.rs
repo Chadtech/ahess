@@ -6,6 +6,7 @@ use crate::style as s;
 pub enum Status<T = ()> {
     #[default]
     Empty,
+    Message(SharedString),
     Warning(SharedString),
     Error {
         message: SharedString,
@@ -16,6 +17,7 @@ pub enum Status<T = ()> {
 pub fn bar<T>(status: Status<T>) -> gpui::Div {
     let (background, text_color, message) = match status {
         Status::Empty => (s::GRAY2, s::TEXT_DEFAULT, None),
+        Status::Message(message) => (s::GRAY2, s::TEXT_DEFAULT, Some(message)),
         Status::Warning(message) => (s::YELLOW2, s::YELLOW6, Some(message)),
         Status::Error { message, .. } => (s::RED1, s::WHITE, Some(message)),
     };
