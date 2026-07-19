@@ -10,7 +10,6 @@ use gpui::{
 };
 
 use crate::{
-    note::Note,
     part::{Part, PartScore, ScoreError},
     project::Project,
     style as s,
@@ -133,17 +132,21 @@ impl ScoreDocument {
                     .iter()
                     .enumerate()
                     .filter_map(move |(column, value)| {
-                        Note::parse_cell(value).err().map(|source| ParseIssue {
-                            row,
-                            column,
-                            voice: self
-                                .project
-                                .voices()
-                                .get(column)
-                                .map(|voice| voice.name.as_str().to_string())
-                                .unwrap_or_else(|| format!("column {}", column + 1)),
-                            message: source.to_string(),
-                        })
+                        self.project
+                            .pitch_system()
+                            .resolve_cell(value)
+                            .err()
+                            .map(|source| ParseIssue {
+                                row,
+                                column,
+                                voice: self
+                                    .project
+                                    .voices()
+                                    .get(column)
+                                    .map(|voice| voice.name.as_str().to_string())
+                                    .unwrap_or_else(|| format!("column {}", column + 1)),
+                                message: source.to_string(),
+                            })
                     })
             })
             .collect()
@@ -191,7 +194,7 @@ impl ScoreDocument {
 
         match self
             .score
-            .save(&self.project_directory, &self.part, self.project.voices())
+            .save(&self.project_directory, &self.part, &self.project)
         {
             Ok(()) => self.finish_save(cx),
             Err(error) => {
@@ -233,12 +236,12 @@ impl ScoreDocument {
 
         match self
             .score
-            .save(&self.project_directory, &self.part, self.project.voices())
+            .save(&self.project_directory, &self.part, &self.project)
         {
             Ok(()) => {
                 let _ = self.finish_save(cx);
             }
-            Err(ScoreError::InvalidNote { .. }) => {
+            Err(ScoreError::InvalidPitch { .. }) => {
                 self.last_save_error = None;
                 self.save_state = SaveState::RecoverySaved;
                 cx.emit(DocumentEvent::RecoverySaved);
@@ -560,11 +563,12 @@ impl Render for ScoreEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use super::ScoreDocument;
     use crate::{
         part::{Part, PartScore},
+        pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
         project::{Project, Voice, VoiceType},
         seed::Seed,
     };
@@ -590,5 +594,28 @@ mod tests {
         assert_eq!((issues[1].row, issues[1].column), (1, 0));
         assert_eq!((issues[2].row, issues[2].column), (1, 1));
         assert_eq!(issues[2].voice, "bass");
+    }
+
+    #[test]
+    fn score_issues_use_the_projects_explicit_notation() {
+        let pitch_system = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "embers",
+                BTreeMap::from([("ember".to_string(), FrequencyHz::new(197.3).unwrap())]),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let part = Part::new("part-a", 2);
+        let score = PartScore::from_rows(vec![vec!["ember".to_string()], vec!["C4".to_string()]]);
+        let document = ScoreDocument::new(project, PathBuf::new(), part, score);
+
+        let issues = document.parse_issues();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!((issues[0].row, issues[0].column), (1, 0));
+        assert!(issues[0].message.contains("not defined in \"embers\""));
     }
 }

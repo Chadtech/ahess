@@ -3,19 +3,22 @@ use std::path::{Path, PathBuf};
 use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
+    pitch_system::PitchSystem,
     project::{self, Project},
     seed::Seed,
     style as s,
+    tuning_system::{self, TuningSystem},
     view::{
         button::{self, Button},
         dialog::{error_message, title_bar},
-        field_group::field_group,
+        dropdown::Dropdown,
+        field_group::{control_group, field_group},
         text_input::TextInput,
     },
 };
 
 pub enum ProjectSettingsMsg {
-    Saved(Project),
+    Saved(Box<Project>),
     Closed,
 }
 
@@ -24,6 +27,8 @@ pub struct ProjectSettingsDialog {
     project_directory: PathBuf,
     workspace_root: PathBuf,
     fields: ProjectSettingsFields,
+    tuning_options: Vec<ProjectTuningOption>,
+    original_tuning_index: usize,
     close_button: Entity<Button>,
     cancel_button: Entity<Button>,
     save_button: Entity<Button>,
@@ -42,7 +47,14 @@ impl ProjectSettingsDialog {
         workspace_root: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
-        let fields = ProjectSettingsFields::new(&project, cx);
+        let (tuning_options, original_tuning_index, tuning_error) =
+            project_tuning_options(&workspace_root, &project);
+        let fields = ProjectSettingsFields::new(
+            &project,
+            tuning_options.iter().map(ProjectTuningOption::name),
+            original_tuning_index,
+            cx,
+        );
         let close_button = cx.new(|_| Button::x("close-project-settings"));
         let cancel_button = cx.new(|_| Button::new("cancel-project-settings", "cancel"));
         let save_button = cx.new(|_| Button::new("save-project-settings", "save changes"));
@@ -64,12 +76,14 @@ impl ProjectSettingsDialog {
             project_directory,
             workspace_root,
             fields,
+            tuning_options,
+            original_tuning_index,
             close_button,
             cancel_button,
             save_button,
             keep_editing_button,
             discard_button,
-            save_error: None,
+            save_error: tuning_error,
             confirming_discard: false,
         }
     }
@@ -98,7 +112,8 @@ impl ProjectSettingsDialog {
         match result {
             Ok(project) => {
                 self.original_project = project.clone();
-                cx.emit(ProjectSettingsMsg::Saved(project));
+                self.original_tuning_index = self.fields.tuning.read(cx).selected_index();
+                cx.emit(ProjectSettingsMsg::Saved(Box::new(project)));
             }
             Err(error) => {
                 self.save_error = Some(error.to_string());
@@ -156,6 +171,16 @@ impl ProjectSettingsDialog {
         project.timing_variance = timing_variance;
         project.seed = seed;
         project.description = description;
+        match self
+            .tuning_options
+            .get(self.fields.tuning.read(cx).selected_index())
+            .expect("the tuning dropdown always selects an available option")
+        {
+            ProjectTuningOption::Library(system) => project.set_tuning_system(system),
+            ProjectTuningOption::Embedded(pitch_system) => {
+                project = project.with_pitch_system(pitch_system.clone());
+            }
+        }
 
         Ok(project)
     }
@@ -168,6 +193,7 @@ impl ProjectSettingsDialog {
             || self.fields.variance.read(cx).value()
                 != self.original_project.timing_variance.to_string()
             || self.fields.seed.read(cx).value() != self.original_project.seed.value().to_string()
+            || self.fields.tuning.read(cx).selected_index() != self.original_tuning_index
     }
 }
 
@@ -254,16 +280,30 @@ struct ProjectSettingsFields {
     beat_length: Entity<TextInput>,
     variance: Entity<TextInput>,
     seed: Entity<TextInput>,
+    tuning: Entity<Dropdown>,
 }
 
 impl ProjectSettingsFields {
-    fn new(project: &Project, cx: &mut Context<ProjectSettingsDialog>) -> Self {
+    fn new(
+        project: &Project,
+        tuning_options: impl IntoIterator<Item = impl Into<gpui::SharedString>>,
+        selected_tuning: usize,
+        cx: &mut Context<ProjectSettingsDialog>,
+    ) -> Self {
         Self {
             project_name: cx.new(|cx| TextInput::new(project.name.clone(), "", cx)),
             description: cx.new(|cx| TextInput::new(project.description.clone(), "", cx)),
             beat_length: cx.new(|cx| TextInput::new(project.beat_length.to_string(), "", cx)),
             variance: cx.new(|cx| TextInput::new(project.timing_variance.to_string(), "", cx)),
             seed: cx.new(|cx| TextInput::new(project.seed.value().to_string(), "", cx)),
+            tuning: cx.new(|cx| {
+                Dropdown::new(
+                    "project-settings-tuning",
+                    tuning_options,
+                    selected_tuning,
+                    cx,
+                )
+            }),
         }
     }
 }
@@ -285,6 +325,7 @@ fn project_settings_dialog(
         .gap_5()
         .child(field_group("project name", fields.project_name.clone()))
         .child(field_group("description", fields.description.clone()))
+        .child(control_group("tuning system", fields.tuning.clone()))
         .child(section_label("generation settings"))
         .child(div().flex().gap_4().children([
             field_group("beat length (samples)", fields.beat_length.clone()),
@@ -344,6 +385,57 @@ fn section_label(label: &'static str) -> gpui::Div {
     div().text_color(s::TEXT_HEADER).child(label)
 }
 
+#[derive(Clone)]
+enum ProjectTuningOption {
+    Library(TuningSystem),
+    Embedded(PitchSystem),
+}
+
+impl ProjectTuningOption {
+    fn name(&self) -> String {
+        match self {
+            Self::Library(system) => system.name().to_string(),
+            Self::Embedded(system) => format!("{} (embedded legacy tuning)", system.name()),
+        }
+    }
+}
+
+fn project_tuning_options(
+    workspace_root: &Path,
+    project: &Project,
+) -> (Vec<ProjectTuningOption>, usize, Option<String>) {
+    match tuning_system::list_tuning_systems(workspace_root) {
+        Ok(systems) => {
+            let mut options = systems
+                .into_iter()
+                .map(ProjectTuningOption::Library)
+                .collect::<Vec<_>>();
+            let selected = project.tuning_system_id().and_then(|selected_id| {
+                options.iter().position(|option| {
+                    matches!(option, ProjectTuningOption::Library(system) if system.id() == selected_id)
+                })
+            });
+            match selected {
+                Some(index) => (options, index, None),
+                None => {
+                    options.insert(
+                        0,
+                        ProjectTuningOption::Embedded(project.pitch_system().clone()),
+                    );
+                    (options, 0, None)
+                }
+            }
+        }
+        Err(error) => (
+            vec![ProjectTuningOption::Embedded(
+                project.pitch_system().clone(),
+            )],
+            0,
+            Some(format!("failed to load tuning systems: {error}")),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -352,10 +444,15 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{parse_seed_field, parse_u32_field, validate_project_name_unique};
+    use gpui::{px, size, TestAppContext};
+
+    use super::{
+        parse_seed_field, parse_u32_field, validate_project_name_unique, ProjectSettingsDialog,
+    };
     use crate::{
         project::{self, Project},
         seed::Seed,
+        style as s,
     };
 
     #[test]
@@ -377,6 +474,24 @@ mod tests {
         assert!(validate_project_name_unique(&root, &current_directory, "current").is_ok());
         assert!(validate_project_name_unique(&root, &current_directory, "OTHER").is_err());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn tuning_dropdown_uses_the_form_width_for_long_system_names(cx: &mut TestAppContext) {
+        let root = temp_root("tuning-dropdown-width");
+        let project = Project::new("test project", 800, 0, Seed::new(1));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let root_for_view = root.clone();
+        let (_, cx) = cx.add_window_view(move |_, cx| {
+            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+        });
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        let trigger = cx.debug_bounds("project-settings-tuning-trigger").unwrap();
+
+        assert!(trigger.size.width > s::S9);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -32,6 +32,11 @@ or when it defines how a shared component is used.
 ## fields
 
 - use `view::field_group::field_group` for text fields.
+- use `view::field_group::control_group` for labeled non-text controls such as
+  dropdowns.
+- use `view::field_group::compact_control_group` for short controls such as
+  dropdowns; it caps them at `S9` instead of stretching them across a wide
+  editor or dialog.
 - arrange the label above the input.
 - style field labels with `FIELD_LABEL_TEXT`.
 
@@ -87,6 +92,28 @@ or when it defines how a shared component is used.
 - when an error belongs to a specific control or data cell, pair the status
   message with a local error highlight and make navigation available when
   helpful.
+
+## workspace resource editors
+
+- use a full-page workspace for reusable resources that need creation,
+  selection, detailed editing, and deletion outside any one project.
+- contain the editor in `view::workspace_tile::tile`, a single raised gray tile
+  with a title bar. Sunken lists and grids belong inside this tile rather than
+  directly on the green application background.
+- keep the resource selection list in the left column and the selected details
+  or edit form in the larger right column.
+- when a resource combines scalar settings with an editable collection, keep
+  the scalar fields in the left side of the detail area and give the collection
+  its own full-height column on the right.
+- keep resource-level delete, cancel, and save actions together in the scalar
+  settings column footer, aligned to its right edge. Use a larger gap before
+  separating the destructive action from the non-destructive group. Collection
+  row actions stay directly beneath their collection and align to its right
+  edge. Parallel column footers share the same bottom edge.
+- keep navigation in the application frame and routine feedback in the fixed
+  workspace status bar so editor content does not reflow.
+- show built-in resources as read-only and offer duplication when they are
+  useful starting points for user-owned resources.
 
 ## dialogs
 

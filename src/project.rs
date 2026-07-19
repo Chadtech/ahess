@@ -13,7 +13,9 @@ pub use crate::voice::{Voice, VoiceId, VoiceType};
 
 use crate::{
     part::{self, Part, PartName},
+    pitch_system::PitchSystem,
     seed::Seed,
+    tuning_system::{self, TuningLibraryError, TuningSystem, TuningSystemId},
     voice_name::VoiceName,
 };
 
@@ -32,6 +34,8 @@ pub struct Project {
     pub timing_variance: u32,
     pub seed: Seed,
     pub description: String,
+    tuning_system_id: Option<TuningSystemId>,
+    pitch_system: PitchSystem,
     next_voice_id: u64,
     voices: Vec<Voice>,
     pub parts: Vec<Part>,
@@ -51,6 +55,8 @@ impl Project {
             timing_variance,
             seed,
             description: String::new(),
+            tuning_system_id: Some(TuningSystemId::default_western()),
+            pitch_system: PitchSystem::default(),
             next_voice_id: 1,
             voices: Vec::new(),
             parts: Vec::new(),
@@ -61,6 +67,31 @@ impl Project {
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
+    }
+
+    pub fn with_pitch_system(mut self, pitch_system: PitchSystem) -> Self {
+        self.tuning_system_id = None;
+        self.pitch_system = pitch_system;
+        self
+    }
+
+    pub fn with_tuning_system(mut self, tuning_system: &TuningSystem) -> Self {
+        self.tuning_system_id = Some(tuning_system.id().clone());
+        self.pitch_system = tuning_system.pitch_system().clone();
+        self
+    }
+
+    pub fn set_tuning_system(&mut self, tuning_system: &TuningSystem) {
+        self.tuning_system_id = Some(tuning_system.id().clone());
+        self.pitch_system = tuning_system.pitch_system().clone();
+    }
+
+    pub fn tuning_system_id(&self) -> Option<&TuningSystemId> {
+        self.tuning_system_id.as_ref()
+    }
+
+    pub fn pitch_system(&self) -> &PitchSystem {
+        &self.pitch_system
     }
 
     #[cfg(test)]
@@ -154,6 +185,14 @@ impl Project {
             contents.push_str(&toml_string(part_name.as_str()));
         }
         contents.push_str("]\n");
+        match &self.tuning_system_id {
+            Some(id) => {
+                contents.push_str("tuning_system_id = ");
+                contents.push_str(&toml_string(id.as_str()));
+                contents.push('\n');
+            }
+            None => self.pitch_system.append_config(&mut contents),
+        }
 
         for voice in &self.voices {
             contents.push_str("\n[[voices]]\n");
@@ -261,6 +300,111 @@ pub fn create_project(
 }
 
 #[derive(Debug)]
+pub enum DuplicateProjectError {
+    Create(CreateProjectError),
+    InvalidPartName {
+        name: String,
+        source: part::InvalidPartName,
+    },
+    CopyPart {
+        source_path: PathBuf,
+        destination_path: PathBuf,
+        source: io::Error,
+        cleanup_error: Option<io::Error>,
+    },
+}
+
+impl fmt::Display for DuplicateProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Create(error) => write!(f, "{error}"),
+            Self::InvalidPartName { name, .. } => {
+                write!(f, "part {name:?} cannot be used as a filename")
+            }
+            Self::CopyPart {
+                source_path,
+                destination_path,
+                source,
+                cleanup_error: None,
+            } => write!(
+                f,
+                "failed to copy {} to {}: {source}",
+                source_path.display(),
+                destination_path.display()
+            ),
+            Self::CopyPart {
+                source_path,
+                destination_path,
+                source,
+                cleanup_error: Some(cleanup_error),
+            } => write!(
+                f,
+                "failed to copy {} to {}: {source}; also failed to remove the incomplete copy: {cleanup_error}",
+                source_path.display(),
+                destination_path.display()
+            ),
+        }
+    }
+}
+
+impl Error for DuplicateProjectError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Create(error) => Some(error),
+            Self::InvalidPartName { source, .. } => Some(source),
+            Self::CopyPart { source, .. } => Some(source),
+        }
+    }
+}
+
+impl From<CreateProjectError> for DuplicateProjectError {
+    fn from(error: CreateProjectError) -> Self {
+        Self::Create(error)
+    }
+}
+
+pub fn duplicate_project(
+    workspace_root: impl AsRef<Path>,
+    source: &ProjectEntry,
+    new_name: &str,
+) -> Result<ProjectEntry, DuplicateProjectError> {
+    let mut project = source.project.clone();
+    project.name = new_name.trim().to_string();
+    let part_file_names = project
+        .parts
+        .iter()
+        .map(|project_part| {
+            part::csv_file_name(&project_part.name).map_err(|source| {
+                DuplicateProjectError::InvalidPartName {
+                    name: project_part.name.as_str().to_string(),
+                    source,
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let project_directory = create_project(workspace_root, &project)?;
+
+    for file_name in part_file_names {
+        let source_path = source.project_directory.join(&file_name);
+        let destination_path = project_directory.join(file_name);
+        if let Err(copy_error) = fs::copy(&source_path, &destination_path) {
+            let cleanup_error = fs::remove_dir_all(&project_directory).err();
+            return Err(DuplicateProjectError::CopyPart {
+                source_path,
+                destination_path,
+                source: copy_error,
+                cleanup_error,
+            });
+        }
+    }
+
+    Ok(ProjectEntry {
+        project,
+        project_directory,
+    })
+}
+
+#[derive(Debug)]
 pub enum LoadProjectError {
     Io {
         path: PathBuf,
@@ -275,6 +419,7 @@ pub enum LoadProjectError {
         message: String,
     },
     InvalidPart(part::PartFileError),
+    TuningLibrary(Box<TuningLibraryError>),
     Recovery(ProjectTransactionError),
 }
 
@@ -412,6 +557,7 @@ impl fmt::Display for LoadProjectError {
                 )
             }
             Self::InvalidPart(error) => write!(f, "{error}"),
+            Self::TuningLibrary(error) => write!(f, "failed to load tuning systems: {error}"),
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
         }
     }
@@ -424,6 +570,7 @@ impl Error for LoadProjectError {
             Self::InvalidConfig { source, .. } => Some(source),
             Self::InvalidSequence { .. } => None,
             Self::InvalidPart(error) => Some(error),
+            Self::TuningLibrary(error) => Some(error),
             Self::Recovery(error) => Some(error),
         }
     }
@@ -505,13 +652,24 @@ pub fn load_project(project_directory: impl AsRef<Path>) -> Result<ProjectEntry,
         }
     })?;
 
-    let project =
-        project_config
-            .into_project()
-            .map_err(|message| LoadProjectError::InvalidSequence {
-                path: config_path,
-                message,
-            })?;
+    let workspace_root = project_directory
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            LoadProjectError::TuningLibrary(Box::new(TuningLibraryError::Invalid(format!(
+                "project directory {} is not inside a workspace projects directory",
+                project_directory.display()
+            ))))
+        })?;
+    let tuning_systems = tuning_system::list_tuning_systems(workspace_root)
+        .map_err(|error| LoadProjectError::TuningLibrary(Box::new(error)))?;
+
+    let project = project_config
+        .into_project(&tuning_systems)
+        .map_err(|message| LoadProjectError::InvalidSequence {
+            path: config_path,
+            message,
+        })?;
     for project_part in &project.parts {
         part::validate_part_file(project_directory, project_part, &project.voices)
             .map_err(LoadProjectError::InvalidPart)?;
@@ -882,6 +1040,12 @@ struct ProjectConfig {
     timing_variance: u32,
     seed: u64,
     #[serde(default)]
+    tuning_system_id: Option<TuningSystemId>,
+    // Compatibility with projects that embedded pitch rules before reusable
+    // workspace tuning systems were introduced.
+    #[serde(default, rename = "pitch_system")]
+    embedded_pitch_system: Option<PitchSystem>,
+    #[serde(default)]
     next_voice_id: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_voices")]
     voices: Vec<Voice>,
@@ -1007,7 +1171,7 @@ where
 }
 
 impl ProjectConfig {
-    fn into_project(self) -> Result<Project, String> {
+    fn into_project(self, tuning_systems: &[TuningSystem]) -> Result<Project, String> {
         let sequence = match self.sequence {
             Some(sequence) => sequence
                 .into_iter()
@@ -1023,6 +1187,24 @@ impl ProjectConfig {
                 .collect::<Result<Vec<_>, _>>()?,
             None => self.parts.iter().map(|part| part.name.clone()).collect(),
         };
+        let selected_tuning = match (self.tuning_system_id, self.embedded_pitch_system) {
+            (Some(id), None) => tuning_system::find_tuning_system(tuning_systems, &id)
+                .map(|system| (Some(id.clone()), system.pitch_system().clone()))
+                .ok_or_else(|| format!("references missing tuning system {:?}", id.as_str()))?,
+            (None, Some(pitch_system)) => (None, pitch_system),
+            (None, None) => {
+                let id = TuningSystemId::default_western();
+                let system = tuning_system::find_tuning_system(tuning_systems, &id)
+                    .expect("the tuning library always contains the built-in western system");
+                (Some(id), system.pitch_system().clone())
+            }
+            (Some(_), Some(_)) => {
+                return Err(
+                    "project must contain a tuning_system_id or an embedded pitch_system, not both"
+                        .to_string(),
+                );
+            }
+        };
         let mut project = Project::new(
             self.name,
             self.beat_length,
@@ -1030,6 +1212,8 @@ impl ProjectConfig {
             Seed::new(self.seed),
         )
         .with_description(self.description);
+        project.tuning_system_id = selected_tuning.0;
+        project.pitch_system = selected_tuning.1;
         project.voices = self.voices;
         let minimum_next_voice_id = project
             .voices
@@ -1051,22 +1235,31 @@ impl ProjectConfig {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        add_voice, create_project, delete_voice, edit_voice, list_projects, load_project,
-        project_directory_name, save_project, CreateProjectError, LoadProjectError, Project, Voice,
-        VoiceType, PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE,
+        add_voice, create_project, delete_voice, duplicate_project, edit_voice, list_projects,
+        load_project, project_directory_name, save_project, CreateProjectError,
+        DuplicateProjectError, LoadProjectError, Project, ProjectEntry, Voice, VoiceType,
+        PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE,
         TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
-        part::{self, Part, PartName},
+        part::{self, Part, PartName, PartScore},
+        pitch_system::{
+            ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
+            PitchSystem,
+        },
         seed::Seed,
+        tuning_system,
         voice_name::VoiceName,
     };
+
+    const DEFAULT_TUNING_REFERENCE: &str = "tuning_system_id = \"western-twelve-tone\"\n";
 
     #[test]
     fn project_stores_the_initial_music_settings() {
@@ -1101,7 +1294,9 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = []\n"
+            format!(
+                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
+            )
         );
     }
 
@@ -1114,7 +1309,9 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\nsequence = []\n\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+            format!(
+                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+            )
         );
     }
 
@@ -1125,7 +1322,9 @@ mod tests {
 
         assert_eq!(
             project.config_file_contents(),
-            "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+            format!(
+                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+            )
         );
     }
 
@@ -1189,6 +1388,109 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_project_copies_project_metadata_and_scores_under_a_new_name() {
+        let root = temp_root("duplicate-project");
+        let mut project = Project::new("Original", 4000, 100, Seed::new(1234))
+            .with_description("first version")
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let source_directory = create_project(&root, &project).unwrap();
+        add_test_part(&source_directory, &mut project, "intro", 2);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string()], vec![String::new()]]);
+        score
+            .save(&source_directory, &project.parts[0], &project)
+            .unwrap();
+        let source = load_project(&source_directory).unwrap();
+
+        let duplicated = duplicate_project(&root, &source, "  Original variation  ").unwrap();
+
+        let mut expected_project = project.clone();
+        expected_project.name = "Original variation".to_string();
+        assert_eq!(duplicated.project, expected_project);
+        assert_eq!(
+            duplicated.project_directory,
+            root.join("projects").join("original-variation")
+        );
+        assert_eq!(
+            PartScore::load(
+                &duplicated.project_directory,
+                &duplicated.project.parts[0],
+                duplicated.project.voices()
+            )
+            .unwrap(),
+            score
+        );
+        assert_eq!(
+            load_project(&duplicated.project_directory).unwrap(),
+            duplicated
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_project_does_not_overwrite_an_existing_project() {
+        let root = temp_root("duplicate-project-existing");
+        let source_directory =
+            create_project(&root, &Project::new("Original", 800, 0, Seed::new(1))).unwrap();
+        let source = load_project(source_directory).unwrap();
+        let existing = Project::new("Existing", 4000, 10, Seed::new(2));
+        let existing_directory = create_project(&root, &existing).unwrap();
+
+        let error = duplicate_project(&root, &source, "Existing").unwrap_err();
+
+        assert!(matches!(
+            error,
+            DuplicateProjectError::Create(CreateProjectError::ProjectAlreadyExists(_))
+        ));
+        assert_eq!(load_project(existing_directory).unwrap().project, existing);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_project_reports_an_invalid_part_filename_without_creating_a_copy() {
+        let root = temp_root("duplicate-project-invalid-part");
+        let source = ProjectEntry {
+            project: Project::new("Original", 800, 0, Seed::new(1))
+                .with_parts(vec![Part::new("!!!", 2)]),
+            project_directory: root.join("source"),
+        };
+
+        let error = duplicate_project(&root, &source, "Copy").unwrap_err();
+
+        assert!(matches!(
+            error,
+            DuplicateProjectError::InvalidPartName { name, .. } if name == "!!!"
+        ));
+        assert!(!root.join("projects").join("copy").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_project_removes_an_incomplete_copy_when_a_score_cannot_be_copied() {
+        let root = temp_root("duplicate-project-rollback");
+        let mut project = Project::new("Original", 800, 0, Seed::new(1));
+        let source_directory = create_project(&root, &project).unwrap();
+        add_test_part(&source_directory, &mut project, "intro", 2);
+        let source = load_project(&source_directory).unwrap();
+        fs::remove_file(source_directory.join("intro.csv")).unwrap();
+
+        let error = duplicate_project(&root, &source, "Copy").unwrap_err();
+
+        assert!(matches!(
+            error,
+            DuplicateProjectError::CopyPart {
+                cleanup_error: None,
+                ..
+            }
+        ));
+        assert!(!root.join("projects").join("copy").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn load_project_reads_config_from_project_directory() {
         let root = temp_root("load-project");
         let project = Project::new("test \"score\"", 4000, 100, Seed::new(1234))
@@ -1200,6 +1502,162 @@ mod tests {
         assert_eq!(loaded_project.project, project);
         assert!(loaded_project.project.voices.is_empty());
         assert_eq!(loaded_project.project_directory, project_directory);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_pitch_systems_round_trip_through_config() {
+        let root = temp_root("pitch-system-round-trip");
+        let periodic = PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "slendro sketch",
+                FrequencyHz::new(25.0).unwrap(),
+                Interval::ratio(2, 1).unwrap(),
+                vec![
+                    Interval::ratio(1, 1).unwrap(),
+                    Interval::ratio(8, 7).unwrap(),
+                    Interval::ratio(21, 16).unwrap(),
+                    Interval::ratio(32, 21).unwrap(),
+                    Interval::ratio(7, 4).unwrap(),
+                ],
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        );
+        let periodic_project =
+            Project::new("periodic", 800, 0, Seed::new(1)).with_pitch_system(periodic);
+        let periodic_directory = create_project(&root, &periodic_project).unwrap();
+
+        assert_eq!(
+            load_project(&periodic_directory).unwrap().project,
+            periodic_project
+        );
+        let periodic_config =
+            fs::read_to_string(periodic_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+        assert!(periodic_config.contains("fundamental_hz = 25"));
+        assert!(periodic_config.contains("degrees = [\"1/1\", \"8/7\""));
+        assert!(periodic_config.contains("kind = \"radler_digits\""));
+
+        let explicit = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "embers",
+                BTreeMap::from([
+                    ("ember".to_string(), FrequencyHz::new(197.3).unwrap()),
+                    ("⟟".to_string(), FrequencyHz::new(316.4).unwrap()),
+                ]),
+            )
+            .unwrap(),
+        );
+        let explicit_project =
+            Project::new("explicit", 800, 0, Seed::new(2)).with_pitch_system(explicit);
+        let explicit_directory = create_project(&root, &explicit_project).unwrap();
+
+        assert_eq!(
+            load_project(&explicit_directory).unwrap().project,
+            explicit_project
+        );
+        let explicit_config =
+            fs::read_to_string(explicit_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+        assert!(explicit_config.contains("[pitch_system.pitches]"));
+        assert!(explicit_config.contains("\"⟟\" = 316.4"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn projects_store_and_resolve_reusable_tuning_system_references() {
+        let root = temp_root("reusable-tuning-reference");
+        let tuning = tuning_system::create_tuning_system(
+            &root,
+            PitchSystem::explicit(
+                ExplicitPitchSystem::new(
+                    "embers",
+                    BTreeMap::from([("ember".to_string(), FrequencyHz::new(197.3).unwrap())]),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let project = Project::new("piece", 800, 0, Seed::new(1)).with_tuning_system(&tuning);
+        let directory = create_project(&root, &project).unwrap();
+
+        let config = fs::read_to_string(directory.join(PROJECT_CONFIG_FILE)).unwrap();
+        assert!(config.contains("tuning_system_id = \"embers\""));
+        assert!(!config.contains("[pitch_system]"));
+        assert_eq!(load_project(&directory).unwrap().project, project);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rejects_a_missing_tuning_system_reference() {
+        let root = temp_root("missing-tuning-reference");
+        let project_directory = root.join("projects").join("piece");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"piece\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\ntuning_system_id = \"missing-system\"\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("references missing tuning system \"missing-system\""));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_projects_load_with_western_tuning_and_save_its_library_reference() {
+        let root = temp_root("legacy-pitch-system");
+        let project_directory = root.join("projects").join("legacy");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"legacy\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\n",
+        )
+        .unwrap();
+
+        let project = load_project(&project_directory).unwrap().project;
+
+        assert!(
+            (project
+                .pitch_system()
+                .resolve_cell("A4")
+                .unwrap()
+                .unwrap()
+                .as_hz()
+                - 440.0)
+                .abs()
+                < 1e-10
+        );
+        save_project(&project_directory, &project).unwrap();
+        assert!(
+            fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
+                .unwrap()
+                .contains("tuning_system_id = \"western-twelve-tone\"")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rejects_invalid_pitch_system_data() {
+        let root = temp_root("invalid-pitch-system");
+        let project_directory = root.join("projects").join("test");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\n\n[pitch_system]\nkind = \"periodic\"\nname = \"broken\"\nfundamental_hz = 0.0\nperiod = \"2/1\"\ndegrees = [\"1/1\"]\n\n[pitch_system.notation]\nkind = \"radler_digits\"\nplace_value = 10\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(matches!(error, LoadProjectError::InvalidConfig { .. }));
+        assert!(error.to_string().contains("frequency must be a positive"));
 
         fs::remove_dir_all(root).unwrap();
     }

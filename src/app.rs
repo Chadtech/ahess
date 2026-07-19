@@ -1,6 +1,7 @@
 mod new_project;
 mod open_project;
 mod project_open;
+mod tuning_system_editor;
 
 use std::{
     cell::Cell,
@@ -42,6 +43,7 @@ struct AhessApp {
 enum AppMode {
     ProjectStart(ProjectStart),
     ProjectOpen(Entity<project_open::Model>),
+    TuningSystems(Entity<tuning_system_editor::Model>),
     Error { message: String },
 }
 
@@ -65,7 +67,7 @@ enum StoredAppMode {
         project_start_mode: ProjectStartMode,
     },
     ProjectOpen {
-        project: Project,
+        project: Box<Project>,
         project_directory: PathBuf,
     },
     Error {
@@ -122,6 +124,33 @@ impl AhessApp {
         self.set_project_start_mode(ProjectStartMode::Existing, cx);
     }
 
+    fn on_tuning_systems_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace_root = self.workspace_root.clone();
+        let model = cx.new(move |cx| tuning_system_editor::Model::new(workspace_root, cx));
+        cx.subscribe(&model, Self::on_tuning_system_editor_msg)
+            .detach();
+        self.app_mode = AppMode::TuningSystems(model);
+        cx.notify();
+    }
+
+    fn on_tuning_system_editor_msg(
+        &mut self,
+        _: Entity<tuning_system_editor::Model>,
+        msg: &tuning_system_editor::Msg,
+        cx: &mut Context<Self>,
+    ) {
+        match msg {
+            tuning_system_editor::Msg::CloseRequested => {
+                self.set_project_start_mode(ProjectStartMode::New, cx);
+            }
+        }
+    }
+
     fn on_new_project_opened(
         &mut self,
         _: Entity<NewProjectDialog>,
@@ -165,6 +194,7 @@ impl AhessApp {
         let changed = match &self.app_mode {
             AppMode::ProjectStart(project_start) => project_start.project_start_mode != mode,
             AppMode::ProjectOpen(_) => true,
+            AppMode::TuningSystems(_) => true,
             AppMode::Error { .. } => true,
         };
 
@@ -172,7 +202,7 @@ impl AhessApp {
             AppMode::ProjectStart(project_start) => {
                 project_start.set_project_start_mode(mode, cx);
             }
-            AppMode::ProjectOpen(_) | AppMode::Error { .. } => {
+            AppMode::ProjectOpen(_) | AppMode::TuningSystems(_) | AppMode::Error { .. } => {
                 self.app_mode =
                     AppMode::ProjectStart(ProjectStart::new(&self.workspace_root, mode, cx));
             }
@@ -213,7 +243,7 @@ impl AppMode {
             } => {
                 let model = cx.new(|cx| {
                     project_open::Model::new(
-                        project,
+                        *project,
                         project_directory,
                         workspace_root.to_path_buf(),
                         cx,
@@ -252,6 +282,8 @@ impl ProjectStart {
             AhessApp::on_existing_project_clicked,
         )
         .detach();
+        cx.subscribe(&buttons.tuning_systems, AhessApp::on_tuning_systems_clicked)
+            .detach();
 
         Self {
             project_start_mode,
@@ -388,6 +420,9 @@ impl Storage {
                         .to_path_buf(),
                 }
             }
+            AppMode::TuningSystems(_) => Storage::ProjectStart {
+                project_start_mode: ProjectStartMode::New,
+            },
             AppMode::Error { .. } => return None,
         };
 
@@ -409,7 +444,7 @@ impl Storage {
                     project::load_project(&project_directory).map_err(StorageError::LoadProject)?;
 
                 Ok(StoredAppMode::ProjectOpen {
-                    project: project.project,
+                    project: Box::new(project.project),
                     project_directory: project.project_directory,
                 })
             }
@@ -429,6 +464,8 @@ impl Render for AhessApp {
                     .with_actions(project_model.bar_actions())
                     .with_dialog(project_model.active_dialog())
             }
+            AppMode::TuningSystems(model) => AppFrame::new(model.clone(), "tuning systems")
+                .with_actions(model.read(cx).bar_actions()),
             AppMode::Error { message } => {
                 AppFrame::new(error_screen(message.clone().into()), "error")
             }
@@ -552,6 +589,7 @@ fn project_bar(project_title: SharedString, actions: Vec<AnyElement>) -> impl In
 struct ProjectStartButtons {
     new_project: Entity<Button>,
     open_existing: Entity<Button>,
+    tuning_systems: Entity<Button>,
 }
 
 impl ProjectStartButtons {
@@ -564,6 +602,7 @@ impl ProjectStartButtons {
                 Button::new("open-existing", "open existing")
                     .depressed(mode == ProjectStartMode::Existing)
             }),
+            tuning_systems: cx.new(|_| Button::new("tuning-systems", "tuning system editor")),
         }
     }
 
@@ -624,7 +663,8 @@ fn project_picker_dialog(buttons: &ProjectStartButtons) -> impl IntoElement {
                         .justify_center()
                         .gap_5()
                         .child(buttons.new_project.clone())
-                        .child(buttons.open_existing.clone()),
+                        .child(buttons.open_existing.clone())
+                        .child(buttons.tuning_systems.clone()),
                 ),
         ),
     )
@@ -740,7 +780,7 @@ mod tests {
         assert_eq!(
             restore_app_mode(&root),
             StoredAppMode::ProjectOpen {
-                project,
+                project: Box::new(project),
                 project_directory,
             }
         );

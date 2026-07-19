@@ -26,6 +26,10 @@ pub enum Msg {
         source: PartName,
         name: String,
     },
+    RenameRequested {
+        source: PartName,
+        name: String,
+    },
     DeleteRequested {
         name: PartName,
     },
@@ -38,6 +42,7 @@ pub enum Msg {
 
 struct ListView {
     add_new_button: Entity<Button>,
+    rename_button: Entity<Button>,
     duplicate_button: Entity<Button>,
     delete_button: Entity<Button>,
     delete_confirmation: Option<DeleteConfirmation>,
@@ -70,6 +75,13 @@ enum DialogView {
         name: Entity<TextInput>,
         cancel_button: Entity<Button>,
         duplicate_button: Entity<Button>,
+        form_error: Option<String>,
+    },
+    Rename {
+        source: PartName,
+        name: Entity<TextInput>,
+        cancel_button: Entity<Button>,
+        rename_button: Entity<Button>,
         form_error: Option<String>,
     },
 }
@@ -107,6 +119,7 @@ impl PartsDialog {
 
     fn list_view(cx: &mut Context<Self>) -> DialogView {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
+        let rename_button = cx.new(|_| Button::new("rename-part", "rename part"));
         let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate part"));
         let delete_button = cx.new(|_| Button::new("delete-part", "delete part"));
         let add_to_arrangement_button =
@@ -119,6 +132,8 @@ impl PartsDialog {
         let remove_occurrence_button = cx.new(|_| Button::new("remove-arrangement-part", "remove"));
 
         cx.subscribe(&add_new_button, Self::on_add_new_clicked)
+            .detach();
+        cx.subscribe(&rename_button, Self::on_rename_clicked)
             .detach();
         cx.subscribe(&duplicate_button, Self::on_duplicate_clicked)
             .detach();
@@ -143,6 +158,7 @@ impl PartsDialog {
 
         DialogView::List(Box::new(ListView {
             add_new_button,
+            rename_button,
             duplicate_button,
             delete_button,
             delete_confirmation: None,
@@ -186,6 +202,25 @@ impl PartsDialog {
             name,
             cancel_button,
             duplicate_button,
+            form_error: None,
+        }
+    }
+
+    fn rename_view(source: PartName, cx: &mut Context<Self>) -> DialogView {
+        let name = cx.new(|cx| TextInput::new(source.as_str().to_owned(), "part name", cx));
+        let cancel_button = cx.new(|_| Button::new("cancel-rename-part", "cancel"));
+        let rename_button = cx.new(|_| Button::new("confirm-rename-part", "rename part"));
+
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&rename_button, Self::on_rename_confirmed)
+            .detach();
+
+        DialogView::Rename {
+            source,
+            name,
+            cancel_button,
+            rename_button,
             form_error: None,
         }
     }
@@ -237,6 +272,20 @@ impl PartsDialog {
         cx.notify();
     }
 
+    fn on_rename_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.selected_part.clone() else {
+            return;
+        };
+
+        self.view = Self::rename_view(source, cx);
+        cx.notify();
+    }
+
     fn on_cancel_clicked(
         &mut self,
         _: Entity<Button>,
@@ -276,6 +325,21 @@ impl PartsDialog {
             return;
         };
         cx.emit(Msg::DuplicateRequested {
+            source: source.clone(),
+            name: name.read(cx).value(),
+        });
+    }
+
+    fn on_rename_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Rename { source, name, .. } = &self.view else {
+            return;
+        };
+        cx.emit(Msg::RenameRequested {
             source: source.clone(),
             name: name.read(cx).value(),
         });
@@ -532,6 +596,28 @@ impl PartsDialog {
         }
     }
 
+    pub fn part_renamed(
+        &mut self,
+        parts: Vec<Part>,
+        sequence: Vec<PartName>,
+        renamed: PartName,
+        cx: &mut Context<Self>,
+    ) {
+        self.parts = parts;
+        self.sequence = sequence;
+        self.selected_part = Some(renamed);
+        self.view = Self::list_view(cx);
+        self.sync_button_states(cx);
+        cx.notify();
+    }
+
+    pub fn rename_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Rename { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
     pub fn part_deleted(&mut self, parts: Vec<Part>, deleted: &PartName, cx: &mut Context<Self>) {
         let deleted_index = self
             .parts
@@ -598,6 +684,7 @@ impl Render for PartsDialog {
                         .as_ref()
                         .and_then(|name| find_part(&self.parts, name)),
                     PartDetailsButtons {
+                        rename: view.rename_button.clone(),
                         duplicate: view.duplicate_button.clone(),
                         delete: view.delete_button.clone(),
                         delete_confirmation: view.delete_confirmation.clone(),
@@ -688,6 +775,41 @@ impl Render for PartsDialog {
                         .child(duplicate_button.clone()),
                 )
             }
+            DialogView::Rename {
+                source,
+                name,
+                cancel_button,
+                rename_button,
+                form_error,
+            } => {
+                let form = div()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .child(
+                        div()
+                            .text_color(s::TEXT_DEFAULT)
+                            .child(format!("renaming {:?}", source.as_str())),
+                    )
+                    .child(field_group("part name", name.clone()));
+                let form = if let Some(error) = form_error {
+                    form.child(error_message(error.clone()))
+                } else {
+                    form
+                };
+
+                management_form_dialog(
+                    "rename part",
+                    self.close_button.clone(),
+                    form,
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_3()
+                        .child(cancel_button.clone())
+                        .child(rename_button.clone()),
+                )
+            }
         }
     }
 }
@@ -726,6 +848,7 @@ fn part_list_row(
 }
 
 struct PartDetailsButtons {
+    rename: Entity<Button>,
     duplicate: Entity<Button>,
     delete: Entity<Button>,
     delete_confirmation: Option<DeleteConfirmation>,
@@ -739,6 +862,7 @@ fn part_details(
     sequence: &[PartName],
 ) -> gpui::Div {
     let PartDetailsButtons {
+        rename,
         duplicate,
         delete,
         delete_confirmation,
@@ -780,6 +904,11 @@ fn part_details(
                             div()
                                 .flex()
                                 .gap_3()
+                                .child(
+                                    div()
+                                        .debug_selector(|| "rename-part-control".to_string())
+                                        .child(rename),
+                                )
                                 .child(
                                     div()
                                         .debug_selector(|| "duplicate-part-control".to_string())
@@ -1169,9 +1298,11 @@ mod tests {
         );
         assert!(cx.debug_bounds("arrangement-occurrence-2").is_some());
         let add_to_arrangement = cx.debug_bounds("add-to-arrangement-control").unwrap();
+        let rename_part = cx.debug_bounds("rename-part-control").unwrap();
         let duplicate_part = cx.debug_bounds("duplicate-part-control").unwrap();
         let delete_part_control = cx.debug_bounds("delete-part-control").unwrap();
         assert!(add_to_arrangement.origin.y < duplicate_part.origin.y);
+        assert_eq!(rename_part.origin.y, duplicate_part.origin.y);
         assert_eq!(duplicate_part.origin.y, delete_part_control.origin.y);
         assert!(
             add_to_arrangement.size.width < details.size.width
@@ -1295,6 +1426,26 @@ mod tests {
             };
             assert_eq!(source.as_str(), "intro");
             assert_eq!(name.read(cx).value(), "");
+        });
+    }
+
+    #[gpui::test]
+    fn rename_part_action_opens_a_form_with_the_current_name(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(|_, cx| {
+            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
+        });
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let rename = cx.debug_bounds("rename-part-control").unwrap();
+        cx.simulate_click(rename.center(), Default::default());
+
+        cx.update(|_, cx| {
+            let DialogView::Rename { source, name, .. } = &dialog.read(cx).view else {
+                panic!("rename action should open its form");
+            };
+            assert_eq!(source.as_str(), "intro");
+            assert_eq!(name.read(cx).value(), "intro");
         });
     }
 

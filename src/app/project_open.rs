@@ -885,8 +885,11 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         if let ProjectSettingsMsg::Saved(updated_project) = msg {
-            self.project = updated_project.clone();
+            self.project = updated_project.as_ref().clone();
             self.update_score_documents_for_project_settings(cx);
+            if self.playback.is_some() {
+                self.update_live_playback(cx);
+            }
         }
 
         self.dialog = None;
@@ -1057,6 +1060,66 @@ impl Model {
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
                             dialog.duplicate_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
+            parts::Msg::RenameRequested { source, name } => {
+                if self.part_has_unsaved_score(source, cx) {
+                    self.workspace_error =
+                        Some("save score changes before renaming this part".to_string());
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.rename_failed(
+                            "save score changes before renaming this part".to_string(),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                match rename_project_part(&self.project_directory, &mut self.project, source, name)
+                {
+                    Ok(part) => {
+                        let renamed_name = part.name.clone();
+                        let project = self.project.clone();
+                        for entry in &mut self.score_documents {
+                            if entry.part_name.eq_ignore_ascii_case(source) {
+                                entry.part_name = renamed_name.clone();
+                                let score = entry.document.read(cx).score().clone();
+                                let project = project.clone();
+                                let part = part.clone();
+                                entry.document.update(cx, |document, cx| {
+                                    document.replace_project_and_score(project, part, score, cx);
+                                });
+                            } else {
+                                let project = project.clone();
+                                entry.document.update(cx, |document, cx| {
+                                    document.project_settings_changed(project, cx);
+                                });
+                            }
+                        }
+                        for view in &mut self.score_views {
+                            if view
+                                .part_name
+                                .as_ref()
+                                .is_some_and(|part_name| part_name.eq_ignore_ascii_case(source))
+                            {
+                                view.part_name = Some(renamed_name.clone());
+                            }
+                        }
+                        let parts = self.project.parts.clone();
+                        let sequence = self.project.sequence().to_vec();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.part_renamed(parts, sequence, renamed_name, cx);
+                        });
+                        self.sync_score_editor_parts(cx);
+                        self.workspace_error = None;
+                        if self.playback.is_some() {
+                            self.update_live_playback(cx);
+                        }
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.rename_failed(error.to_string(), cx);
                         });
                     }
                 }
@@ -1342,6 +1405,7 @@ fn workspace(
 enum PartChangeError {
     Recovery(project::ProjectTransactionError),
     CreateFile(part::CreatePartError),
+    RenameFile(part::RenamePartError),
     DeleteFile(part::DeletePartError),
     MissingPart(String),
     PartInSequence {
@@ -1356,6 +1420,10 @@ enum PartChangeError {
         source: project::SaveProjectError,
         rollback_error: Option<part::PartFileRollbackError>,
     },
+    SaveRenamed {
+        source: project::SaveProjectError,
+        rollback_error: Option<part::PartFileRollbackError>,
+    },
 }
 
 impl fmt::Display for PartChangeError {
@@ -1363,6 +1431,7 @@ impl fmt::Display for PartChangeError {
         match self {
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
             Self::CreateFile(error) => write!(f, "{error}"),
+            Self::RenameFile(error) => write!(f, "{error}"),
             Self::DeleteFile(error) => write!(f, "{error}"),
             Self::MissingPart(name) => write!(f, "part {name:?} no longer exists"),
             Self::PartInSequence {
@@ -1386,6 +1455,10 @@ impl fmt::Display for PartChangeError {
             | Self::SaveDeleted {
                 source,
                 rollback_error: None,
+            }
+            | Self::SaveRenamed {
+                source,
+                rollback_error: None,
             } => write!(f, "{source}"),
             Self::SaveCreated {
                 source,
@@ -1401,6 +1474,13 @@ impl fmt::Display for PartChangeError {
                 f,
                 "{source}; also failed to restore the deleted part file: {rollback_error}"
             ),
+            Self::SaveRenamed {
+                source,
+                rollback_error: Some(rollback_error),
+            } => write!(
+                f,
+                "{source}; also failed to restore the renamed part file: {rollback_error}"
+            ),
         }
     }
 }
@@ -1410,8 +1490,11 @@ impl std::error::Error for PartChangeError {
         match self {
             Self::Recovery(error) => Some(error),
             Self::CreateFile(error) => Some(error),
+            Self::RenameFile(error) => Some(error),
             Self::DeleteFile(error) => Some(error),
-            Self::SaveCreated { source, .. } | Self::SaveDeleted { source, .. } => Some(source),
+            Self::SaveCreated { source, .. }
+            | Self::SaveDeleted { source, .. }
+            | Self::SaveRenamed { source, .. } => Some(source),
             Self::MissingPart(_) | Self::PartInSequence { .. } => None,
         }
     }
@@ -1524,6 +1607,49 @@ fn duplicate_project_part(
     Ok(created.commit())
 }
 
+fn rename_project_part(
+    project_directory: &Path,
+    project: &mut Project,
+    source_name: &PartName,
+    name: &str,
+) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
+    let index = project
+        .parts
+        .iter()
+        .position(|part| part.name.eq_ignore_ascii_case(source_name))
+        .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))?;
+    let source_part = project.parts[index].clone();
+    let renamed = part::rename_part_file(project_directory, &project.parts, &source_part, name)
+        .map_err(PartChangeError::RenameFile)?;
+    let renamed_part = renamed.part().clone();
+    let original_sequence = project.sequence().to_vec();
+    let updated_sequence = original_sequence
+        .iter()
+        .map(|part_name| {
+            if part_name.eq_ignore_ascii_case(&source_part.name) {
+                renamed_part.name.clone()
+            } else {
+                part_name.clone()
+            }
+        })
+        .collect();
+    project.parts[index] = renamed_part.clone();
+    project.set_sequence(updated_sequence);
+
+    if let Err(source) = project::save_project(project_directory, project) {
+        project.parts[index] = source_part;
+        project.set_sequence(original_sequence);
+        return Err(PartChangeError::SaveRenamed {
+            source,
+            rollback_error: renamed.rollback().err(),
+        });
+    }
+
+    Ok(renamed.commit())
+}
+
 fn delete_project_part(
     project_directory: &Path,
     project: &mut Project,
@@ -1570,14 +1696,15 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
-    use gpui::{px, size, TestAppContext};
+    use gpui::{px, size, AppContext, TestAppContext};
 
     use super::{
-        create_project_part, delete_project_part, duplicate_project_part, playing_score_row,
-        update_project_sequence, Model, PartChangeError, StatusTarget,
+        create_project_part, delete_project_part, duplicate_project_part, parts, playing_score_row,
+        rename_project_part, update_project_sequence, Model, PartChangeError, PartsDialog,
+        StatusTarget,
     };
     use crate::{
-        part::{Part, PartScore},
+        part::{Part, PartName, PartScore},
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
         view::status_bar,
@@ -1654,9 +1781,7 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let source = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
         let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
-        score
-            .save(&project_directory, &source, project.voices())
-            .unwrap();
+        score.save(&project_directory, &source, &project).unwrap();
 
         let duplicated = duplicate_project_part(
             &project_directory,
@@ -1675,6 +1800,108 @@ mod tests {
             project::load_project(&project_directory).unwrap().project,
             project
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn renamed_parts_keep_their_score_and_update_every_arrangement_occurrence() {
+        let root = temp_root("rename-project-part");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let intro = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        let verse = create_project_part(&project_directory, &mut project, "verse", 2).unwrap();
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        score.save(&project_directory, &intro, &project).unwrap();
+        update_project_sequence(
+            &project_directory,
+            &mut project,
+            vec![intro.name.clone(), verse.name.clone(), intro.name.clone()],
+        )
+        .unwrap();
+
+        let renamed = rename_project_part(
+            &project_directory,
+            &mut project,
+            &intro.name,
+            "opening theme",
+        )
+        .unwrap();
+
+        assert_eq!(renamed.name.as_str(), "opening theme");
+        assert_eq!(
+            project
+                .sequence()
+                .iter()
+                .map(PartName::as_str)
+                .collect::<Vec<_>>(),
+            ["opening theme", "verse", "opening theme"]
+        );
+        assert!(!project_directory.join("intro.csv").exists());
+        assert_eq!(
+            PartScore::load(&project_directory, &renamed, project.voices()).unwrap(),
+            score
+        );
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
+
+        let error = rename_project_part(&project_directory, &mut project, &renamed.name, "verse")
+            .unwrap_err();
+        assert!(matches!(error, PartChangeError::RenameFile(_)));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn renaming_an_open_part_updates_its_score_document_and_view(cx: &mut TestAppContext) {
+        let root = temp_root("rename-open-project-part");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let intro = create_project_part(&project_directory, &mut project, "intro", 1).unwrap();
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()]]);
+        score.save(&project_directory, &intro, &project).unwrap();
+        let dialog_parts = project.parts.clone();
+        let dialog_sequence = project.sequence().to_vec();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let dialog = cx.new(|cx| PartsDialog::new(dialog_parts, dialog_sequence, cx));
+
+        model.update(cx, |model, cx| {
+            model.on_parts_msg(
+                dialog,
+                &parts::Msg::RenameRequested {
+                    source: intro.name,
+                    name: "opening theme".to_string(),
+                },
+                cx,
+            );
+        });
+
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.project.parts()[0].name.as_str(), "opening theme");
+            assert_eq!(model.score_documents[0].part_name.as_str(), "opening theme");
+            assert_eq!(
+                model.score_documents[0]
+                    .document
+                    .read(cx)
+                    .part()
+                    .name
+                    .as_str(),
+                "opening theme"
+            );
+            assert_eq!(
+                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                "opening theme"
+            );
+        });
+        assert!(!project_directory.join("intro.csv").exists());
+        assert!(project_directory.join("opening-theme.csv").is_file());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1712,7 +1939,7 @@ mod tests {
             ])
             .with_parts(vec![part.clone()]);
         PartScore::from_rows(vec![vec![String::new(); 3]; 16])
-            .save(&project_directory, &part, project.voices())
+            .save(&project_directory, &part, &project)
             .unwrap();
 
         let (model, cx) =
@@ -1753,7 +1980,7 @@ mod tests {
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
         PartScore::from_rows(vec![vec![String::new()]; 3])
-            .save(&project_directory, &part, project.voices())
+            .save(&project_directory, &part, &project)
             .unwrap();
 
         let (model, cx) =
@@ -1791,10 +2018,10 @@ mod tests {
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![first_part.clone(), second_part.clone()]);
         PartScore::from_rows(vec![vec![String::new()]; 4])
-            .save(&project_directory, &first_part, project.voices())
+            .save(&project_directory, &first_part, &project)
             .unwrap();
         PartScore::from_rows(vec![vec![String::new()]; 2])
-            .save(&project_directory, &second_part, project.voices())
+            .save(&project_directory, &second_part, &project)
             .unwrap();
 
         let (model, cx) =
@@ -1845,7 +2072,7 @@ mod tests {
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
         PartScore::from_rows(vec![vec![String::new()]; 4])
-            .save(&project_directory, &part, project.voices())
+            .save(&project_directory, &part, &project)
             .unwrap();
 
         let (model, cx) =
@@ -1933,7 +2160,7 @@ mod tests {
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
         PartScore::from_rows(vec![vec![String::new()]])
-            .save(&project_directory, &part, project.voices())
+            .save(&project_directory, &part, &project)
             .unwrap();
 
         let project_for_restore = project.clone();
@@ -2008,7 +2235,7 @@ mod tests {
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
         PartScore::from_rows(vec![vec![String::new()]])
-            .save(&project_directory, &part, project.voices())
+            .save(&project_directory, &part, &project)
             .unwrap();
 
         let (model, cx) = cx.add_window_view(|_, cx| {

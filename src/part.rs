@@ -9,8 +9,8 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    note::{Note, ParseNoteError},
-    project::{self, Voice},
+    pitch_system::{FrequencyHz, ResolvePitchError},
+    project::{self, Project, Voice},
 };
 
 pub const DELETED_PARTS_DIRECTORY: &str = "deleted";
@@ -98,6 +98,39 @@ impl CreatedPartFile {
     }
 }
 
+/// A successful score-file rename that has not yet been committed to project
+/// metadata. The caller can keep the renamed part with `commit`, or use the
+/// remembered paths to restore the original file if saving the project fails.
+pub struct RenamedPartFile {
+    part: Part,
+    original_path: PathBuf,
+    renamed_path: PathBuf,
+}
+
+impl RenamedPartFile {
+    pub fn part(&self) -> &Part {
+        &self.part
+    }
+
+    pub fn commit(self) -> Part {
+        self.part
+    }
+
+    pub fn rollback(self) -> Result<(), PartFileRollbackError> {
+        if self.original_path == self.renamed_path {
+            return Ok(());
+        }
+
+        fs::rename(&self.renamed_path, &self.original_path).map_err(|source| {
+            PartFileRollbackError::RestoreRenamed {
+                renamed_path: self.renamed_path,
+                original_path: self.original_path,
+                source,
+            }
+        })
+    }
+}
+
 pub struct DeletedPartFile {
     part: Part,
     original_path: PathBuf,
@@ -135,6 +168,11 @@ pub enum PartFileRollbackError {
         original_path: PathBuf,
         source: io::Error,
     },
+    RestoreRenamed {
+        renamed_path: PathBuf,
+        original_path: PathBuf,
+        source: io::Error,
+    },
 }
 
 impl fmt::Display for PartFileRollbackError {
@@ -153,6 +191,16 @@ impl fmt::Display for PartFileRollbackError {
                 deleted_path.display(),
                 original_path.display()
             ),
+            Self::RestoreRenamed {
+                renamed_path,
+                original_path,
+                source,
+            } => write!(
+                f,
+                "failed to restore {} to {}: {source}",
+                renamed_path.display(),
+                original_path.display()
+            ),
         }
     }
 }
@@ -160,9 +208,9 @@ impl fmt::Display for PartFileRollbackError {
 impl Error for PartFileRollbackError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::RemoveCreated { source, .. } | Self::RestoreDeleted { source, .. } => {
-                Some(source)
-            }
+            Self::RemoveCreated { source, .. }
+            | Self::RestoreDeleted { source, .. }
+            | Self::RestoreRenamed { source, .. } => Some(source),
         }
     }
 }
@@ -206,6 +254,38 @@ pub enum CreatePartError {
     DuplicateName(String),
     CsvAlreadyExists(PathBuf),
     Io { path: PathBuf, source: io::Error },
+}
+
+#[derive(Debug)]
+pub enum RenamePartError {
+    EmptyName,
+    DuplicateName(String),
+    CsvAlreadyExists(PathBuf),
+    Io { path: PathBuf, source: io::Error },
+}
+
+impl fmt::Display for RenamePartError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyName => write!(f, "part name must contain a letter or number"),
+            Self::DuplicateName(name) => write!(f, "a part named {name:?} already exists"),
+            Self::CsvAlreadyExists(path) => {
+                write!(f, "a file already exists at {}", path.display())
+            }
+            Self::Io { path, source } => {
+                write!(f, "filesystem error at {}: {source}", path.display())
+            }
+        }
+    }
+}
+
+impl Error for RenamePartError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for CreatePartError {
@@ -326,12 +406,12 @@ impl PartScore {
         &self.rows
     }
 
-    pub fn parsed_rows(
+    pub fn resolved_rows(
         &self,
         part: &Part,
-        voices: &[Voice],
-    ) -> Result<Vec<Vec<Option<Note>>>, ScoreError> {
-        self.validate_shape(part, voices)?;
+        project: &Project,
+    ) -> Result<Vec<Vec<Option<FrequencyHz>>>, ScoreError> {
+        self.validate_shape(part, project.voices())?;
 
         self.rows
             .iter()
@@ -340,11 +420,14 @@ impl PartScore {
                 row.iter()
                     .enumerate()
                     .map(|(voice_index, value)| {
-                        Note::parse_cell(value).map_err(|source| ScoreError::InvalidNote {
-                            beat: beat_index + 1,
-                            voice: voices[voice_index].name.as_str().to_string(),
-                            source,
-                        })
+                        project
+                            .pitch_system()
+                            .resolve_cell(value)
+                            .map_err(|source| ScoreError::InvalidPitch {
+                                beat: beat_index + 1,
+                                voice: project.voices()[voice_index].name.as_str().to_string(),
+                                source,
+                            })
                     })
                     .collect()
             })
@@ -355,14 +438,15 @@ impl PartScore {
         &self,
         project_directory: impl AsRef<Path>,
         part: &Part,
-        voices: &[Voice],
+        project: &Project,
     ) -> Result<(), ScoreError> {
-        self.parsed_rows(part, voices)?;
-        let contents =
-            serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv {
+        self.resolved_rows(part, project)?;
+        let contents = serialize_part_table(project.voices(), &self.rows).map_err(|source| {
+            ScoreError::Csv {
                 path: part_file_path(project_directory.as_ref(), part),
                 source,
-            })?;
+            }
+        })?;
         atomic_write_part_score(project_directory.as_ref(), part, &contents)
     }
 
@@ -432,10 +516,10 @@ pub enum ScoreError {
     InvalidShape {
         message: String,
     },
-    InvalidNote {
+    InvalidPitch {
         beat: usize,
         voice: String,
-        source: ParseNoteError,
+        source: ResolvePitchError,
     },
     Csv {
         path: PathBuf,
@@ -451,7 +535,7 @@ impl fmt::Display for ScoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidShape { message } => formatter.write_str(message),
-            Self::InvalidNote {
+            Self::InvalidPitch {
                 beat,
                 voice,
                 source,
@@ -477,7 +561,7 @@ impl fmt::Display for ScoreError {
 impl Error for ScoreError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::InvalidNote { source, .. } => Some(source),
+            Self::InvalidPitch { source, .. } => Some(source),
             Self::Csv { source, .. } => Some(source),
             Self::Io { source, .. } => Some(source),
             Self::InvalidShape { .. } => None,
@@ -595,6 +679,55 @@ pub fn duplicate_part_file(
     Ok(CreatedPartFile {
         part: Part::new(part_name, source_part.length),
         path,
+    })
+}
+
+pub fn rename_part_file(
+    project_directory: impl AsRef<Path>,
+    parts: &[Part],
+    source_part: &Part,
+    name: &str,
+) -> Result<RenamedPartFile, RenamePartError> {
+    let name = name.trim();
+    let part_name = PartName::new(name);
+    let file_name = csv_file_name(&part_name).map_err(|_| RenamePartError::EmptyName)?;
+    if parts.iter().any(|part| {
+        !part.name.eq_ignore_ascii_case(&source_part.name)
+            && part.name.eq_ignore_ascii_case(&part_name)
+    }) {
+        return Err(RenamePartError::DuplicateName(name.to_string()));
+    }
+
+    let project_directory = project_directory.as_ref();
+    let original_path = part_file_path(project_directory, source_part);
+    let renamed_path = project_directory.join(file_name);
+    original_path
+        .metadata()
+        .map_err(|source| RenamePartError::Io {
+            path: original_path.clone(),
+            source,
+        })?;
+    if original_path != renamed_path {
+        match renamed_path.try_exists() {
+            Ok(true) => return Err(RenamePartError::CsvAlreadyExists(renamed_path)),
+            Ok(false) => {}
+            Err(source) => {
+                return Err(RenamePartError::Io {
+                    path: renamed_path,
+                    source,
+                });
+            }
+        }
+        fs::rename(&original_path, &renamed_path).map_err(|source| RenamePartError::Io {
+            path: original_path.clone(),
+            source,
+        })?;
+    }
+
+    Ok(RenamedPartFile {
+        part: Part::new(part_name, source_part.length),
+        original_path,
+        renamed_path,
     })
 }
 
@@ -933,7 +1066,7 @@ fn atomic_write_score(
         });
     }
 
-    if let Err(source) = fs::rename(&pending_path, &path) {
+    if let Err(source) = fs::rename(&pending_path, path) {
         fs::remove_file(&pending_path).ok();
         return Err(ScoreError::Io {
             path: path.to_path_buf(),
@@ -1007,11 +1140,10 @@ mod tests {
 
     use super::{
         available_deleted_path, create_part_file, csv_file_name, duplicate_part_file,
-        soft_delete_part_file, DeletedPartPathError, Part, PartName, PartScore,
+        rename_part_file, soft_delete_part_file, DeletedPartPathError, Part, PartName, PartScore,
         DELETED_PARTS_DIRECTORY,
     };
     use crate::{
-        note::Note,
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
         seed::Seed,
     };
@@ -1112,7 +1244,7 @@ mod tests {
         let project_directory = create_project(&root, &project).unwrap();
         let source = add_part(&project_directory, &mut project, "intro", 2);
         PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]])
-            .save(&project_directory, &source, project.voices())
+            .save(&project_directory, &source, &project)
             .unwrap();
 
         let duplicated = duplicate_part_file(
@@ -1136,7 +1268,36 @@ mod tests {
     }
 
     #[test]
-    fn part_scores_load_validate_and_save_note_cells() {
+    fn renames_a_part_file_without_changing_its_score() {
+        let root = temp_root("rename-part");
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let project_directory = create_project(&root, &project).unwrap();
+        let source = add_part(&project_directory, &mut project, "intro", 2);
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        score.save(&project_directory, &source, &project).unwrap();
+
+        let renamed =
+            rename_part_file(&project_directory, &project.parts, &source, "opening theme").unwrap();
+
+        assert_eq!(renamed.part().name.as_str(), "opening theme");
+        assert!(!project_directory.join("intro.csv").exists());
+        assert_eq!(
+            PartScore::load(&project_directory, renamed.part(), project.voices()).unwrap(),
+            score
+        );
+
+        renamed.rollback().unwrap();
+        assert!(project_directory.join("intro.csv").is_file());
+        assert!(!project_directory.join("opening-theme.csv").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn part_scores_load_validate_and_save_pitch_cells() {
         let root = temp_root("score-round-trip");
         let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![
             Voice::new(1, "lead", VoiceType::Saw),
@@ -1149,21 +1310,21 @@ mod tests {
             vec![String::new(), "rest".to_string()],
         ]);
 
-        score
-            .save(&project_directory, &part, project.voices())
-            .unwrap();
+        score.save(&project_directory, &part, &project).unwrap();
 
         assert_eq!(
             PartScore::load(&project_directory, &part, project.voices()).unwrap(),
             score
         );
+        let rows = score.resolved_rows(&part, &project).unwrap();
         assert_eq!(
-            score.parsed_rows(&part, project.voices()).unwrap(),
+            rows[0],
             vec![
-                vec![Some(Note::from_midi(60)), Some(Note::from_midi(36))],
-                vec![None, None],
+                project.pitch_system().resolve_cell("C4").unwrap(),
+                project.pitch_system().resolve_cell("36").unwrap(),
             ]
         );
+        assert_eq!(rows[1], vec![None, None]);
         assert_eq!(
             fs::read_to_string(project_directory.join("intro.csv")).unwrap(),
             "lead,bass\nC4,36\n,rest\n"
@@ -1210,12 +1371,16 @@ mod tests {
     }
 
     #[test]
-    fn part_scores_report_the_beat_and_voice_for_invalid_notes() {
+    fn part_scores_report_the_beat_and_voice_for_invalid_pitches() {
         let part = Part::new("intro", 1);
-        let voices = vec![Voice::new(1, "lead", VoiceType::Saw)];
+        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
         let score = PartScore::from_rows(vec![vec!["not a note".to_string()]]);
 
-        let error = score.parsed_rows(&part, &voices).unwrap_err();
+        let error = score.resolved_rows(&part, &project).unwrap_err();
 
         assert!(error.to_string().contains("beat 1, voice \"lead\""));
     }

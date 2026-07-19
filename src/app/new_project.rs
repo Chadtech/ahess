@@ -6,16 +6,20 @@ use crate::{
     project::{self, ProjectOpened},
     seed::Seed,
     style as s,
+    tuning_system::{self, TuningSystem},
     view::{
         button::{self, Button},
         dialog::{error_message, title_bar},
-        field_group::field_group,
+        dropdown::Dropdown,
+        field_group::{control_group, field_group},
         text_input::TextInput,
     },
 };
 
 pub struct NewProjectDialog {
     fields: NewProjectFields,
+    tuning_systems: Vec<TuningSystem>,
+    tuning_dropdown: Entity<Dropdown>,
     create_button: Entity<Button>,
     create_project_error: Option<String>,
     workspace_root: PathBuf,
@@ -25,7 +29,22 @@ impl EventEmitter<ProjectOpened> for NewProjectDialog {}
 
 impl NewProjectDialog {
     pub fn new(workspace_root: impl Into<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let workspace_root = workspace_root.into();
         let fields = NewProjectFields::new(cx);
+        let (tuning_systems, create_project_error) =
+            match tuning_system::list_tuning_systems(&workspace_root) {
+                Ok(systems) => (systems, None),
+                Err(error) => (
+                    vec![TuningSystem::built_in_western()],
+                    Some(format!("failed to load tuning systems: {error}")),
+                ),
+            };
+        let tuning_options = tuning_systems
+            .iter()
+            .map(|system| system.name().to_string())
+            .collect::<Vec<_>>();
+        let tuning_dropdown =
+            cx.new(|cx| Dropdown::new("new-project-tuning", tuning_options, 0, cx));
         let create_button = cx.new(|_| Button::new("create-new-project", "create"));
 
         cx.subscribe(&create_button, Self::on_create_project_clicked)
@@ -33,9 +52,11 @@ impl NewProjectDialog {
 
         Self {
             fields,
+            tuning_systems,
+            tuning_dropdown,
             create_button,
-            create_project_error: None,
-            workspace_root: workspace_root.into(),
+            create_project_error,
+            workspace_root,
         }
     }
 
@@ -60,8 +81,13 @@ impl NewProjectDialog {
         let timing_variance = parse_u32_field("variance", &self.fields.variance.read(cx).value())?;
         let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
         let description = self.fields.description.read(cx).value();
+        let tuning_system = self
+            .tuning_systems
+            .get(self.tuning_dropdown.read(cx).selected_index())
+            .expect("the tuning dropdown always selects an available system");
         let project = project::Project::new(project_name, beat_length, timing_variance, seed)
-            .with_description(description);
+            .with_description(description)
+            .with_tuning_system(tuning_system);
         let project_directory = project::create_project(&self.workspace_root, &project)?;
 
         Ok(ProjectOpened {
@@ -80,6 +106,7 @@ impl Render for NewProjectDialog {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         new_project_form(
             &self.fields,
+            self.tuning_dropdown.clone(),
             self.create_button.clone(),
             self.create_project_error.clone(),
         )
@@ -151,6 +178,7 @@ impl NewProjectFields {
 
 fn new_project_form(
     fields: &NewProjectFields,
+    tuning_dropdown: Entity<Dropdown>,
     create_button: Entity<Button>,
     create_project_error: Option<String>,
 ) -> impl IntoElement {
@@ -159,6 +187,7 @@ fn new_project_form(
         .flex_col()
         .gap_5()
         .child(field_group("project name", fields.project_name.clone()))
+        .child(control_group("tuning system", tuning_dropdown))
         .child(div().flex().gap_4().children([
             field_group("beat length (samples)", fields.beat_length.clone()),
             field_group("variance", fields.variance.clone()),
@@ -192,8 +221,10 @@ fn new_project_form(
 
 #[cfg(test)]
 mod tests {
+    use gpui::{px, size, TestAppContext};
+
     use super::{parse_beat_length_field, parse_seed_field, parse_u32_field};
-    use crate::seed::Seed;
+    use crate::{seed::Seed, style as s};
 
     #[test]
     fn parses_decimal_number_fields() {
@@ -208,5 +239,17 @@ mod tests {
         assert_eq!(parse_seed_field(" 1234 ").unwrap(), Seed::new(1234));
         assert!(parse_seed_field("0x1234").is_err());
         assert!(parse_seed_field("12.34").is_err());
+    }
+
+    #[gpui::test]
+    fn tuning_dropdown_uses_the_form_width_for_long_system_names(cx: &mut TestAppContext) {
+        let (_, cx) =
+            cx.add_window_view(|_, cx| super::NewProjectDialog::new(std::env::temp_dir(), cx));
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        let trigger = cx.debug_bounds("new-project-tuning-trigger").unwrap();
+
+        assert!(trigger.size.width > s::S9);
     }
 }

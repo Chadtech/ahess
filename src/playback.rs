@@ -14,8 +14,8 @@ use cpal::{
 };
 
 use crate::{
-    note::Note,
     part::{Part, PartScore},
+    pitch_system::FrequencyHz,
     project::{Project, VoiceType},
 };
 
@@ -131,12 +131,12 @@ impl PlaybackLoop {
 
             let occurrence_last = occurrence_first + u64::from(part.length) - 1;
             if range.first <= occurrence_last && range.last >= occurrence_first {
-                let parsed_rows = score.parsed_rows(part, project.voices()).map_err(|error| {
+                let resolved_rows = score.resolved_rows(part, project).map_err(|error| {
                     PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
                 })?;
                 let first_row = range.first.saturating_sub(occurrence_first) as usize;
                 let last_row = (range.last.min(occurrence_last) - occurrence_first) as usize;
-                rows.extend_from_slice(&parsed_rows[first_row..=last_row]);
+                rows.extend_from_slice(&resolved_rows[first_row..=last_row]);
             }
             occurrence_first = occurrence_last + 1;
         }
@@ -146,7 +146,7 @@ impl PlaybackLoop {
 
     fn from_rows(
         project: &Project,
-        rows: Vec<Vec<Option<Note>>>,
+        rows: Vec<Vec<Option<FrequencyHz>>>,
         first_arrangement_beat: u64,
     ) -> Result<Self, PlaybackError> {
         if project.beat_length == 0 {
@@ -172,8 +172,8 @@ impl PlaybackLoop {
             .iter()
             .enumerate()
             .map(|(voice_index, voice)| {
-                let notes = rows.iter().map(|row| row[voice_index]).collect::<Vec<_>>();
-                let delays = notes
+                let frequencies = rows.iter().map(|row| row[voice_index]).collect::<Vec<_>>();
+                let delays = frequencies
                     .iter()
                     .map(|_| {
                         let (random, next_seed) = random_seed.next_u64();
@@ -188,7 +188,7 @@ impl PlaybackLoop {
 
                 PlaybackVoice {
                     voice_type: voice.voice_type,
-                    notes,
+                    frequencies,
                     delays,
                 }
             })
@@ -207,7 +207,7 @@ impl PlaybackLoop {
 #[derive(Clone, Debug)]
 struct PlaybackVoice {
     voice_type: VoiceType,
-    notes: Vec<Option<Note>>,
+    frequencies: Vec<Option<FrequencyHz>>,
     delays: Vec<u32>,
 }
 
@@ -369,7 +369,7 @@ impl AudioEngine {
         let mut sounding_voice_count = 0_u32;
 
         for (voice_index, voice) in self.playback_loop.voices.iter().enumerate() {
-            let Some(note) = voice.notes[self.beat_index] else {
+            let Some(frequency) = voice.frequencies[self.beat_index] else {
                 continue;
             };
             let delay = voice.delays[self.beat_index];
@@ -384,8 +384,8 @@ impl AudioEngine {
             mixed += waveform_sample(voice.voice_type, phase) * envelope;
             sounding_voice_count += 1;
 
-            let frequency = midi_note_frequency(note.midi());
-            self.oscillator_phases[voice_index] = (phase + frequency / self.sample_rate).fract();
+            self.oscillator_phases[voice_index] =
+                (phase + frequency.as_hz_f32() / self.sample_rate).fract();
         }
 
         self.advance_playhead();
@@ -429,10 +429,6 @@ fn envelope(sample: u32, length: u32) -> f32 {
     attack.min(release).clamp(0.0, 1.0)
 }
 
-fn midi_note_frequency(note: u8) -> f32 {
-    440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -442,8 +438,8 @@ mod tests {
 
     use super::{AudioEngine, BeatRange, PlaybackLoop};
     use crate::{
-        note::Note,
         part::{Part, PartScore},
+        pitch_system::{FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem},
         project::{Project, Voice, VoiceType},
         seed::Seed,
     };
@@ -460,14 +456,65 @@ mod tests {
             vec![String::new(), "G2".to_string()],
         ]);
 
-        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let rows = score.resolved_rows(&part, &project).unwrap();
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
 
         assert_eq!(playback_loop.beat_count, 2);
         assert_eq!(playback_loop.voices.len(), 2);
-        assert_eq!(playback_loop.voices[0].notes[0], Some(Note::from_midi(60)));
-        assert_eq!(playback_loop.voices[0].notes[1], None);
-        assert_eq!(playback_loop.voices[1].notes[1], Some(Note::from_midi(43)));
+        assert_eq!(
+            playback_loop.voices[0].frequencies[0],
+            project.pitch_system().resolve_cell("C4").unwrap()
+        );
+        assert_eq!(playback_loop.voices[0].frequencies[1], None);
+        assert_eq!(
+            playback_loop.voices[1].frequencies[1],
+            project.pitch_system().resolve_cell("G2").unwrap()
+        );
+    }
+
+    #[test]
+    fn project_tuning_changes_the_frequency_prepared_from_the_same_score_text() {
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["11".to_string()]]);
+        let project_with = |name: &str, period_numerator: u64, second_degree_numerator: u64| {
+            Project::new(name, 800, 0, Seed::new(1))
+                .with_pitch_system(PitchSystem::periodic(
+                    PeriodicPitchSystem::new(
+                        name,
+                        FrequencyHz::new(100.0).unwrap(),
+                        Interval::ratio(period_numerator, 1).unwrap(),
+                        vec![
+                            Interval::ratio(1, 1).unwrap(),
+                            Interval::ratio(second_degree_numerator, 3).unwrap(),
+                        ],
+                        PeriodicNotation::radler_digits(10).unwrap(),
+                    )
+                    .unwrap(),
+                ))
+                .with_voices(vec![Voice::new(1, "lead", VoiceType::Sin)])
+        };
+        let first_project = project_with("first", 2, 4);
+        let second_project = project_with("second", 3, 5);
+
+        let first = PlaybackLoop::from_rows(
+            &first_project,
+            score.resolved_rows(&part, &first_project).unwrap(),
+            1,
+        )
+        .unwrap();
+        let second = PlaybackLoop::from_rows(
+            &second_project,
+            score.resolved_rows(&part, &second_project).unwrap(),
+            1,
+        )
+        .unwrap();
+
+        assert!((first.voices[0].frequencies[0].unwrap().as_hz() - (800.0 / 3.0)).abs() < 1e-10);
+        assert!((second.voices[0].frequencies[0].unwrap().as_hz() - 500.0).abs() < 1e-10);
+        assert_ne!(
+            first.voices[0].frequencies[0],
+            second.voices[0].frequencies[0]
+        );
     }
 
     #[test]
@@ -502,9 +549,9 @@ mod tests {
         assert_eq!(playback_loop.beat_count, 5);
         assert_eq!(playback_loop.first_arrangement_beat, 2);
         assert_eq!(
-            playback_loop.voices[0].notes,
-            [62, 64, 65, 67, 60]
-                .map(|midi| Some(Note::from_midi(midi)))
+            playback_loop.voices[0].frequencies,
+            ["D4", "E4", "F4", "G4", "C4"]
+                .map(|pitch| project.pitch_system().resolve_cell(pitch).unwrap())
                 .to_vec()
         );
     }
@@ -534,7 +581,7 @@ mod tests {
         )]);
         let part = Part::new("intro", 1);
         let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
-        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let rows = score.resolved_rows(&part, &project).unwrap();
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(1));
@@ -556,7 +603,7 @@ mod tests {
         )]);
         let part = Part::new("intro", 3);
         let score = PartScore::from_rows(vec![vec![String::new()]; 3]);
-        let rows = score.parsed_rows(&part, project.voices()).unwrap();
+        let rows = score.resolved_rows(&part, &project).unwrap();
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 4).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(4));

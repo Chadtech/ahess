@@ -24,3 +24,10 @@
   internally.
 - When changing stateful code, consider whether the type system can eliminate
   invalid cases before adding runtime checks.
+
+## Audio work
+
+- Read `docs/audio-architecture.md` before changing pitch systems, score event
+  interpretation, instruments, playback, spatialization, or acoustic effects.
+- Keep that document current when an implementation makes or changes an audio
+  architecture decision.

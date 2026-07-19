@@ -1,13 +1,14 @@
 mod app;
 mod cpal_spike;
 mod gpui_spike;
-pub mod note;
 mod palette;
 pub mod part;
+pub mod pitch_system;
 mod playback;
 pub mod project;
 pub mod seed;
 mod style;
+pub mod tuning_system;
 mod view;
 pub mod voice;
 pub mod voice_name;

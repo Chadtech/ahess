@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     div, prelude::*, Context, CursorStyle, Entity, EventEmitter, MouseButton, MouseDownEvent,
@@ -11,15 +11,40 @@ use crate::{
     view::{
         button::{self, Button},
         dialog::{error_message, title_bar},
+        field_group::field_group,
+        text_input::TextInput,
     },
 };
 
 pub struct OpenProjectDialog {
+    workspace_root: PathBuf,
+    view: DialogView,
+}
+
+enum DialogView {
+    Browse(BrowseView),
+    Duplicate {
+        source: ProjectEntry,
+        name: Entity<TextInput>,
+        cancel_button: Entity<Button>,
+        duplicate_button: Entity<Button>,
+        form_error: Option<String>,
+    },
+}
+
+struct BrowseView {
     projects: Vec<ProjectEntry>,
     selected_project: Option<usize>,
     open_button: Entity<Button>,
+    duplicate_button: Entity<Button>,
     open_project_error: Option<String>,
-    workspace_root: PathBuf,
+}
+
+impl BrowseView {
+    fn selected_project(&self) -> Option<&ProjectEntry> {
+        self.selected_project
+            .and_then(|index| self.projects.get(index))
+    }
 }
 
 impl EventEmitter<ProjectOpened> for OpenProjectDialog {}
@@ -27,36 +52,60 @@ impl EventEmitter<ProjectOpened> for OpenProjectDialog {}
 impl OpenProjectDialog {
     pub fn new(workspace_root: impl Into<PathBuf>, cx: &mut Context<Self>) -> Self {
         let workspace_root = workspace_root.into();
-        let open_button = cx.new(|_| Button::new("open-selected-project", "open project"));
-        let (projects, selected_project, open_project_error) = load_projects(&workspace_root);
-
-        cx.subscribe(&open_button, Self::on_open_project_clicked)
-            .detach();
+        let view = DialogView::Browse(Self::browse_view(&workspace_root, None, cx));
 
         Self {
-            projects,
-            selected_project,
-            open_button,
-            open_project_error,
             workspace_root,
+            view,
         }
     }
 
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let selected_directory = self
-            .selected_project()
-            .map(|entry| entry.project_directory.clone());
-        let (projects, selected_project, open_project_error) = load_projects(&self.workspace_root);
-
-        self.projects = projects;
-        self.selected_project = selected_directory
+    fn browse_view(
+        workspace_root: &Path,
+        preferred_project: Option<&Path>,
+        cx: &mut Context<Self>,
+    ) -> BrowseView {
+        let (projects, selected_project, open_project_error) = load_projects(workspace_root);
+        let selected_project = preferred_project
             .and_then(|directory| {
-                self.projects
+                projects
                     .iter()
                     .position(|entry| entry.project_directory == directory)
             })
             .or(selected_project);
-        self.open_project_error = open_project_error;
+        let no_projects = projects.is_empty();
+        let open_button =
+            cx.new(|_| Button::new("open-selected-project", "open project").disabled(no_projects));
+        let duplicate_button = cx.new(|_| {
+            Button::new("duplicate-selected-project", "duplicate project").disabled(no_projects)
+        });
+
+        cx.subscribe(&open_button, Self::on_open_project_clicked)
+            .detach();
+        cx.subscribe(&duplicate_button, Self::on_duplicate_project_clicked)
+            .detach();
+
+        BrowseView {
+            projects,
+            selected_project,
+            open_button,
+            duplicate_button,
+            open_project_error,
+        }
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let selected_directory = match &self.view {
+            DialogView::Browse(view) => view
+                .selected_project()
+                .map(|entry| entry.project_directory.clone()),
+            DialogView::Duplicate { source, .. } => Some(source.project_directory.clone()),
+        };
+        self.view = DialogView::Browse(Self::browse_view(
+            &self.workspace_root,
+            selected_directory.as_deref(),
+            cx,
+        ));
         cx.notify();
     }
 
@@ -66,8 +115,11 @@ impl OpenProjectDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let Some(project) = self.selected_project() else {
-            self.open_project_error = Some("choose a project to open".to_string());
+        let DialogView::Browse(view) = &mut self.view else {
+            return;
+        };
+        let Some(project) = view.selected_project() else {
+            view.open_project_error = Some("choose a project to open".to_string());
             cx.notify();
             return;
         };
@@ -78,36 +130,129 @@ impl OpenProjectDialog {
         });
     }
 
-    fn select_project(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.projects.len() || self.selected_project == Some(index) {
+    fn on_duplicate_project_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Browse(view) = &mut self.view else {
             return;
-        }
+        };
+        let Some(source) = view.selected_project().cloned() else {
+            view.open_project_error = Some("choose a project to duplicate".to_string());
+            cx.notify();
+            return;
+        };
+        let suggested_name = format!("{} copy", source.project.name);
+        let name = cx.new(|cx| TextInput::new("", suggested_name, cx));
+        let cancel_button = cx.new(|_| Button::new("cancel-duplicate-project", "cancel"));
+        let duplicate_button =
+            cx.new(|_| Button::new("confirm-duplicate-project", "duplicate and open"));
+        cx.subscribe(&cancel_button, Self::on_cancel_duplicate_clicked)
+            .detach();
+        cx.subscribe(&duplicate_button, Self::on_duplicate_confirmed)
+            .detach();
 
-        self.selected_project = Some(index);
-        self.open_project_error = None;
+        self.view = DialogView::Duplicate {
+            source,
+            name,
+            cancel_button,
+            duplicate_button,
+            form_error: None,
+        };
         cx.notify();
     }
 
-    fn selected_project(&self) -> Option<&ProjectEntry> {
-        self.selected_project
-            .and_then(|index| self.projects.get(index))
+    fn on_cancel_duplicate_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Duplicate { source, .. } = &self.view else {
+            return;
+        };
+        let preferred_project = source.project_directory.clone();
+        self.view = DialogView::Browse(Self::browse_view(
+            &self.workspace_root,
+            Some(&preferred_project),
+            cx,
+        ));
+        cx.notify();
+    }
+
+    fn on_duplicate_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Duplicate { source, name, .. } = &self.view else {
+            return;
+        };
+        let source = source.clone();
+        let name = name.read(cx).value();
+
+        match project::duplicate_project(&self.workspace_root, &source, &name) {
+            Ok(duplicated) => cx.emit(ProjectOpened {
+                project_name: duplicated.project.name,
+                project_directory: duplicated.project_directory,
+            }),
+            Err(error) => {
+                let DialogView::Duplicate { form_error, .. } = &mut self.view else {
+                    unreachable!("the duplicate form cannot change while duplicating a project");
+                };
+                *form_error = Some(error.to_string());
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_project(&mut self, index: usize, cx: &mut Context<Self>) {
+        let DialogView::Browse(view) = &mut self.view else {
+            return;
+        };
+        if index >= view.projects.len() || view.selected_project == Some(index) {
+            return;
+        }
+
+        view.selected_project = Some(index);
+        view.open_project_error = None;
+        cx.notify();
     }
 }
 
 impl Render for OpenProjectDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        open_project_dialog(
-            &self.projects,
-            self.selected_project,
-            self.selected_project(),
-            self.open_button.clone(),
-            self.open_project_error.clone(),
-            cx,
-        )
+        match &self.view {
+            DialogView::Browse(view) => open_project_dialog(
+                &view.projects,
+                view.selected_project,
+                view.selected_project(),
+                view.duplicate_button.clone(),
+                view.open_button.clone(),
+                view.open_project_error.clone(),
+                cx,
+            ),
+            DialogView::Duplicate {
+                source,
+                name,
+                cancel_button,
+                duplicate_button,
+                form_error,
+            } => duplicate_project_dialog(
+                source,
+                name.clone(),
+                cancel_button.clone(),
+                duplicate_button.clone(),
+                form_error.clone(),
+            ),
+        }
     }
 }
 
-fn load_projects(workspace_root: &PathBuf) -> (Vec<ProjectEntry>, Option<usize>, Option<String>) {
+fn load_projects(workspace_root: &Path) -> (Vec<ProjectEntry>, Option<usize>, Option<String>) {
     match project::list_projects(workspace_root) {
         Ok(projects) => {
             let selected_project = (!projects.is_empty()).then_some(0);
@@ -121,10 +266,11 @@ fn open_project_dialog(
     projects: &[ProjectEntry],
     selected_project: Option<usize>,
     selected_project_entry: Option<&ProjectEntry>,
+    duplicate_button: Entity<Button>,
     open_button: Entity<Button>,
     open_project_error: Option<String>,
     cx: &mut Context<OpenProjectDialog>,
-) -> impl IntoElement {
+) -> gpui::Div {
     let body = div()
         .flex()
         .gap_5()
@@ -152,7 +298,57 @@ fn open_project_dialog(
                     .justify_end()
                     .gap_3()
                     .p(s::CONTENT_PADDING)
+                    .child(duplicate_button)
                     .child(open_button),
+            ),
+    )
+}
+
+fn duplicate_project_dialog(
+    source: &ProjectEntry,
+    name: Entity<TextInput>,
+    cancel_button: Entity<Button>,
+    duplicate_button: Entity<Button>,
+    form_error: Option<String>,
+) -> gpui::Div {
+    let form = div()
+        .flex()
+        .flex_col()
+        .gap_5()
+        .child(
+            div()
+                .text_color(s::TEXT_DEFAULT)
+                .child(format!("copying {:?}", source.project.name)),
+        )
+        .child(field_group("new project name", name));
+    let form = if let Some(error) = form_error {
+        form.child(error_message(error))
+    } else {
+        form
+    };
+
+    s::raised(
+        div()
+            .flex()
+            .flex_col()
+            .w(s::S10)
+            .bg(s::GRAY2)
+            .child(title_bar("duplicate project", None))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(s::CONTENT_PADDING)
+                    .p(s::CONTENT_PADDING)
+                    .child(form)
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_3()
+                            .child(cancel_button)
+                            .child(duplicate_button),
+                    ),
             ),
     )
 }
@@ -288,4 +484,76 @@ fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
         .flex_1()
         .child(div().text_color(s::TEXT_HEADER).child(label))
         .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf, time::SystemTime};
+
+    use gpui::TestAppContext;
+
+    use super::{button, DialogView, OpenProjectDialog};
+    use crate::{project, seed::Seed};
+
+    #[gpui::test]
+    fn duplicate_project_action_collects_a_name_and_creates_the_copy(cx: &mut TestAppContext) {
+        let root = temp_root();
+        project::create_project(
+            &root,
+            &project::Project::new("Original", 800, 0, Seed::new(1)),
+        )
+        .unwrap();
+        let dialog_root = root.clone();
+        let (dialog, cx) = cx.add_window_view(|_, cx| OpenProjectDialog::new(dialog_root, cx));
+
+        let browse_duplicate_button = dialog.read_with(cx, |dialog, _| {
+            let DialogView::Browse(view) = &dialog.view else {
+                panic!("dialog should start in browse mode");
+            };
+            view.duplicate_button.clone()
+        });
+        dialog.update(cx, |dialog, cx| {
+            dialog.on_duplicate_project_clicked(browse_duplicate_button, &button::Clicked, cx);
+        });
+        let (name, confirm_button) = dialog.read_with(cx, |dialog, _| {
+            let DialogView::Duplicate {
+                source,
+                name,
+                duplicate_button,
+                ..
+            } = &dialog.view
+            else {
+                panic!("duplicate action should open its naming form");
+            };
+            assert_eq!(source.project.name, "Original");
+            (name.clone(), duplicate_button.clone())
+        });
+        name.update(cx, |name, cx| name.sync_value("Variation", cx));
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.on_duplicate_confirmed(confirm_button, &button::Clicked, cx);
+        });
+
+        assert_eq!(
+            project::load_project(root.join("projects").join("variation"))
+                .unwrap()
+                .project
+                .name,
+            "Variation"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ahess-open-project-duplicate-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

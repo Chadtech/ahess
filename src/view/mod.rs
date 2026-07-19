@@ -6,3 +6,4 @@ pub mod field_group;
 pub mod selection_list;
 pub mod status_bar;
 pub mod text_input;
+pub mod workspace_tile;
