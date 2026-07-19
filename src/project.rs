@@ -42,6 +42,37 @@ pub struct Project {
     sequence: Vec<PartName>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArrangementOccurrence {
+    index: usize,
+    part_name: PartName,
+    length: u32,
+    first_beat: u64,
+    last_beat: u64,
+}
+
+impl ArrangementOccurrence {
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn part_name(&self) -> &PartName {
+        &self.part_name
+    }
+
+    pub fn length(&self) -> u32 {
+        self.length
+    }
+
+    pub fn first_beat(&self) -> u64 {
+        self.first_beat
+    }
+
+    pub fn last_beat(&self) -> u64 {
+        self.last_beat
+    }
+}
+
 impl Project {
     pub fn new(
         name: impl Into<String>,
@@ -137,6 +168,30 @@ impl Project {
             .filter_map(|name| self.part(name))
             .map(|part| u64::from(part.length))
             .sum()
+    }
+
+    pub fn arrangement_occurrences(&self) -> Vec<ArrangementOccurrence> {
+        let mut next_beat = 1_u64;
+        self.sequence
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| {
+                let part = self.part(name)?;
+                if part.length == 0 {
+                    return None;
+                }
+                let first_beat = next_beat;
+                let last_beat = first_beat + u64::from(part.length) - 1;
+                next_beat = last_beat + 1;
+                Some(ArrangementOccurrence {
+                    index,
+                    part_name: part.name.clone(),
+                    length: part.length,
+                    first_beat,
+                    last_beat,
+                })
+            })
+            .collect()
     }
 
     pub fn set_sequence(&mut self, sequence: Vec<PartName>) {
@@ -1337,6 +1392,34 @@ mod tests {
         assert!(project
             .config_file_contents()
             .contains("sequence = [\"part-a\", \"part-b\", \"part-b\"]\n"));
+    }
+
+    #[test]
+    fn arrangement_occurrences_include_repeated_parts_and_global_beat_spans() {
+        let project = Project::new("test", 4000, 100, Seed::new(1234))
+            .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)])
+            .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
+
+        let occurrences = project.arrangement_occurrences();
+
+        assert_eq!(occurrences.len(), 3);
+        assert_eq!(occurrences[0].index(), 0);
+        assert_eq!(occurrences[0].part_name().as_str(), "intro");
+        assert_eq!(
+            (occurrences[0].first_beat(), occurrences[0].last_beat()),
+            (1, 8)
+        );
+        assert_eq!(occurrences[1].index(), 1);
+        assert_eq!(
+            (occurrences[1].first_beat(), occurrences[1].last_beat()),
+            (9, 24)
+        );
+        assert_eq!(occurrences[2].index(), 2);
+        assert_eq!(occurrences[2].part_name().as_str(), "verse");
+        assert_eq!(
+            (occurrences[2].first_beat(), occurrences[2].last_beat()),
+            (25, 40)
+        );
     }
 
     #[test]

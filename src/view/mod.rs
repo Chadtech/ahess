@@ -3,6 +3,8 @@ pub mod data_grid;
 pub mod dialog;
 pub mod dropdown;
 pub mod field_group;
+pub mod ordered_input_list;
+pub mod range_selection_list;
 pub mod selection_list;
 pub mod status_bar;
 pub mod text_input;

@@ -18,7 +18,7 @@ use crate::{
         dialog::destructive_confirmation,
         dropdown::{Dropdown, Selected},
         field_group::{compact_control_group, field_group},
-        selection_list,
+        ordered_input_list, selection_list,
         status_bar::{self, Status},
         text_input::{Changed, TextInput},
         workspace_tile,
@@ -78,7 +78,7 @@ struct PeriodicDraft {
     period: Entity<TextInput>,
     notation_dropdown: Entity<Dropdown>,
     notation: DraftNotation,
-    degrees: Vec<Vec<Entity<TextInput>>>,
+    degrees: Vec<Entity<TextInput>>,
     scroll_handle: ScrollHandle,
 }
 
@@ -452,11 +452,21 @@ impl Model {
     }
 
     fn sync_row_buttons(&self, cx: &mut Context<Self>) {
-        let row_count = match &self.view {
-            EditorView::Form { draft, .. } => draft.row_count(),
-            EditorView::BuiltIn => 0,
+        let (row_count, add_label, remove_label) = match &self.view {
+            EditorView::Form { draft, .. } => {
+                let row_count = draft.row_count();
+                match &draft.kind {
+                    DraftKind::Periodic(_) => (row_count, "add degree", "remove last degree"),
+                    DraftKind::Explicit(_) => (row_count, "add pitch", "remove last pitch"),
+                }
+            }
+            EditorView::BuiltIn => (0, "add row", "remove last row"),
         };
+        self.add_row_button.update(cx, |button, cx| {
+            button.set_label(add_label, cx);
+        });
         self.remove_row_button.update(cx, |button, cx| {
+            button.set_label(remove_label, cx);
             button.set_disabled(row_count <= 1, cx);
         });
     }
@@ -713,18 +723,15 @@ impl Model {
                     .gap_3()
                     .debug_selector(|| "tuning-values-column".to_string())
                     .child(
-                        div()
-                            .text_color(s::FIELD_LABEL_TEXT)
-                            .child("degree intervals"),
+                        ordered_input_list::editable(
+                            "tuning-degree-intervals",
+                            "intervals by degree",
+                            &periodic.degrees,
+                            &periodic.invalid_degrees(cx),
+                            &periodic.scroll_handle,
+                        )
+                        .debug_selector(|| "tuning-degree-interval-list".to_string()),
                     )
-                    .child(data_grid::editable(
-                        "tuning-degrees-grid",
-                        vec!["interval".to_string()],
-                        &periodic.degrees,
-                        &periodic.invalid_cells(cx),
-                        None,
-                        &periodic.scroll_handle,
-                    ))
                     .child(self.row_actions());
                 (settings, values)
             }
@@ -809,9 +816,7 @@ impl TuningDraft {
     fn add_row(&mut self, cx: &mut Context<Model>) {
         match &mut self.kind {
             DraftKind::Periodic(periodic) => {
-                periodic
-                    .degrees
-                    .push(vec![new_input("", "3/2 or 700c", cx)])
+                periodic.degrees.push(new_input("", "3/2 or 700c", cx))
             }
             DraftKind::Explicit(explicit) => explicit
                 .pitches
@@ -848,7 +853,7 @@ impl PeriodicDraft {
             notation: DraftNotation::RadlerDigits {
                 place_value: new_input("10", "10", cx),
             },
-            degrees: vec![vec![new_input("1/1", "1/1", cx)]],
+            degrees: vec![new_input("1/1", "1/1", cx)],
             scroll_handle: ScrollHandle::new(),
         }
     }
@@ -871,7 +876,7 @@ impl PeriodicDraft {
             degrees: system
                 .degrees()
                 .iter()
-                .map(|degree| vec![new_input(degree.config_value(), "1/1", cx)])
+                .map(|degree| new_input(degree.config_value(), "1/1", cx))
                 .collect(),
             scroll_handle: ScrollHandle::new(),
         }
@@ -886,8 +891,8 @@ impl PeriodicDraft {
             .degrees
             .iter()
             .enumerate()
-            .map(|(index, row)| {
-                Interval::from_config(&row[0].read(cx).value())
+            .map(|(index, degree)| {
+                Interval::from_config(&degree.read(cx).value())
                     .map_err(|error| format!("degree {}: {error}", index + 1))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -910,14 +915,14 @@ impl PeriodicDraft {
             .map_err(|error| error.to_string())
     }
 
-    fn invalid_cells(&self, cx: &Context<Model>) -> Vec<(usize, usize)> {
+    fn invalid_degrees(&self, cx: &Context<Model>) -> Vec<usize> {
         self.degrees
             .iter()
             .enumerate()
-            .filter_map(|(index, row)| {
-                Interval::from_config(&row[0].read(cx).value())
+            .filter_map(|(index, degree)| {
+                Interval::from_config(&degree.read(cx).value())
                     .err()
-                    .map(|_| (index, 0))
+                    .map(|_| index)
             })
             .collect()
     }
@@ -1162,6 +1167,39 @@ mod tests {
         assert!(settings.origin.x + settings.size.width < values.origin.x);
         assert_eq!(settings.origin.y, values.origin.y);
         assert_eq!(settings.size.height, values.size.height);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn periodic_intervals_are_a_compact_ordered_list(cx: &mut TestAppContext) {
+        let root = temp_root("periodic-list");
+        let root_for_view = root.clone();
+        let (editor, cx) = cx.add_window_view(move |_, cx| Model::new(root_for_view, cx));
+        let new_button = cx.update(|_, cx| editor.read(cx).new_button.clone());
+        let add_button = cx.update(|_, cx| editor.read(cx).add_row_button.clone());
+
+        editor.update(cx, |editor, cx| {
+            editor.on_new_clicked(new_button, &button::Clicked, cx);
+            editor.on_add_row_clicked(add_button.clone(), &button::Clicked, cx);
+            editor.on_add_row_clicked(add_button, &button::Clicked, cx);
+        });
+        cx.simulate_resize(size(px(1_200.0), px(800.0)));
+        cx.run_until_parked();
+
+        let list = cx.debug_bounds("tuning-degree-interval-list").unwrap();
+        let first = cx.debug_bounds("ordered-input-item-0").unwrap();
+        let second = cx.debug_bounds("ordered-input-item-1").unwrap();
+        let third = cx.debug_bounds("ordered-input-item-2").unwrap();
+        let label = cx.debug_bounds("ordered-input-label").unwrap();
+        let first_field = cx.debug_bounds("ordered-input-field-0").unwrap();
+
+        assert!(list.size.width <= s::S9);
+        assert_eq!(label.origin.x, first_field.origin.x);
+        assert!(cx.debug_bounds("ordered-input-item-label-0").is_none());
+        assert_eq!(first.origin.x, second.origin.x);
+        assert_eq!(second.origin.x, third.origin.x);
+        assert!(first.origin.y + first.size.height < second.origin.y);
+        assert!(second.origin.y + second.size.height < third.origin.y);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -39,6 +39,10 @@ pub fn list(
 }
 
 pub fn row(index: usize, selected: bool, label: impl Into<SharedString>) -> gpui::Div {
+    row_content(index, selected, label.into())
+}
+
+pub fn row_content(index: usize, selected: bool, content: impl IntoElement) -> gpui::Div {
     let background = if selected {
         s::GREEN4
     } else if index.is_multiple_of(2) {
@@ -54,5 +58,5 @@ pub fn row(index: usize, selected: bool, label: impl Into<SharedString>) -> gpui
         .p(s::S4)
         .text_color(text_color)
         .cursor(CursorStyle::PointingHand)
-        .child(label.into())
+        .child(content)
 }

@@ -14,7 +14,6 @@ use crate::{
     project::Project,
     style as s,
     view::{
-        button::{self, Button},
         data_grid,
         dropdown::{self, Dropdown},
         text_input::{Changed, TextInput},
@@ -254,10 +253,10 @@ impl ScoreDocument {
     }
 
     fn finish_save(&mut self, cx: &mut Context<Self>) -> Result<(), ScoreError> {
-        self.dirty = false;
         self.save_state = SaveState::Saved;
         match PartScore::clear_recovery(&self.project_directory, &self.part) {
             Ok(()) => {
+                self.dirty = false;
                 self.last_save_error = None;
                 cx.emit(DocumentEvent::Saved);
                 cx.notify();
@@ -309,7 +308,6 @@ pub struct ScoreEditor {
     cells: Vec<Vec<Entity<TextInput>>>,
     playing_row: Option<usize>,
     scroll_handle: ScrollHandle,
-    save_button: Entity<Button>,
 }
 
 impl EventEmitter<PartSelected> for ScoreEditor {}
@@ -342,12 +340,10 @@ impl ScoreEditor {
             )
         });
         let cells = Self::build_cells(editor_id, &score, cx);
-        let save_button = cx.new(|_| Button::new(("save-score", editor_id), "save"));
 
         cx.subscribe(&document, Self::on_document_event).detach();
         cx.subscribe(&part_dropdown, Self::on_part_selected)
             .detach();
-        cx.subscribe(&save_button, Self::on_save_clicked).detach();
 
         Self {
             editor_id,
@@ -357,7 +353,6 @@ impl ScoreEditor {
             cells,
             playing_row: None,
             scroll_handle: ScrollHandle::new(),
-            save_button,
         }
     }
 
@@ -465,10 +460,6 @@ impl ScoreEditor {
         cx.notify();
     }
 
-    fn on_save_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let _ = self.document.update(cx, |document, cx| document.save(cx));
-    }
-
     pub(super) fn reveal_issue(
         &mut self,
         row: usize,
@@ -514,10 +505,7 @@ impl Render for ScoreEditor {
         let header = div()
             .flex()
             .items_center()
-            .justify_between()
-            .gap_4()
-            .child(self.part_dropdown.clone())
-            .child(self.save_button.clone());
+            .child(self.part_dropdown.clone());
         let score_content = if !has_voices {
             div()
                 .flex()

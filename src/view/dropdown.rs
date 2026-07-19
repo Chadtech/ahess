@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, deferred, prelude::*, Bounds, ClickEvent, Context, ElementId, Entity, EventEmitter,
-    MouseButton, MouseUpEvent, Pixels, SharedString, Window,
+    canvas, deferred, font, prelude::*, Bounds, ClickEvent, Context, ElementId, Entity,
+    EventEmitter, MouseButton, MouseUpEvent, Pixels, SharedString, TextRun, Window,
 };
 
 use crate::{
@@ -164,7 +164,9 @@ impl Dropdown {
         });
     }
 
-    fn menu(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn menu(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let menu_debug_id = format!("{}-menu", self.id);
+        let menu_width = self.menu_width(window);
         let rows = self
             .options
             .iter()
@@ -183,6 +185,7 @@ impl Dropdown {
             .collect::<Vec<_>>();
 
         gpui::div()
+            .id((self.id.clone(), "menu"))
             .flex()
             .flex_col()
             .bg(s::GREEN3)
@@ -192,15 +195,43 @@ impl Dropdown {
             .absolute()
             .top(trigger_height())
             .left_0()
-            .right_0()
-            .overflow_hidden()
+            .w(menu_width)
+            .min_w_full()
+            .max_h(s::S9)
+            .whitespace_nowrap()
+            .overflow_y_scroll()
             .occlude()
+            .debug_selector(move || menu_debug_id.clone())
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_menu_mouse_up_out))
+    }
+
+    fn menu_width(&self, window: &Window) -> Pixels {
+        let widest_label = self.options.iter().fold(s::S0, |widest, label| {
+            let run = TextRun {
+                len: label.len(),
+                font: font(s::FONT),
+                color: s::TEXT_DEFAULT.into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let width = window
+                .text_system()
+                .layout_line(label, s::TEXT_SIZE, &[run], None)
+                .width;
+            if width > widest {
+                width
+            } else {
+                widest
+            }
+        });
+
+        widest_label + s::S4 * 2.0 + s::S2 * 2.0
     }
 }
 
 impl Render for Dropdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let debug_id = format!("{}-trigger", self.id);
         let dropdown = cx.entity();
         let bounds_recorder = canvas(
@@ -227,7 +258,7 @@ impl Render for Dropdown {
             )
             .children(
                 self.expanded
-                    .then(|| deferred(self.menu(cx)).with_priority(1)),
+                    .then(|| deferred(self.menu(window, cx)).with_priority(1)),
             )
     }
 }
@@ -242,9 +273,22 @@ fn trigger_height() -> gpui::Pixels {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, Modifiers, TestAppContext};
+    use gpui::{point, prelude::*, px, Context, Entity, Modifiers, TestAppContext, Window};
 
     use super::Dropdown;
+
+    struct DropdownHost {
+        dropdown: Entity<Dropdown>,
+    }
+
+    impl Render for DropdownHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+                .flex()
+                .items_start()
+                .child(self.dropdown.clone())
+        }
+    }
 
     #[gpui::test]
     fn selecting_an_option_updates_the_trigger_and_closes_the_menu(cx: &mut TestAppContext) {
@@ -312,5 +356,42 @@ mod tests {
         let trigger = cx.debug_bounds("replace-dropdown-trigger").unwrap();
         cx.simulate_click(trigger.center(), Modifiers::default());
         assert!(cx.debug_bounds("replace-dropdown-option-2").is_some());
+    }
+
+    #[gpui::test]
+    fn menu_expands_to_fit_its_widest_option(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| DropdownHost {
+            dropdown: cx.new(|cx| {
+                Dropdown::new(
+                    "wide-dropdown",
+                    ["one", "a much longer option that must not wrap"],
+                    0,
+                    cx,
+                )
+            }),
+        });
+        let trigger = cx.debug_bounds("wide-dropdown-trigger").unwrap();
+
+        cx.simulate_click(trigger.center(), Modifiers::default());
+
+        let menu = cx.debug_bounds("wide-dropdown-menu").unwrap();
+        assert!(
+            menu.size.width > trigger.size.width,
+            "menu width {} should exceed trigger width {}",
+            menu.size.width,
+            trigger.size.width
+        );
+    }
+
+    #[gpui::test]
+    fn long_menus_are_height_limited(cx: &mut TestAppContext) {
+        let options = (0..20).map(|index| format!("option {index}"));
+        let (_, cx) = cx.add_window_view(|_, cx| Dropdown::new("tall-dropdown", options, 0, cx));
+        let trigger = cx.debug_bounds("tall-dropdown-trigger").unwrap();
+
+        cx.simulate_click(trigger.center(), Modifiers::default());
+
+        let menu = cx.debug_bounds("tall-dropdown-menu").unwrap();
+        assert!(menu.size.height <= crate::style::S9);
     }
 }

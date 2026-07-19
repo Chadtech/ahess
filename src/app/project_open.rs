@@ -75,13 +75,16 @@ struct ScoreViewEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct StatusTarget {
-    part_name: PartName,
-    row: usize,
-    column: usize,
+enum StatusAction {
+    RevealIssue {
+        part_name: PartName,
+        row: usize,
+        column: usize,
+    },
+    RetryScoreSave,
 }
 
-type ProjectStatus = status_bar::Status<StatusTarget>;
+type ProjectStatus = status_bar::Status<StatusAction>;
 
 enum Dialog {
     LoopRange(Entity<LoopRangeDialog>),
@@ -108,7 +111,7 @@ impl Model {
         let arrangement_beat_count = project.arrangement_beat_count();
         let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
         let loop_range_button =
-            cx.new(|_| Button::new("loop-range", loop_range_button_label(loop_range)));
+            cx.new(|_| Button::new("loop-range", loop_range_button_label(&project, loop_range)));
         let play_button = cx.new(|_| Button::new("play-score", "play"));
         let stop_button = cx.new(|_| Button::new("stop-score", "stop"));
 
@@ -205,6 +208,63 @@ impl Model {
             .any(|entry| entry.document.read(cx).is_dirty())
     }
 
+    fn flush_all_score_changes(&self, cx: &mut Context<Self>) -> Result<(), String> {
+        let documents = self
+            .score_documents
+            .iter()
+            .filter(|entry| entry.document.read(cx).is_dirty())
+            .map(|entry| (entry.part_name.clone(), entry.document.clone()))
+            .collect();
+        Self::flush_score_documents(documents, cx)
+    }
+
+    fn flush_part_score_changes(
+        &self,
+        part_name: &PartName,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let documents = self
+            .score_documents
+            .iter()
+            .filter(|entry| {
+                entry.part_name.eq_ignore_ascii_case(part_name)
+                    && entry.document.read(cx).is_dirty()
+            })
+            .map(|entry| (entry.part_name.clone(), entry.document.clone()))
+            .collect();
+        Self::flush_score_documents(documents, cx)
+    }
+
+    fn flush_score_documents(
+        documents: Vec<(PartName, Entity<ScoreDocument>)>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let errors = documents
+            .into_iter()
+            .filter_map(|(part_name, document)| {
+                document
+                    .update(cx, |document, cx| document.save(cx))
+                    .err()
+                    .map(|error| format!("{}: {error}", part_name.as_str()))
+            })
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    fn retry_failed_score_saves(&self, cx: &mut Context<Self>) {
+        let documents = self
+            .score_documents
+            .iter()
+            .filter(|entry| entry.document.read(cx).last_save_error().is_some())
+            .map(|entry| (entry.part_name.clone(), entry.document.clone()))
+            .collect();
+        let _ = Self::flush_score_documents(documents, cx);
+    }
+
     fn project_status(&self, cx: &App) -> ProjectStatus {
         if let Some(message) = &self.workspace_error {
             return ProjectStatus::Error {
@@ -244,7 +304,7 @@ impl Model {
                 format!("{issue_count} parse issues")
             };
             let message = format!(
-                "{count_label} · {} · beat {} · {}: {}",
+                "{count_label} · {} · beat {} · {}: {} · click to reveal",
                 part_name.as_str(),
                 issue.row + 1,
                 issue.voice,
@@ -252,7 +312,7 @@ impl Model {
             );
             return ProjectStatus::Error {
                 message: message.into(),
-                target: Some(StatusTarget {
+                target: Some(StatusAction::RevealIssue {
                     part_name,
                     row: issue.row,
                     column: issue.column,
@@ -268,8 +328,8 @@ impl Model {
                 .map(|error| (entry.part_name.as_str(), error))
         }) {
             return ProjectStatus::Error {
-                message: format!("{part_name}: {error}").into(),
-                target: None,
+                message: format!("{part_name}: {error} · click to retry").into(),
+                target: Some(StatusAction::RetryScoreSave),
             };
         }
 
@@ -325,21 +385,6 @@ impl Model {
         }
 
         ProjectStatus::default()
-    }
-
-    fn part_has_unsaved_score(&self, name: &PartName, cx: &Context<Self>) -> bool {
-        self.score_documents.iter().any(|entry| {
-            entry.part_name.eq_ignore_ascii_case(name) && entry.document.read(cx).is_dirty()
-        })
-    }
-
-    fn reject_if_score_unsaved(&mut self, message: &'static str, cx: &mut Context<Self>) -> bool {
-        if !self.has_unsaved_score(cx) {
-            return false;
-        }
-        self.workspace_error = Some(message.to_string());
-        cx.notify();
-        true
     }
 
     fn select_part(&mut self, name: PartName, cx: &mut Context<Self>) {
@@ -731,9 +776,9 @@ impl Model {
             None => {}
         }
 
-        let arrangement_beat_count = self.project.arrangement_beat_count();
+        let occurrences = self.project.arrangement_occurrences();
         let range = self.loop_range;
-        let dialog = cx.new(move |cx| LoopRangeDialog::new(arrangement_beat_count, range, cx));
+        let dialog = cx.new(move |cx| LoopRangeDialog::new(occurrences, range, cx));
         cx.subscribe(&dialog, Self::on_loop_range_msg).detach();
         self.dialog = Some(Dialog::LoopRange(dialog));
         self.set_loop_range_button_depressed(true, cx);
@@ -790,7 +835,7 @@ impl Model {
 
     fn sync_loop_range_button(&self, cx: &mut Context<Self>) {
         self.loop_range_button.update(cx, |button, cx| {
-            button.set_label(loop_range_button_label(self.loop_range), cx);
+            button.set_label(loop_range_button_label(&self.project, self.loop_range), cx);
         });
     }
 
@@ -841,7 +886,7 @@ impl Model {
             None => {}
         }
 
-        if self.reject_if_score_unsaved("save score changes before changing voices", cx) {
+        if self.flush_all_score_changes(cx).is_err() {
             return;
         }
 
@@ -902,17 +947,18 @@ impl Model {
         msg: &voices::Msg,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(msg, voices::Msg::Closed) && self.has_unsaved_score(cx) {
-            let message = "save score changes before changing voices".to_string();
-            dialog.update(cx, |dialog, cx| match msg {
-                voices::Msg::AddRequested { .. } => dialog.add_failed(message, cx),
-                voices::Msg::EditRequested { .. } => dialog.edit_failed(message, cx),
-                voices::Msg::DeleteRequested { .. } => dialog.delete_failed(message, cx),
-                voices::Msg::Closed => {}
-            });
-            self.workspace_error = Some("save score changes before changing voices".to_string());
-            cx.notify();
-            return;
+        if !matches!(msg, voices::Msg::Closed) {
+            if let Err(error) = self.flush_all_score_changes(cx) {
+                let message = format!("couldn't save score changes: {error}");
+                dialog.update(cx, |dialog, cx| match msg {
+                    voices::Msg::AddRequested { .. } => dialog.add_failed(message, cx),
+                    voices::Msg::EditRequested { .. } => dialog.edit_failed(message, cx),
+                    voices::Msg::DeleteRequested { .. } => dialog.delete_failed(message, cx),
+                    voices::Msg::Closed => {}
+                });
+                cx.notify();
+                return;
+            }
         }
 
         match msg {
@@ -1031,14 +1077,10 @@ impl Model {
                 }
             }
             parts::Msg::DuplicateRequested { source, name } => {
-                if self.part_has_unsaved_score(source, cx) {
-                    self.workspace_error =
-                        Some("save score changes before duplicating this part".to_string());
+                if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
-                        dialog.duplicate_failed(
-                            "save score changes before duplicating this part".to_string(),
-                            cx,
-                        );
+                        dialog
+                            .duplicate_failed(format!("couldn't save score changes: {error}"), cx);
                     });
                     return;
                 }
@@ -1065,14 +1107,9 @@ impl Model {
                 }
             }
             parts::Msg::RenameRequested { source, name } => {
-                if self.part_has_unsaved_score(source, cx) {
-                    self.workspace_error =
-                        Some("save score changes before renaming this part".to_string());
+                if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
-                        dialog.rename_failed(
-                            "save score changes before renaming this part".to_string(),
-                            cx,
-                        );
+                        dialog.rename_failed(format!("couldn't save score changes: {error}"), cx);
                     });
                     return;
                 }
@@ -1125,14 +1162,9 @@ impl Model {
                 }
             }
             parts::Msg::DeleteRequested { name } => {
-                if self.part_has_unsaved_score(name, cx) {
-                    self.workspace_error =
-                        Some("save score changes before deleting this part".to_string());
+                if let Err(error) = self.flush_part_score_changes(name, cx) {
                     dialog.update(cx, |dialog, cx| {
-                        dialog.delete_failed(
-                            "save score changes before deleting this part".to_string(),
-                            cx,
-                        );
+                        dialog.delete_failed(format!("couldn't save score changes: {error}"), cx);
                     });
                     return;
                 }
@@ -1225,18 +1257,30 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         let ProjectStatus::Error {
-            target: Some(target),
+            target: Some(action),
             ..
         } = self.project_status(cx)
         else {
             return;
         };
 
+        let (part_name, row, column) = match action {
+            StatusAction::RevealIssue {
+                part_name,
+                row,
+                column,
+            } => (part_name, row, column),
+            StatusAction::RetryScoreSave => {
+                self.retry_failed_score_saves(cx);
+                return;
+            }
+        };
+
         let active_view_has_target = self
             .score_views
             .get(self.active_score_view)
             .and_then(|view| view.part_name.as_ref())
-            .is_some_and(|name| name.eq_ignore_ascii_case(&target.part_name));
+            .is_some_and(|name| name.eq_ignore_ascii_case(&part_name));
         let view_index = if active_view_has_target {
             self.active_score_view
         } else {
@@ -1245,7 +1289,7 @@ impl Model {
                 .position(|view| {
                     view.part_name
                         .as_ref()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(&target.part_name))
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&part_name))
                 })
                 .unwrap_or(self.active_score_view)
         };
@@ -1253,11 +1297,11 @@ impl Model {
             .score_views
             .get(view_index)
             .and_then(|view| view.part_name.as_ref())
-            .is_some_and(|name| name.eq_ignore_ascii_case(&target.part_name));
+            .is_some_and(|name| name.eq_ignore_ascii_case(&part_name));
         if target_is_open {
             self.activate_score_view(view_index, cx);
         } else {
-            self.assign_part_to_view(view_index, target.part_name, cx);
+            self.assign_part_to_view(view_index, part_name, cx);
         }
 
         let Some(editor) = self
@@ -1269,7 +1313,7 @@ impl Model {
         };
         window.on_next_frame(move |window, cx| {
             editor.update(cx, |editor, cx| {
-                editor.reveal_issue(target.row, target.column, window, cx);
+                editor.reveal_issue(row, column, window, cx);
             });
         });
         cx.notify();
@@ -1280,7 +1324,7 @@ impl Model {
             return;
         }
 
-        if self.reject_if_score_unsaved("save score changes before closing the project", cx) {
+        if self.flush_all_score_changes(cx).is_err() {
             return;
         }
 
@@ -1295,25 +1339,43 @@ impl Render for Model {
     }
 }
 
-fn loop_range_button_label(range: Option<BeatRange>) -> String {
-    match range {
-        Some(range) => format!("loop {}–{}", range.first(), range.last()),
-        None => "set loop".to_string(),
+fn loop_range_button_label(project: &Project, range: Option<BeatRange>) -> String {
+    let Some(range) = range else {
+        return "set loop".to_string();
+    };
+    let occurrences = project.arrangement_occurrences();
+    if range.first() == 1 && range.last() == project.arrangement_beat_count() {
+        return "loop all".to_string();
+    }
+    let first = occurrences
+        .iter()
+        .position(|occurrence| occurrence.first_beat() == range.first());
+    let last = occurrences
+        .iter()
+        .position(|occurrence| occurrence.last_beat() == range.last());
+    match (first, last) {
+        (Some(first), Some(last)) if first == last => format!(
+            "loop {}. {}",
+            occurrences[first].index() + 1,
+            occurrences[first].part_name().as_str()
+        ),
+        (Some(first), Some(last)) if first < last => format!(
+            "loop parts {}–{}",
+            occurrences[first].index() + 1,
+            occurrences[last].index() + 1
+        ),
+        _ => format!("loop beats {}–{}", range.first(), range.last()),
     }
 }
 
 fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartName, usize)> {
-    let mut occurrence_first = 1_u64;
-    for part_name in project.sequence() {
-        let part = project.part(part_name)?;
-        let occurrence_last = occurrence_first + u64::from(part.length) - 1;
-        if (occurrence_first..=occurrence_last).contains(&arrangement_beat) {
+    for occurrence in project.arrangement_occurrences() {
+        if (occurrence.first_beat()..=occurrence.last_beat()).contains(&arrangement_beat) {
             return Some((
-                part.name.clone(),
-                (arrangement_beat - occurrence_first) as usize,
+                occurrence.part_name().clone(),
+                (arrangement_beat - occurrence.first_beat()) as usize,
             ));
         }
-        occurrence_first = occurrence_last + 1;
     }
     None
 }
@@ -1699,15 +1761,16 @@ mod tests {
     use gpui::{px, size, AppContext, TestAppContext};
 
     use super::{
-        create_project_part, delete_project_part, duplicate_project_part, parts, playing_score_row,
-        rename_project_part, update_project_sequence, Model, PartChangeError, PartsDialog,
-        StatusTarget,
+        create_project_part, delete_project_part, duplicate_project_part, loop_range_button_label,
+        parts, playing_score_row, rename_project_part, update_project_sequence, Model,
+        PartChangeError, PartsDialog, StatusAction,
     };
     use crate::{
         part::{Part, PartName, PartScore},
+        playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
-        view::status_bar,
+        view::{button, status_bar},
     };
 
     #[test]
@@ -1733,6 +1796,31 @@ mod tests {
         assert_eq!(position(7), Some(("first".to_string(), 1)));
         assert_eq!(position(0), None);
         assert_eq!(position(8), None);
+    }
+
+    #[test]
+    fn loop_button_labels_part_aligned_and_exact_ranges_semantically() {
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)])
+            .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
+
+        assert_eq!(
+            loop_range_button_label(&project, BeatRange::new(1, 40, 40).ok()),
+            "loop all"
+        );
+        assert_eq!(
+            loop_range_button_label(&project, BeatRange::new(9, 24, 40).ok()),
+            "loop 2. verse"
+        );
+        assert_eq!(
+            loop_range_button_label(&project, BeatRange::new(9, 40, 40).ok()),
+            "loop parts 2–3"
+        );
+        assert_eq!(
+            loop_range_button_label(&project, BeatRange::new(10, 23, 40).ok()),
+            "loop beats 10–23"
+        );
+        assert_eq!(loop_range_button_label(&project, None), "set loop");
     }
 
     #[test]
@@ -2100,7 +2188,7 @@ mod tests {
         assert!(matches!(
             error_status,
             status_bar::Status::Error {
-                target: Some(StatusTarget {
+                target: Some(StatusAction::RevealIssue {
                     row: 0,
                     column: 0,
                     ..
@@ -2130,9 +2218,7 @@ mod tests {
             status_bar_before
         );
 
-        document
-            .update(cx, |document, cx| document.save(cx))
-            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(750));
         cx.run_until_parked();
 
         let clean_status = cx.update(|_, cx| model.read(cx).project_status(cx));
@@ -2144,6 +2230,158 @@ mod tests {
         assert_eq!(
             cx.debug_bounds("project-status-bar").unwrap(),
             status_bar_before
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn guarded_actions_flush_valid_score_changes_immediately(cx: &mut TestAppContext) {
+        let root = temp_root("guarded-score-flush");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let (document, voices_button) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.score_documents[0].document.clone(),
+                model.voices_button.clone(),
+            )
+        });
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+        });
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n"
+        );
+
+        model.update(cx, |model, cx| {
+            model.on_voices_clicked(voices_button, &button::Clicked, cx);
+        });
+
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_some()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn guarded_actions_stay_blocked_by_invalid_score_changes(cx: &mut TestAppContext) {
+        let root = temp_root("guarded-invalid-score");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let (document, voices_button) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.score_documents[0].document.clone(),
+                model.voices_button.clone(),
+            )
+        });
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "not-a-note".to_string(), cx);
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_voices_clicked(voices_button, &button::Clicked, cx);
+        });
+
+        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_none()));
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n"
+        );
+        assert!(project_directory.join(".part-a.csv.recovery").is_file());
+        assert!(matches!(
+            cx.update(|_, cx| model.read(cx).project_status(cx)),
+            status_bar::Status::Error {
+                target: Some(StatusAction::RevealIssue { .. }),
+                ..
+            }
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn failed_score_saves_retry_from_the_status_bar(cx: &mut TestAppContext) {
+        let root = temp_root("score-save-retry");
+        let project_directory = root.join("project");
+        let moved_project_directory = root.join("project-unavailable");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+        });
+        fs::rename(&project_directory, &moved_project_directory).unwrap();
+
+        let error = model.update(cx, |model, cx| model.flush_all_score_changes(cx));
+        assert!(error.is_err());
+        let status = cx.update(|_, cx| model.read(cx).project_status(cx));
+        match status {
+            status_bar::Status::Error {
+                message,
+                target: Some(StatusAction::RetryScoreSave),
+            } => assert!(message.as_ref().contains("click to retry")),
+            status => panic!("expected a retryable save error, got {status:?}"),
+        }
+
+        fs::rename(&moved_project_directory, &project_directory).unwrap();
+        let status_bar = cx.debug_bounds("project-status-bar").unwrap();
+        cx.simulate_click(status_bar.center(), Default::default());
+        cx.run_until_parked();
+
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project_status(cx)),
+            status_bar::Status::Message("score changes saved".into())
         );
 
         fs::remove_dir_all(root).unwrap();

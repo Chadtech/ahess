@@ -55,6 +55,8 @@ or when it defines how a shared component is used.
   mutually exclusive options.
 - the trigger displays the selected option and the menu uses a solid `GRAY1`
   border.
+- the menu is at least as wide as its trigger, expands to keep concise option
+  labels on one line, and scrolls vertically when its contents exceed `S9`.
 - menu rows use the selection-list colors: `GREEN4` identifies the selected
   option, while hover uses the brighter `GREEN5` background and
   `TEXT_HOVERED` text.
@@ -68,12 +70,32 @@ or when it defines how a shared component is used.
   and raised/sunken table chrome.
 - give each independently scrollable grid view its own `ScrollHandle`.
 
+## ordered input lists
+
+- use `view::ordered_input_list::editable` for a one-dimensional sequence of
+  domain values. Do not present a single value column as a data grid.
+- the component owns its header, compact input alignment, error borders, and
+  vertical scrolling without adding table headers or cell chrome.
+- use `TEXT_HEADER` for the list header and align it with the inputs.
+- when sequence position already identifies each value and the header makes
+  their meaning clear, do not add redundant labels to individual inputs.
+
 ## selection lists
 
 - use `view::selection_list::list` and `view::selection_list::row` for selectable
   resource lists.
 - the component owns the sunken container, empty state, alternating row colors,
   and selected-row colors.
+- use `view::range_selection_list::RangeSelectionList` when an ordered list
+  selects one contiguous range rather than independent rows.
+- a range selection starts with a single clicked row and extends by dragging,
+  shift-clicking, or using shift with the up/down keys. Keep the entire
+  selected span visible with the ordinary selection-list colors.
+- the component uses an `S8`-high viewport by default and scrolls vertically
+  when its rows exceed that space. Use its fill-height mode only inside a
+  parent with an explicit bounded height.
+- keep identifying content at the start of each range row. Put concise metadata
+  in aligned columns to the right when it helps users confirm the boundaries.
 
 ## status bars
 
@@ -89,6 +111,12 @@ or when it defines how a shared component is used.
   the ordinary status-bar colors.
 - use the warning state for conditions that need attention but do not prevent
   continued work. Use the error state for invalid input and failed operations.
+- make an actionable error status explicit in its message and give the entire
+  bar a pointing cursor. Use the action to reveal the affected input or retry
+  the failed operation.
+- when an editor continuously autosaves, keep routine save state in the status
+  bar and offer manual retry only after a save failure instead of keeping a
+  permanent save button in the editor.
 - when an error belongs to a specific control or data cell, pair the status
   message with a local error highlight and make navigation available when
   helpful.
@@ -119,6 +147,9 @@ or when it defines how a shared component is used.
 
 - use `S10` for standard dialog widths. Use `S11` by `S10` for the wider
   list/detail management dialogs.
+- when a workflow combines compact controls with a long range-selection list,
+  use the wide dialog size with controls in a fixed left column and let the
+  list fill the bounded right column. Keep actions beneath the controls.
 - use `view::dialog::title_bar` for dialog title bars.
 - use `view::dialog::error_message` for errors within dialog content.
 - use `view::dialog::destructive_confirmation` for irreversible confirmation
