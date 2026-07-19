@@ -16,10 +16,13 @@ use cpal::{
 use crate::{
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
-    project::{Project, VoiceType},
+    project::{Project, VoiceId, VoiceType},
+    seed::{standard_normal, Seed},
 };
 
 const MASTER_GAIN: f32 = 0.22;
+const TIMING_SEED_DOMAIN: u64 = 0x7469_6d69_6e67_2d31;
+const TIMING_STANDARD_DEVIATIONS: f64 = 3.0;
 
 pub struct Playback {
     _stream: Stream,
@@ -163,7 +166,6 @@ impl PlaybackLoop {
             return Err(PlaybackError::new("a loop must contain at least one beat"));
         }
 
-        let mut random_seed = project.seed;
         let maximum_delay = project
             .timing_variance
             .min(project.beat_length.saturating_sub(1));
@@ -175,14 +177,11 @@ impl PlaybackLoop {
                 let frequencies = rows.iter().map(|row| row[voice_index]).collect::<Vec<_>>();
                 let delays = frequencies
                     .iter()
-                    .map(|_| {
-                        let (random, next_seed) = random_seed.next_u64();
-                        random_seed = next_seed;
-                        if maximum_delay == 0 {
-                            0
-                        } else {
-                            (random % (u64::from(maximum_delay) + 1)) as u32
-                        }
+                    .enumerate()
+                    .map(|(beat_index, _)| {
+                        let arrangement_beat = first_arrangement_beat + beat_index as u64;
+                        let seed = timing_seed(project.seed, arrangement_beat, voice.id());
+                        normally_distributed_delay(seed, maximum_delay)
                     })
                     .collect();
 
@@ -202,6 +201,26 @@ impl PlaybackLoop {
             version: 0,
         })
     }
+}
+
+fn timing_seed(project_seed: Seed, arrangement_beat: u64, voice_id: VoiceId) -> Seed {
+    project_seed
+        .derive(TIMING_SEED_DOMAIN)
+        .derive(arrangement_beat)
+        .derive(voice_id.value())
+}
+
+fn normally_distributed_delay(seed: Seed, maximum_delay: u32) -> u32 {
+    if maximum_delay == 0 {
+        return 0;
+    }
+
+    let mean = f64::from(maximum_delay) / 2.0;
+    let standard_deviation = mean / TIMING_STANDARD_DEVIATIONS;
+    let (standard_deviation_units, _) = seed.generate(standard_normal());
+    let delay = mean + standard_deviation_units * standard_deviation;
+
+    delay.clamp(0.0, f64::from(maximum_delay)).round() as u32
 }
 
 #[derive(Clone, Debug)]
@@ -431,16 +450,17 @@ fn envelope(sample: u32, length: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     };
 
-    use super::{AudioEngine, BeatRange, PlaybackLoop};
+    use super::{normally_distributed_delay, timing_seed, AudioEngine, BeatRange, PlaybackLoop};
     use crate::{
         part::{Part, PartScore},
         pitch_system::{FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem},
-        project::{Project, Voice, VoiceType},
+        project::{Project, Voice, VoiceId, VoiceType},
         seed::Seed,
     };
 
@@ -470,6 +490,87 @@ mod tests {
             playback_loop.voices[1].frequencies[1],
             project.pitch_system().resolve_cell("G2").unwrap()
         );
+    }
+
+    #[test]
+    fn tiny_score_has_visible_deterministic_timing_variation() {
+        let project = Project::new("test", 800, 120, Seed::new(7)).with_voices(vec![
+            Voice::new(1, "lead", VoiceType::Saw),
+            Voice::new(2, "bass", VoiceType::Sin),
+        ]);
+        let part = Part::new("example", 4);
+        let score = PartScore::from_rows(vec![
+            vec!["C4".to_string(), "C3".to_string()],
+            vec!["D4".to_string(), "D3".to_string()],
+            vec!["E4".to_string(), "E3".to_string()],
+            vec!["F4".to_string(), "F3".to_string()],
+        ]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+
+        //                         arrangement beat:  1   2   3   4
+        assert_eq!(playback_loop.voices[0].delays, vec![36, 78, 77, 11]);
+        assert_eq!(playback_loop.voices[1].delays, vec![48, 73, 62, 81]);
+    }
+
+    #[test]
+    fn timing_delays_are_stable_for_the_same_absolute_beat_in_overlapping_loops() {
+        let project = Project::new("test", 800, 25, Seed::new(1)).with_voices(vec![
+            Voice::new(1, "lead", VoiceType::Saw),
+            Voice::new(2, "bass", VoiceType::Sin),
+        ]);
+        let part = Part::new("intro", 3);
+        let score = PartScore::from_rows(vec![
+            vec!["C4".to_string(), "C2".to_string()],
+            vec!["D4".to_string(), "D2".to_string()],
+            vec!["E4".to_string(), "E2".to_string()],
+        ]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+
+        let full_loop = PlaybackLoop::from_rows(&project, rows.clone(), 10).unwrap();
+        let overlapping_loop = PlaybackLoop::from_rows(&project, rows[1..].to_vec(), 11).unwrap();
+
+        for voice_index in 0..project.voices().len() {
+            assert_eq!(
+                &full_loop.voices[voice_index].delays[1..],
+                overlapping_loop.voices[voice_index].delays
+            );
+        }
+    }
+
+    #[test]
+    fn each_voice_and_arrangement_beat_derives_its_own_timing_seed() {
+        let project_seed = Seed::new(1);
+        let seeds = (1..=16)
+            .flat_map(|beat| {
+                (1..=4).map(move |voice_id| timing_seed(project_seed, beat, VoiceId::new(voice_id)))
+            })
+            .collect::<HashSet<_>>();
+
+        assert_eq!(seeds.len(), 16 * 4);
+        assert_ne!(
+            timing_seed(Seed::new(1), 3, VoiceId::new(2)),
+            timing_seed(Seed::new(2), 3, VoiceId::new(2))
+        );
+    }
+
+    #[test]
+    fn normally_distributed_delays_are_bounded_and_span_the_configured_range() {
+        let maximum_delay = 120;
+        let delays = (0..10_000)
+            .map(|index| normally_distributed_delay(Seed::new(index), maximum_delay))
+            .collect::<Vec<_>>();
+        let central_count = delays
+            .iter()
+            .filter(|&&delay| (30..=90).contains(&delay))
+            .count();
+
+        assert!(delays.iter().all(|delay| *delay <= maximum_delay));
+        assert!(central_count > 8_000);
+        assert!(delays.contains(&0));
+        assert!(delays.contains(&maximum_delay));
+        assert_eq!(normally_distributed_delay(Seed::new(1), 0), 0);
     }
 
     #[test]

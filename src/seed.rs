@@ -23,6 +23,10 @@ impl Seed {
         let next_seed = Self(self.0.wrapping_add(0x9e37_79b9_7f4a_7c15));
         (mix(next_seed.0), next_seed)
     }
+
+    pub fn derive(self, discriminator: u64) -> Self {
+        Self(mix(self.0 ^ mix(discriminator)))
+    }
 }
 
 impl Default for Seed {
@@ -60,6 +64,22 @@ impl Generator for U64 {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct StandardNormal;
+
+impl Generator for StandardNormal {
+    type Output = f64;
+
+    fn generate(&self, seed: Seed) -> (Self::Output, Seed) {
+        let (radius_source, seed) = seed.next_u64();
+        let (angle_source, next_seed) = seed.next_u64();
+        let radius = (-2.0 * open_unit_interval(radius_source).ln()).sqrt();
+        let angle = std::f64::consts::TAU * open_unit_interval(angle_source);
+
+        (radius * angle.cos(), next_seed)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct U32Range {
     start: u32,
     end: u32,
@@ -89,6 +109,10 @@ pub fn u64() -> U64 {
     U64
 }
 
+pub fn standard_normal() -> StandardNormal {
+    StandardNormal
+}
+
 pub fn u32_range(start: u32, end: u32) -> U32Range {
     U32Range::new(start, end)
 }
@@ -99,9 +123,15 @@ fn mix(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
+fn open_unit_interval(value: u64) -> f64 {
+    const F64_SIGNIFICAND_VALUES: f64 = (1_u64 << 53) as f64;
+
+    ((value >> 11) as f64 + 0.5) / F64_SIGNIFICAND_VALUES
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{u32_range, u64, Seed};
+    use super::{standard_normal, u32_range, u64, Seed};
 
     #[test]
     fn same_seed_generates_same_value_and_next_seed() {
@@ -117,6 +147,26 @@ mod tests {
         let (second, _) = next_seed.generate(u64());
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn derived_seeds_are_deterministic_and_separate_discriminators() {
+        let seed = Seed::new(19);
+
+        assert_eq!(seed.derive(3), seed.derive(3));
+        assert_ne!(seed.derive(3), seed.derive(4));
+        assert_ne!(Seed::new(20).derive(3), seed.derive(3));
+    }
+
+    #[test]
+    fn standard_normal_generator_is_deterministic_and_finite() {
+        let seed = Seed::new(19);
+        let (first, first_next_seed) = seed.generate(standard_normal());
+        let (second, second_next_seed) = seed.generate(standard_normal());
+
+        assert_eq!(first, second);
+        assert_eq!(first_next_seed, second_next_seed);
+        assert!(first.is_finite());
     }
 
     #[test]

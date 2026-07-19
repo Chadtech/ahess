@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -129,6 +129,25 @@ device channel mapper
 Pitch resolution happens before the real-time callback. The callback receives
 prepared events and numeric frequencies; it does not parse score text or
 project configuration.
+
+### Timing variance is deterministic humanization
+
+`timing_variance` is the greatest number of samples by which a note may be
+late. Playback derives a separate local seed from the project seed, the
+one-based absolute arrangement beat, and the stable `VoiceId` for every
+voice/beat pair. It then draws that event's delay from a normal distribution
+clipped to the inclusive range from zero through `timing_variance`. The
+distribution is centered on half the configured range, with each boundary
+three standard deviations from the center. Only the roughly 0.27% of normal
+draws outside those boundaries are clipped, so every seed produces a delay in
+one draw with no retry or fallback path. The effective maximum is capped at one
+sample less than the beat length so a delayed note always has time to sound.
+
+Using absolute arrangement beats and stable voice IDs means the timing for an
+event does not change when a different loop slice is selected, voices are
+reordered, or unrelated score cells are edited. Changing the project seed
+deterministically changes the complete timing pattern. Random sampling happens
+while playback data is prepared, never in the real-time audio callback.
 
 ## Domain sketch
 
