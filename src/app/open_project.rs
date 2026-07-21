@@ -24,7 +24,7 @@ pub struct OpenProjectDialog {
 enum DialogView {
     Browse(BrowseView),
     Duplicate {
-        source: ProjectEntry,
+        source: Box<ProjectEntry>,
         name: Entity<TextInput>,
         cancel_button: Entity<Button>,
         duplicate_button: Entity<Button>,
@@ -155,7 +155,7 @@ impl OpenProjectDialog {
             .detach();
 
         self.view = DialogView::Duplicate {
-            source,
+            source: Box::new(source),
             name,
             cancel_button,
             duplicate_button,

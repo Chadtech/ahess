@@ -891,7 +891,8 @@ impl Model {
         }
 
         let voices = self.project.voices().to_vec();
-        let dialog = cx.new(move |cx| VoicesDialog::new(voices, cx));
+        let acoustic_scene = self.project.acoustic_scene().clone();
+        let dialog = cx.new(move |cx| VoicesDialog::new(voices, acoustic_scene, cx));
 
         cx.subscribe(&dialog, Self::on_voices_msg).detach();
         self.dialog = Some(Dialog::Voices(dialog));
@@ -962,9 +963,18 @@ impl Model {
         }
 
         match msg {
-            voices::Msg::AddRequested { name, voice_type } => {
-                match project::add_voice(&self.project_directory, &self.project, name, *voice_type)
-                {
+            voices::Msg::AddRequested {
+                name,
+                voice_type,
+                position,
+            } => {
+                match project::add_voice_at(
+                    &self.project_directory,
+                    &self.project,
+                    name,
+                    *voice_type,
+                    *position,
+                ) {
                     Ok(updated_project) => {
                         let added = updated_project
                             .voices()
@@ -990,14 +1000,16 @@ impl Model {
                 original_name,
                 name,
                 voice_type,
+                position,
             } => {
                 let edited_id = self.project.voice(original_name).map(|voice| voice.id());
-                match project::edit_voice(
+                match project::edit_voice_at(
                     &self.project_directory,
                     &self.project,
                     original_name,
                     name,
                     *voice_type,
+                    *position,
                 ) {
                     Ok(updated_project) => {
                         let edited = edited_id

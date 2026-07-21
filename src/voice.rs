@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::voice_name::VoiceName;
+use crate::{acoustics::Point3Meters, voice_name::VoiceName};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VoiceId(u64);
@@ -20,6 +20,7 @@ pub struct Voice {
     id: VoiceId,
     pub name: VoiceName,
     pub voice_type: VoiceType,
+    position: Point3Meters,
 }
 
 impl Voice {
@@ -28,11 +29,21 @@ impl Voice {
             id: id.into(),
             name: name.into(),
             voice_type,
+            position: Point3Meters::origin(),
         }
     }
 
     pub const fn id(&self) -> VoiceId {
         self.id
+    }
+
+    pub const fn position(&self) -> Point3Meters {
+        self.position
+    }
+
+    pub fn with_position(mut self, position: Point3Meters) -> Self {
+        self.position = position;
+        self
     }
 }
 

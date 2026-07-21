@@ -1,4 +1,6 @@
+pub mod acoustics;
 mod app;
+pub mod convolution;
 mod cpal_spike;
 mod gpui_spike;
 mod palette;

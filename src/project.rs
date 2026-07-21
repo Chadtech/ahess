@@ -12,6 +12,8 @@ use serde::Deserialize;
 pub use crate::voice::{Voice, VoiceId, VoiceType};
 
 use crate::{
+    acoustics::{self, AcousticError, AcousticScene, Point3Meters, RectangularRoom},
+    convolution::{self, ImpulseResponseError, VoiceConvolutionSpec},
     part::{self, Part, PartName},
     pitch_system::PitchSystem,
     seed::Seed,
@@ -36,6 +38,8 @@ pub struct Project {
     pub description: String,
     tuning_system_id: Option<TuningSystemId>,
     pitch_system: PitchSystem,
+    voice_convolution: Option<VoiceConvolutionSpec>,
+    acoustic_scene: AcousticScene,
     next_voice_id: u64,
     voices: Vec<Voice>,
     pub parts: Vec<Part>,
@@ -88,6 +92,8 @@ impl Project {
             description: String::new(),
             tuning_system_id: Some(TuningSystemId::default_western()),
             pitch_system: PitchSystem::default(),
+            voice_convolution: None,
+            acoustic_scene: AcousticScene::default(),
             next_voice_id: 1,
             voices: Vec::new(),
             parts: Vec::new(),
@@ -123,6 +129,57 @@ impl Project {
 
     pub fn pitch_system(&self) -> &PitchSystem {
         &self.pitch_system
+    }
+
+    pub fn voice_convolution(&self) -> Option<&VoiceConvolutionSpec> {
+        self.voice_convolution.as_ref()
+    }
+
+    fn set_voice_convolution(&mut self, spec: Option<VoiceConvolutionSpec>) {
+        self.voice_convolution = spec;
+    }
+
+    pub fn acoustic_scene(&self) -> &AcousticScene {
+        &self.acoustic_scene
+    }
+
+    pub fn set_acoustic_scene(&mut self, scene: AcousticScene) -> Result<(), AcousticError> {
+        scene.validate()?;
+        for voice in &self.voices {
+            scene.validate_source(voice.position())?;
+        }
+        self.acoustic_scene = scene;
+        Ok(())
+    }
+
+    pub fn set_centered_room(
+        &mut self,
+        room: Option<RectangularRoom>,
+    ) -> Result<(), AcousticError> {
+        let old_listener = self.acoustic_scene.listener();
+        let new_listener = room.map_or(Point3Meters::origin(), RectangularRoom::center);
+        let delta_x = new_listener.x() - old_listener.x();
+        let delta_y = new_listener.y() - old_listener.y();
+        let delta_z = new_listener.z() - old_listener.z();
+        let scene = AcousticScene::new(new_listener, room)?;
+        let translated_voices = self
+            .voices
+            .iter()
+            .map(|voice| {
+                let position = voice.position();
+                let translated = Point3Meters::new(
+                    position.x() + delta_x,
+                    position.y() + delta_y,
+                    position.z() + delta_z,
+                )?;
+                scene.validate_source(translated)?;
+                Ok(voice.clone().with_position(translated))
+            })
+            .collect::<Result<Vec<_>, AcousticError>>()?;
+
+        self.acoustic_scene = scene;
+        self.voices = translated_voices;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -248,6 +305,14 @@ impl Project {
             }
             None => self.pitch_system.append_config(&mut contents),
         }
+        if let Some(convolution) = &self.voice_convolution {
+            contents.push_str("\n[voice_convolution]\nfile = ");
+            contents.push_str(&toml_string(convolution.file_config_value()));
+            contents.push_str("\nname = ");
+            contents.push_str(&toml_string(convolution.file_name()));
+            contents.push('\n');
+        }
+        self.acoustic_scene.append_config(&mut contents);
 
         for voice in &self.voices {
             contents.push_str("\n[[voices]]\n");
@@ -259,6 +324,11 @@ impl Project {
             contents.push_str("\nvoice_type = ");
             contents.push_str(&toml_string(voice.voice_type.config_value()));
             contents.push('\n');
+            if voice.position() != Point3Meters::origin() {
+                contents.push_str("position = ");
+                acoustics::append_point(&mut contents, voice.position());
+                contents.push('\n');
+            }
         }
 
         for part in &self.parts {
@@ -367,6 +437,12 @@ pub enum DuplicateProjectError {
         source: io::Error,
         cleanup_error: Option<io::Error>,
     },
+    CopyImpulseResponse {
+        source_path: PathBuf,
+        destination_path: PathBuf,
+        source: io::Error,
+        cleanup_error: Option<io::Error>,
+    },
 }
 
 impl fmt::Display for DuplicateProjectError {
@@ -398,6 +474,28 @@ impl fmt::Display for DuplicateProjectError {
                 source_path.display(),
                 destination_path.display()
             ),
+            Self::CopyImpulseResponse {
+                source_path,
+                destination_path,
+                source,
+                cleanup_error: None,
+            } => write!(
+                f,
+                "failed to copy impulse response {} to {}: {source}",
+                source_path.display(),
+                destination_path.display()
+            ),
+            Self::CopyImpulseResponse {
+                source_path,
+                destination_path,
+                source,
+                cleanup_error: Some(cleanup_error),
+            } => write!(
+                f,
+                "failed to copy impulse response {} to {}: {source}; also failed to remove the incomplete copy: {cleanup_error}",
+                source_path.display(),
+                destination_path.display()
+            ),
         }
     }
 }
@@ -407,7 +505,9 @@ impl Error for DuplicateProjectError {
         match self {
             Self::Create(error) => Some(error),
             Self::InvalidPartName { source, .. } => Some(source),
-            Self::CopyPart { source, .. } => Some(source),
+            Self::CopyPart { source, .. } | Self::CopyImpulseResponse { source, .. } => {
+                Some(source)
+            }
         }
     }
 }
@@ -453,6 +553,25 @@ pub fn duplicate_project(
         }
     }
 
+    if let Some(convolution) = project.voice_convolution() {
+        let source_path = source.project_directory.join(convolution.file());
+        let destination_path = project_directory.join(convolution.file());
+        let destination_parent = destination_path
+            .parent()
+            .expect("an impulse response asset always has a parent directory");
+        let copy_result = fs::create_dir_all(destination_parent)
+            .and_then(|_| fs::copy(&source_path, &destination_path).map(|_| ()));
+        if let Err(copy_error) = copy_result {
+            let cleanup_error = fs::remove_dir_all(&project_directory).err();
+            return Err(DuplicateProjectError::CopyImpulseResponse {
+                source_path,
+                destination_path,
+                source: copy_error,
+                cleanup_error,
+            });
+        }
+    }
+
     Ok(ProjectEntry {
         project,
         project_directory,
@@ -474,6 +593,7 @@ pub enum LoadProjectError {
         message: String,
     },
     InvalidPart(part::PartFileError),
+    InvalidImpulseResponse(ImpulseResponseError),
     TuningLibrary(Box<TuningLibraryError>),
     Recovery(ProjectTransactionError),
 }
@@ -557,6 +677,7 @@ impl Error for VoiceChangeError {
 #[derive(Debug)]
 pub enum SaveProjectError {
     Recovery(ProjectTransactionError),
+    ImpulseResponse(ImpulseResponseError),
     Write { path: PathBuf, source: io::Error },
     Replace { path: PathBuf, source: io::Error },
 }
@@ -565,6 +686,7 @@ impl fmt::Display for SaveProjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
+            Self::ImpulseResponse(error) => write!(f, "{error}"),
             Self::Write { path, source } => {
                 write!(f, "filesystem error writing {}: {}", path.display(), source)
             }
@@ -584,6 +706,7 @@ impl Error for SaveProjectError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Recovery(error) => Some(error),
+            Self::ImpulseResponse(error) => Some(error),
             Self::Write { source, .. } | Self::Replace { source, .. } => Some(source),
         }
     }
@@ -612,6 +735,7 @@ impl fmt::Display for LoadProjectError {
                 )
             }
             Self::InvalidPart(error) => write!(f, "{error}"),
+            Self::InvalidImpulseResponse(error) => write!(f, "{error}"),
             Self::TuningLibrary(error) => write!(f, "failed to load tuning systems: {error}"),
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
         }
@@ -625,6 +749,7 @@ impl Error for LoadProjectError {
             Self::InvalidConfig { source, .. } => Some(source),
             Self::InvalidSequence { .. } => None,
             Self::InvalidPart(error) => Some(error),
+            Self::InvalidImpulseResponse(error) => Some(error),
             Self::TuningLibrary(error) => Some(error),
             Self::Recovery(error) => Some(error),
         }
@@ -725,6 +850,10 @@ pub fn load_project(project_directory: impl AsRef<Path>) -> Result<ProjectEntry,
             path: config_path,
             message,
         })?;
+    if let Some(convolution) = project.voice_convolution() {
+        convolution::inspect_project_asset(project_directory, convolution)
+            .map_err(LoadProjectError::InvalidImpulseResponse)?;
+    }
     for project_part in &project.parts {
         part::validate_part_file(project_directory, project_part, &project.voices)
             .map_err(LoadProjectError::InvalidPart)?;
@@ -742,7 +871,27 @@ pub fn add_voice(
     name: &str,
     voice_type: VoiceType,
 ) -> Result<Project, VoiceChangeError> {
+    add_voice_at(
+        project_directory,
+        project,
+        name,
+        voice_type,
+        project.acoustic_scene.listener(),
+    )
+}
+
+pub fn add_voice_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+) -> Result<Project, VoiceChangeError> {
     let name = validated_voice_name(project, None, name)?;
+    project
+        .acoustic_scene
+        .validate_source(position)
+        .map_err(|error| VoiceChangeError::InvalidField(error.to_string()))?;
     let next_id = project.next_voice_id;
     let following_id = next_id
         .checked_add(1)
@@ -751,7 +900,7 @@ pub fn add_voice(
     updated_project.next_voice_id = following_id;
     updated_project
         .voices
-        .push(Voice::new(next_id, name, voice_type));
+        .push(Voice::new(next_id, name, voice_type).with_position(position));
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
 }
@@ -763,6 +912,30 @@ pub fn edit_voice(
     name: &str,
     voice_type: VoiceType,
 ) -> Result<Project, VoiceChangeError> {
+    let position = project
+        .voices
+        .iter()
+        .find(|voice| voice.name.eq_ignore_ascii_case(original_name))
+        .map(Voice::position)
+        .ok_or_else(|| VoiceChangeError::MissingVoice(original_name.as_str().to_string()))?;
+    edit_voice_at(
+        project_directory,
+        project,
+        original_name,
+        name,
+        voice_type,
+        position,
+    )
+}
+
+pub fn edit_voice_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    original_name: &VoiceName,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+) -> Result<Project, VoiceChangeError> {
     let index = project
         .voices
         .iter()
@@ -770,8 +943,12 @@ pub fn edit_voice(
         .ok_or_else(|| VoiceChangeError::MissingVoice(original_name.as_str().to_string()))?;
     let id = project.voices[index].id();
     let name = validated_voice_name(project, Some(id), name)?;
+    project
+        .acoustic_scene
+        .validate_source(position)
+        .map_err(|error| VoiceChangeError::InvalidField(error.to_string()))?;
     let mut updated_project = project.clone();
-    updated_project.voices[index] = Voice::new(id, name, voice_type);
+    updated_project.voices[index] = Voice::new(id, name, voice_type).with_position(position);
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
 }
@@ -1039,6 +1216,33 @@ pub fn save_project(
     })
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VoiceConvolutionChange {
+    Keep,
+    Import(PathBuf),
+    Remove,
+}
+
+pub fn save_project_with_voice_convolution(
+    project_directory: impl AsRef<Path>,
+    mut project: Project,
+    change: VoiceConvolutionChange,
+) -> Result<Project, SaveProjectError> {
+    let project_directory = project_directory.as_ref();
+    match change {
+        VoiceConvolutionChange::Keep => {}
+        VoiceConvolutionChange::Import(source_path) => {
+            let (spec, _) = convolution::import_wav_file(project_directory, &source_path)
+                .map_err(SaveProjectError::ImpulseResponse)?;
+            project.set_voice_convolution(Some(spec));
+        }
+        VoiceConvolutionChange::Remove => project.set_voice_convolution(None),
+    }
+
+    save_project(project_directory, &project)?;
+    Ok(project)
+}
+
 pub fn project_directory_name(name: &str) -> Option<String> {
     let mut directory_name = String::new();
     let mut previous_was_separator = false;
@@ -1101,6 +1305,10 @@ struct ProjectConfig {
     #[serde(default, rename = "pitch_system")]
     embedded_pitch_system: Option<PitchSystem>,
     #[serde(default)]
+    voice_convolution: Option<VoiceConvolutionSpec>,
+    #[serde(default)]
+    acoustic_scene: AcousticScene,
+    #[serde(default)]
     next_voice_id: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_voices")]
     voices: Vec<Voice>,
@@ -1116,6 +1324,8 @@ struct StoredVoice {
     id: Option<u64>,
     name: VoiceName,
     voice_type: VoiceType,
+    #[serde(default)]
+    position: Point3Meters,
 }
 
 fn deserialize_voices<'de, D>(deserializer: D) -> Result<Vec<Voice>, D::Error>
@@ -1160,7 +1370,10 @@ where
                 id
             }
         };
-        voices.push(Voice::new(id, stored_voice.name, stored_voice.voice_type));
+        voices.push(
+            Voice::new(id, stored_voice.name, stored_voice.voice_type)
+                .with_position(stored_voice.position),
+        );
     }
 
     for (index, voice) in voices.iter().enumerate() {
@@ -1269,6 +1482,16 @@ impl ProjectConfig {
         .with_description(self.description);
         project.tuning_system_id = selected_tuning.0;
         project.pitch_system = selected_tuning.1;
+        project.voice_convolution = self.voice_convolution;
+        self.acoustic_scene
+            .validate()
+            .map_err(|error| error.to_string())?;
+        for voice in &self.voices {
+            self.acoustic_scene
+                .validate_source(voice.position())
+                .map_err(|error| error.to_string())?;
+        }
+        project.acoustic_scene = self.acoustic_scene;
         project.voices = self.voices;
         let minimum_next_voice_id = project
             .voices
@@ -1297,13 +1520,15 @@ mod tests {
     };
 
     use super::{
-        add_voice, create_project, delete_voice, duplicate_project, edit_voice, list_projects,
-        load_project, project_directory_name, save_project, CreateProjectError,
-        DuplicateProjectError, LoadProjectError, Project, ProjectEntry, Voice, VoiceType,
+        add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_voice,
+        edit_voice_at, list_projects, load_project, project_directory_name, save_project,
+        save_project_with_voice_convolution, CreateProjectError, DuplicateProjectError,
+        LoadProjectError, Project, ProjectEntry, Voice, VoiceConvolutionChange, VoiceType,
         PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE,
         TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
+        acoustics::{AcousticScene, Point3Meters, RectangularRoom},
         part::{self, Part, PartName, PartScore},
         pitch_system::{
             ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
@@ -1368,6 +1593,111 @@ mod tests {
                 "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
             )
         );
+    }
+
+    #[test]
+    fn acoustic_scene_and_voice_positions_round_trip_through_project_config() {
+        let root = temp_root("acoustic-scene-round-trip");
+        let listener = Point3Meters::new(2.5, 2.0, 1.5).unwrap();
+        let room = RectangularRoom::new(5.0, 4.0, 3.0, 0.25).unwrap();
+        let voice_position = Point3Meters::new(1.0, 3.0, 1.0).unwrap();
+        let mut project = Project::new("room", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )
+        .with_position(voice_position)]);
+        project
+            .set_acoustic_scene(AcousticScene::new(listener, Some(room)).unwrap())
+            .unwrap();
+
+        let project_directory = create_project(&root, &project).unwrap();
+        let config = fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+
+        assert!(config.contains(
+            "listener = { x = 2.5, y = 2.0, z = 1.5 }\nroom = { width = 5.0, length = 4.0, height = 3.0, reflection_gain = 0.25 }"
+        ));
+        assert!(config.contains("position = { x = 1.0, y = 3.0, z = 1.0 }"));
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn centered_room_changes_preserve_voice_offsets_from_the_listener() {
+        let mut project = Project::new("room", 800, 0, Seed::new(1)).with_voices(vec![
+            Voice::new(1, "center", VoiceType::Sin),
+            Voice::new(2, "right", VoiceType::Saw)
+                .with_position(Point3Meters::new(1.0, 0.0, 0.0).unwrap()),
+        ]);
+        let room = RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap();
+
+        project.set_centered_room(Some(room)).unwrap();
+
+        assert_eq!(
+            project.acoustic_scene().listener(),
+            Point3Meters::new(4.0, 5.0, 1.5).unwrap()
+        );
+        assert_eq!(
+            project.voices[0].position(),
+            project.acoustic_scene().listener()
+        );
+        assert_eq!(
+            project.voices[1].position(),
+            Point3Meters::new(5.0, 5.0, 1.5).unwrap()
+        );
+
+        project.set_centered_room(None).unwrap();
+
+        assert_eq!(project.acoustic_scene(), &AcousticScene::default());
+        assert_eq!(project.voices[0].position(), Point3Meters::origin());
+        assert_eq!(
+            project.voices[1].position(),
+            Point3Meters::new(1.0, 0.0, 0.0).unwrap()
+        );
+    }
+
+    #[test]
+    fn rejected_room_resize_does_not_partially_move_the_scene_or_voices() {
+        let mut project = Project::new("room", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "right",
+            VoiceType::Saw,
+        )
+        .with_position(Point3Meters::new(3.0, 0.0, 0.0).unwrap())]);
+        project
+            .set_centered_room(Some(RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap()))
+            .unwrap();
+        let original = project.clone();
+
+        let error = project
+            .set_centered_room(Some(RectangularRoom::new(4.0, 10.0, 3.0, 0.25).unwrap()))
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("must be inside the acoustic room"));
+        assert_eq!(project, original);
+    }
+
+    #[test]
+    fn project_loading_rejects_voice_positions_outside_the_room() {
+        let root = temp_root("voice-outside-room");
+        let project_directory = root.join("projects").join("test");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\n\n[acoustic_scene]\nlistener = { x = 2.5, y = 2.0, z = 1.5 }\nroom = { width = 5.0, length = 4.0, height = 3.0, reflection_gain = 0.25 }\n\n[[voices]]\nname = \"lead\"\nvoice_type = \"saw\"\nposition = { x = 6.0, y = 3.0, z = 1.0 }\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("voice position (6, 3, 1) must be inside the acoustic room"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1942,6 +2272,80 @@ mod tests {
     }
 
     #[test]
+    fn voice_positions_can_be_added_edited_and_reloaded() {
+        let root = temp_root("voice-position-changes");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        project
+            .set_centered_room(Some(RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap()))
+            .unwrap();
+        let project_directory = create_project(&root, &project).unwrap();
+        let first_position = Point3Meters::new(2.0, 4.0, 1.0).unwrap();
+
+        project = add_voice_at(
+            &project_directory,
+            &project,
+            "lead",
+            VoiceType::Saw,
+            first_position,
+        )
+        .unwrap();
+        assert_eq!(project.voices[0].position(), first_position);
+
+        let edited_position = Point3Meters::new(6.0, 7.5, 2.0).unwrap();
+        project = edit_voice_at(
+            &project_directory,
+            &project,
+            &VoiceName::new("lead"),
+            "lead",
+            VoiceType::Saw,
+            edited_position,
+        )
+        .unwrap();
+
+        assert_eq!(project.voices[0].position(), edited_position);
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+        assert!(
+            fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
+                .unwrap()
+                .contains("position = { x = 6.0, y = 7.5, z = 2.0 }")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn voice_position_changes_outside_the_room_leave_files_untouched() {
+        let root = temp_root("invalid-voice-position-change");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        project
+            .set_centered_room(Some(RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap()))
+            .unwrap();
+        let project_directory = create_project(&root, &project).unwrap();
+        project = add_voice(&project_directory, &project, "lead", VoiceType::Saw).unwrap();
+        let saved_config = fs::read(project_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+
+        let error = edit_voice_at(
+            &project_directory,
+            &project,
+            &VoiceName::new("lead"),
+            "lead",
+            VoiceType::Saw,
+            Point3Meters::new(-1.0, 5.0, 1.5).unwrap(),
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("must be inside the acoustic room"));
+        assert_eq!(
+            fs::read(project_directory.join(PROJECT_CONFIG_FILE)).unwrap(),
+            saved_config
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn invalid_voice_changes_leave_project_files_untouched() {
         let root = temp_root("invalid-voice-change");
         let project = Project::new("test", 800, 0, Seed::new(1));
@@ -2088,6 +2492,82 @@ mod tests {
     }
 
     #[test]
+    fn imported_impulse_response_is_project_owned_and_round_trips() {
+        let root = temp_root("impulse-response-round-trip");
+        let source_path = root.join("small hall.wav");
+        fs::write(&source_path, mono_wav_bytes(48_000, &[0, 0, 1, 0])).unwrap();
+        let project = Project::new("Room", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+
+        let project = save_project_with_voice_convolution(
+            &project_directory,
+            project,
+            VoiceConvolutionChange::Import(source_path),
+        )
+        .unwrap();
+
+        let spec = project.voice_convolution().unwrap();
+        assert_eq!(spec.file_name(), "small hall.wav");
+        assert!(project_directory.join(spec.file()).is_file());
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+        assert!(
+            fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
+                .unwrap()
+                .contains("[voice_convolution]")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_project_copies_its_impulse_response_asset() {
+        let root = temp_root("duplicate-impulse-response");
+        let source_path = root.join("room.wav");
+        fs::write(&source_path, mono_wav_bytes(44_100, &[0, 0])).unwrap();
+        let project = Project::new("Original", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        let project = save_project_with_voice_convolution(
+            &project_directory,
+            project,
+            VoiceConvolutionChange::Import(source_path),
+        )
+        .unwrap();
+        let source = ProjectEntry {
+            project,
+            project_directory,
+        };
+
+        let duplicated = duplicate_project(&root, &source, "Copy").unwrap();
+
+        let spec = duplicated.project.voice_convolution().unwrap();
+        assert!(duplicated.project_directory.join(spec.file()).is_file());
+        assert_eq!(
+            load_project(&duplicated.project_directory).unwrap(),
+            duplicated
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_config_rejects_impulse_response_paths_outside_project_assets() {
+        let root = temp_root("invalid-impulse-response-path");
+        let project_directory = root.join("projects/test");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nseed = 1\n\n[voice_convolution]\nfile = \"../room.wav\"\nname = \"room.wav\"\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(matches!(error, LoadProjectError::InvalidConfig { .. }));
+        assert!(error
+            .to_string()
+            .contains("must be stored under assets/impulse-responses"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn list_projects_returns_projects_sorted_by_name() {
         let root = temp_root("list-projects");
         create_project(
@@ -2140,6 +2620,29 @@ mod tests {
         .unwrap();
         project.add_part(created.commit());
         save_project(project_directory, project).unwrap();
+    }
+
+    fn mono_wav_bytes(sample_rate: u32, data: &[u8]) -> Vec<u8> {
+        let channels = 1_u16;
+        let bits = 16_u16;
+        let block_align = channels * (bits / 8);
+        let byte_rate = sample_rate * u32::from(block_align);
+        let riff_size = 36 + data.len() as u32;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&riff_size.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&bits.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+        bytes
     }
 
     fn temp_root(test_name: &str) -> PathBuf {

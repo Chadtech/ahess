@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
+    app::room_form::RoomFields,
     project::{self, ProjectOpened},
     seed::Seed,
     style as s,
@@ -10,7 +11,7 @@ use crate::{
     view::{
         button::{self, Button},
         dialog::{error_message, title_bar},
-        dropdown::Dropdown,
+        dropdown::{self, Dropdown},
         field_group::{control_group, field_group},
         text_input::TextInput,
     },
@@ -31,6 +32,7 @@ impl NewProjectDialog {
     pub fn new(workspace_root: impl Into<PathBuf>, cx: &mut Context<Self>) -> Self {
         let workspace_root = workspace_root.into();
         let fields = NewProjectFields::new(cx);
+        let room_kind = fields.room.kind();
         let (tuning_systems, create_project_error) =
             match tuning_system::list_tuning_systems(&workspace_root) {
                 Ok(systems) => (systems, None),
@@ -48,6 +50,8 @@ impl NewProjectDialog {
         let create_button = cx.new(|_| Button::new("create-new-project", "create"));
 
         cx.subscribe(&create_button, Self::on_create_project_clicked)
+            .detach();
+        cx.subscribe(&room_kind, Self::on_room_kind_selected)
             .detach();
 
         Self {
@@ -72,6 +76,15 @@ impl NewProjectDialog {
         }
     }
 
+    fn on_room_kind_selected(
+        &mut self,
+        _: Entity<Dropdown>,
+        _: &dropdown::Selected,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
+    }
+
     fn create_project_from_fields(
         &self,
         cx: &mut Context<Self>,
@@ -85,9 +98,17 @@ impl NewProjectDialog {
             .tuning_systems
             .get(self.tuning_dropdown.read(cx).selected_index())
             .expect("the tuning dropdown always selects an available system");
-        let project = project::Project::new(project_name, beat_length, timing_variance, seed)
+        let room = self
+            .fields
+            .room
+            .room(cx)
+            .map_err(CreateProjectFormError::InvalidField)?;
+        let mut project = project::Project::new(project_name, beat_length, timing_variance, seed)
             .with_description(description)
             .with_tuning_system(tuning_system);
+        project
+            .set_centered_room(room)
+            .map_err(|error| CreateProjectFormError::InvalidField(error.to_string()))?;
         let project_directory = project::create_project(&self.workspace_root, &project)?;
 
         Ok(ProjectOpened {
@@ -103,10 +124,12 @@ impl NewProjectDialog {
 }
 
 impl Render for NewProjectDialog {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let room_form = self.fields.room.view(self.fields.room.is_enabled(cx));
         new_project_form(
             &self.fields,
             self.tuning_dropdown.clone(),
+            room_form,
             self.create_button.clone(),
             self.create_project_error.clone(),
         )
@@ -162,6 +185,7 @@ struct NewProjectFields {
     variance: Entity<TextInput>,
     seed: Entity<TextInput>,
     description: Entity<TextInput>,
+    room: RoomFields,
 }
 
 impl NewProjectFields {
@@ -172,6 +196,7 @@ impl NewProjectFields {
             variance: cx.new(|cx| TextInput::new("", "", cx)),
             seed: cx.new(|cx| TextInput::new("", "1234", cx)),
             description: cx.new(|cx| TextInput::new("", "", cx)),
+            room: RoomFields::new("new-project", "new-project-room-kind", None, cx),
         }
     }
 }
@@ -179,6 +204,7 @@ impl NewProjectFields {
 fn new_project_form(
     fields: &NewProjectFields,
     tuning_dropdown: Entity<Dropdown>,
+    room_form: gpui::Div,
     create_button: Entity<Button>,
     create_project_error: Option<String>,
 ) -> impl IntoElement {
@@ -193,7 +219,8 @@ fn new_project_form(
             field_group("variance", fields.variance.clone()),
             field_group("seed", fields.seed.clone()),
         ]))
-        .child(field_group("description", fields.description.clone()));
+        .child(field_group("description", fields.description.clone()))
+        .child(room_form);
     let form_body = if let Some(error) = create_project_error {
         form_body.child(error_message(error))
     } else {
@@ -221,10 +248,16 @@ fn new_project_form(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, size, TestAppContext};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use gpui::{px, size, Modifiers, TestAppContext};
 
     use super::{parse_beat_length_field, parse_seed_field, parse_u32_field};
-    use crate::{seed::Seed, style as s};
+    use crate::{project, seed::Seed, style as s};
 
     #[test]
     fn parses_decimal_number_fields() {
@@ -251,5 +284,65 @@ mod tests {
         let trigger = cx.debug_bounds("new-project-tuning-trigger").unwrap();
 
         assert!(trigger.size.width > s::S9);
+    }
+
+    #[gpui::test]
+    fn room_fields_create_a_centered_rectangular_acoustic_scene(cx: &mut TestAppContext) {
+        let root = temp_root("new-project-room");
+        let root_for_view = root.clone();
+        let (dialog, cx) =
+            cx.add_window_view(move |_, cx| super::NewProjectDialog::new(root_for_view, cx));
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("new-project-room-width").is_none());
+        let trigger = cx.debug_bounds("new-project-room-kind-trigger").unwrap();
+        cx.simulate_click(trigger.center(), Modifiers::default());
+        let rectangular_room = cx.debug_bounds("new-project-room-kind-option-1").unwrap();
+        cx.simulate_click(rectangular_room.center(), Modifiers::default());
+        assert!(cx.debug_bounds("new-project-room-width").is_some());
+
+        let opened = cx.update(|_, cx| {
+            let fields = &dialog.read(cx).fields;
+            let values = [
+                (fields.project_name.clone(), "room project"),
+                (fields.beat_length.clone(), "800"),
+                (fields.variance.clone(), "0"),
+                (fields.seed.clone(), "1"),
+            ];
+            for (input, value) in values {
+                input.update(cx, |input, cx| input.sync_value(value, cx));
+            }
+            dialog
+                .update(cx, |dialog, cx| dialog.create_project_from_fields(cx))
+                .unwrap()
+        });
+        let project = project::load_project(opened.project_directory)
+            .unwrap()
+            .project;
+        let room = project.acoustic_scene().room().unwrap();
+
+        assert_eq!(
+            (room.width(), room.length(), room.height()),
+            (8.0, 10.0, 3.0)
+        );
+        assert_eq!(
+            project.acoustic_scene().listener(),
+            crate::acoustics::Point3Meters::new(4.0, 5.0, 1.5).unwrap()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ahess-{test_name}-{}-{unique}", std::process::id()));
+
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 }

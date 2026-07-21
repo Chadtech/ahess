@@ -14,6 +14,7 @@ use cpal::{
 };
 
 use crate::{
+    acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
     project::{Project, VoiceId, VoiceType},
@@ -21,6 +22,7 @@ use crate::{
 };
 
 const MASTER_GAIN: f32 = 0.22;
+const MIX_GAIN_RAMP_SAMPLES: u32 = 64;
 const TIMING_SEED_DOMAIN: u64 = 0x7469_6d69_6e67_2d31;
 const TIMING_STANDARD_DEVIATIONS: f64 = 3.0;
 
@@ -64,6 +66,7 @@ impl Playback {
 pub struct PlaybackLoop {
     beat_length: u32,
     voices: Vec<PlaybackVoice>,
+    acoustic_scene: AcousticScene,
     beat_count: usize,
     first_arrangement_beat: u64,
     version: u64,
@@ -174,6 +177,10 @@ impl PlaybackLoop {
             .iter()
             .enumerate()
             .map(|(voice_index, voice)| {
+                project
+                    .acoustic_scene()
+                    .validate_source(voice.position())
+                    .map_err(|error| PlaybackError::new(error.to_string()))?;
                 let frequencies = rows.iter().map(|row| row[voice_index]).collect::<Vec<_>>();
                 let delays = frequencies
                     .iter()
@@ -185,17 +192,20 @@ impl PlaybackLoop {
                     })
                     .collect();
 
-                PlaybackVoice {
+                Ok(PlaybackVoice {
+                    id: voice.id(),
                     voice_type: voice.voice_type,
+                    position: voice.position(),
                     frequencies,
                     delays,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, PlaybackError>>()?;
 
         Ok(Self {
             beat_length: project.beat_length,
             voices,
+            acoustic_scene: project.acoustic_scene().clone(),
             beat_count: rows.len(),
             first_arrangement_beat,
             version: 0,
@@ -225,7 +235,9 @@ fn normally_distributed_delay(seed: Seed, maximum_delay: u32) -> u32 {
 
 #[derive(Clone, Debug)]
 struct PlaybackVoice {
+    id: VoiceId,
     voice_type: VoiceType,
+    position: Point3Meters,
     frequencies: Vec<Option<FrequencyHz>>,
     delays: Vec<u32>,
 }
@@ -316,7 +328,8 @@ where
 
 struct AudioEngine {
     sample_rate: f32,
-    oscillator_phases: Vec<f32>,
+    voice_runtimes: Vec<VoiceRuntime>,
+    mix_gain: GainRamp,
     beat_index: usize,
     sample_in_beat: u32,
     playback_loop: PlaybackLoop,
@@ -334,10 +347,16 @@ impl AudioEngine {
             .lock()
             .expect("playback loop mutex was poisoned")
             .clone();
+        let voice_runtimes = playback_loop
+            .voices
+            .iter()
+            .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
+            .collect();
 
         Self {
             sample_rate,
-            oscillator_phases: vec![0.0; playback_loop.voices.len()],
+            voice_runtimes,
+            mix_gain: GainRamp::new(MASTER_GAIN),
             beat_index: 0,
             sample_in_beat: 0,
             playback_loop,
@@ -350,27 +369,58 @@ impl AudioEngine {
     where
         T: Sample + FromSample<f32>,
     {
+        if channels == 0 {
+            return;
+        }
         self.refresh_loop_snapshot();
         for frame in output.chunks_mut(channels) {
-            let value = T::from_sample(self.next_sample());
-            for sample in frame {
-                *sample = value;
-            }
+            write_device_frame(frame, self.next_frame());
         }
     }
 
     fn refresh_loop_snapshot(&mut self) {
-        let Ok(playback_loop) = self.shared_loop.try_lock() else {
-            return;
+        let playback_loop = {
+            let Ok(playback_loop) = self.shared_loop.try_lock() else {
+                return;
+            };
+            if playback_loop.version == self.playback_loop.version {
+                return;
+            }
+            playback_loop.clone()
         };
-        if playback_loop.version == self.playback_loop.version {
-            return;
-        }
 
         let range_changed = playback_loop.first_arrangement_beat
             != self.playback_loop.first_arrangement_beat
             || playback_loop.beat_count != self.playback_loop.beat_count;
-        self.playback_loop = playback_loop.clone();
+        let scene_changed = playback_loop.acoustic_scene != self.playback_loop.acoustic_scene;
+        let mut previous_runtimes = std::mem::take(&mut self.voice_runtimes);
+        self.voice_runtimes = playback_loop
+            .voices
+            .iter()
+            .map(|voice| {
+                let Some(index) = previous_runtimes
+                    .iter()
+                    .position(|runtime| runtime.id == voice.id)
+                else {
+                    return VoiceRuntime::new(
+                        voice,
+                        &playback_loop.acoustic_scene,
+                        self.sample_rate,
+                    );
+                };
+                let mut runtime = previous_runtimes.swap_remove(index);
+                if scene_changed || runtime.position != voice.position {
+                    runtime.position = voice.position;
+                    runtime.spatializer = VoiceSpatializer::new(
+                        &playback_loop.acoustic_scene,
+                        voice.position,
+                        f64::from(self.sample_rate),
+                    );
+                }
+                runtime
+            })
+            .collect();
+        self.playback_loop = playback_loop;
         if range_changed {
             self.beat_index = 0;
             self.sample_in_beat = 0;
@@ -379,39 +429,50 @@ impl AudioEngine {
             self.beat_index %= self.playback_loop.beat_count;
             self.sample_in_beat %= self.playback_loop.beat_length;
         }
-        self.oscillator_phases
-            .resize(self.playback_loop.voices.len(), 0.0);
     }
 
-    fn next_sample(&mut self) -> f32 {
-        let mut mixed = 0.0;
+    fn next_frame(&mut self) -> StereoFrame {
+        let mut mixed = StereoFrame::SILENCE;
         let mut sounding_voice_count = 0_u32;
 
         for (voice_index, voice) in self.playback_loop.voices.iter().enumerate() {
-            let Some(frequency) = voice.frequencies[self.beat_index] else {
-                continue;
-            };
-            let delay = voice.delays[self.beat_index];
-            if self.sample_in_beat < delay {
-                continue;
+            let runtime = &mut self.voice_runtimes[voice_index];
+            let mut source_sample = 0.0;
+            let mut source_is_active = false;
+            if let Some(frequency) = voice.frequencies[self.beat_index] {
+                let delay = voice.delays[self.beat_index];
+                if self.sample_in_beat >= delay {
+                    let note_sample = self.sample_in_beat - delay;
+                    let note_length = self.playback_loop.beat_length - delay;
+                    source_sample = waveform_sample(voice.voice_type, runtime.oscillator_phase)
+                        * envelope(note_sample, note_length);
+                    source_is_active = true;
+                    runtime.oscillator_phase = (runtime.oscillator_phase
+                        + frequency.as_hz_f32() / self.sample_rate)
+                        .fract();
+                }
             }
 
-            let note_sample = self.sample_in_beat - delay;
-            let note_length = self.playback_loop.beat_length - delay;
-            let envelope = envelope(note_sample, note_length);
-            let phase = self.oscillator_phases[voice_index];
-            mixed += waveform_sample(voice.voice_type, phase) * envelope;
-            sounding_voice_count += 1;
-
-            self.oscillator_phases[voice_index] =
-                (phase + frequency.as_hz_f32() / self.sample_rate).fract();
+            let (contribution, acoustically_active) =
+                runtime.spatializer.process(source_sample, source_is_active);
+            mixed.add(contribution);
+            if acoustically_active {
+                sounding_voice_count += 1;
+            }
         }
+
+        let target_gain = if sounding_voice_count == 0 {
+            MASTER_GAIN
+        } else {
+            MASTER_GAIN / (sounding_voice_count as f32).sqrt()
+        };
+        let mix_gain = self.mix_gain.next(target_gain);
 
         self.advance_playhead();
         if sounding_voice_count == 0 {
-            0.0
+            StereoFrame::SILENCE
         } else {
-            (mixed * MASTER_GAIN / (sounding_voice_count as f32).sqrt()).clamp(-1.0, 1.0)
+            mixed.scale(mix_gain).clamp()
         }
     }
 
@@ -429,6 +490,73 @@ impl AudioEngine {
             self.playback_loop.first_arrangement_beat + self.beat_index as u64,
             Ordering::Relaxed,
         );
+    }
+}
+
+struct GainRamp {
+    current: f32,
+    target: f32,
+    samples_remaining: u32,
+}
+
+impl GainRamp {
+    fn new(gain: f32) -> Self {
+        Self {
+            current: gain,
+            target: gain,
+            samples_remaining: 0,
+        }
+    }
+
+    fn next(&mut self, target: f32) -> f32 {
+        if target != self.target {
+            self.target = target;
+            self.samples_remaining = MIX_GAIN_RAMP_SAMPLES;
+        }
+
+        if self.samples_remaining > 0 {
+            self.current += (self.target - self.current) / self.samples_remaining as f32;
+            self.samples_remaining -= 1;
+        } else {
+            self.current = self.target;
+        }
+
+        self.current
+    }
+}
+
+struct VoiceRuntime {
+    id: VoiceId,
+    position: Point3Meters,
+    oscillator_phase: f32,
+    spatializer: VoiceSpatializer,
+}
+
+impl VoiceRuntime {
+    fn new(voice: &PlaybackVoice, scene: &AcousticScene, sample_rate: f32) -> Self {
+        Self {
+            id: voice.id,
+            position: voice.position,
+            oscillator_phase: 0.0,
+            spatializer: VoiceSpatializer::new(scene, voice.position, f64::from(sample_rate)),
+        }
+    }
+}
+
+fn write_device_frame<T>(device_frame: &mut [T], frame: StereoFrame)
+where
+    T: Sample + FromSample<f32>,
+{
+    match device_frame {
+        [] => {}
+        [mono] => *mono = T::from_sample((frame.left + frame.right) * 0.5),
+        [left, right, remaining @ ..] => {
+            *left = T::from_sample(frame.left);
+            *right = T::from_sample(frame.right);
+            for sample in remaining {
+                *sample = T::from_sample(0.0);
+            }
+        }
     }
 }
 
@@ -456,8 +584,12 @@ mod tests {
         Arc, Mutex,
     };
 
-    use super::{normally_distributed_delay, timing_seed, AudioEngine, BeatRange, PlaybackLoop};
+    use super::{
+        normally_distributed_delay, timing_seed, write_device_frame, AudioEngine, BeatRange,
+        GainRamp, PlaybackLoop, MIX_GAIN_RAMP_SAMPLES,
+    };
     use crate::{
+        acoustics::{Point3Meters, StereoFrame},
         part::{Part, PartScore},
         pitch_system::{FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem},
         project::{Project, Voice, VoiceId, VoiceType},
@@ -688,11 +820,73 @@ mod tests {
         let playhead = Arc::new(AtomicU64::new(1));
         let mut engine = AudioEngine::new(44_100.0, shared, playhead);
 
-        let samples = (0..24).map(|_| engine.next_sample()).collect::<Vec<_>>();
+        let frames = (0..24).map(|_| engine.next_frame()).collect::<Vec<_>>();
 
-        assert!(samples.iter().all(|sample| (-1.0..=1.0).contains(sample)));
+        assert!(frames.iter().all(|frame| {
+            (-1.0..=1.0).contains(&frame.left) && (-1.0..=1.0).contains(&frame.right)
+        }));
         assert_eq!(engine.beat_index, 0);
         assert_eq!(engine.sample_in_beat, 0);
+    }
+
+    #[test]
+    fn positioned_voice_produces_distinct_left_and_right_channels() {
+        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )
+        .with_position(Point3Meters::new(1.0, 0.0, 0.0).unwrap())]);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+        let shared = Arc::new(Mutex::new(playback_loop));
+        let playhead = Arc::new(AtomicU64::new(1));
+        let mut engine = AudioEngine::new(44_100.0, shared, playhead);
+
+        let frames = (0..600).map(|_| engine.next_frame()).collect::<Vec<_>>();
+        let left_energy = frames.iter().map(|frame| frame.left.abs()).sum::<f32>();
+        let right_energy = frames.iter().map(|frame| frame.right.abs()).sum::<f32>();
+
+        assert!(left_energy > 0.0);
+        assert!(right_energy > left_energy);
+        assert!(right_energy < left_energy * 2.0);
+    }
+
+    #[test]
+    fn device_mapper_preserves_stereo_downmixes_mono_and_silences_extra_channels() {
+        let frame = StereoFrame {
+            left: 0.25,
+            right: -0.5,
+        };
+        let mut mono = [0.0_f32; 1];
+        let mut stereo = [0.0_f32; 2];
+        let mut surround = [1.0_f32; 6];
+
+        write_device_frame(&mut mono, frame);
+        write_device_frame(&mut stereo, frame);
+        write_device_frame(&mut surround, frame);
+
+        assert_eq!(mono, [-0.125]);
+        assert_eq!(stereo, [0.25, -0.5]);
+        assert_eq!(surround, [0.25, -0.5, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn mix_gain_changes_are_ramped_instead_of_applied_in_one_sample() {
+        let mut ramp = GainRamp::new(1.0);
+
+        let first = ramp.next(0.5);
+        let mut last = first;
+        for _ in 1..MIX_GAIN_RAMP_SAMPLES {
+            last = ramp.next(0.5);
+        }
+
+        assert!(first < 1.0);
+        assert!(first > 0.5);
+        assert_eq!(last, 0.5);
+        assert_eq!(ramp.next(0.5), 0.5);
     }
 
     #[test]
@@ -710,15 +904,15 @@ mod tests {
         let playhead = Arc::new(AtomicU64::new(4));
         let mut engine = AudioEngine::new(44_100.0, shared, Arc::clone(&playhead));
 
-        engine.next_sample();
+        engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 4);
-        engine.next_sample();
+        engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 5);
-        engine.next_sample();
-        engine.next_sample();
+        engine.next_frame();
+        engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 6);
-        engine.next_sample();
-        engine.next_sample();
+        engine.next_frame();
+        engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 4);
     }
 }

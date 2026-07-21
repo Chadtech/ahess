@@ -1,6 +1,8 @@
 mod new_project;
 mod open_project;
+mod position_form;
 mod project_open;
+mod room_form;
 mod tuning_system_editor;
 
 use std::{

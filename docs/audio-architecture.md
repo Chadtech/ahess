@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -343,41 +343,72 @@ The project owns an acoustic scene. Voices own positions within it.
 
 ```rust
 pub struct AcousticScene {
-    listener: ListenerPose,
-    output: OutputLayout,
-    room: RoomSpec,
-}
-
-pub enum OutputLayout {
-    Stereo {
-        left: SpeakerPosition,
-        right: SpeakerPosition,
-    },
+    listener: Point3Meters,
+    room: Option<RectangularRoom>,
 }
 ```
 
 Coordinates and frequencies must use validated domain types. `Point3Meters`
 must reject non-finite coordinates. `FrequencyHz` must reject zero, negative,
-and non-finite values. Coordinate orientation and units must be documented when
-the first spatializer is implemented.
+and non-finite values. Coordinates are also bounded for numerical stability,
+room dimensions are limited to 100 meters per axis, and a free-field voice may
+be no farther than 1000 meters from the listener so untrusted configuration
+cannot demand an effectively unbounded real-time delay buffer.
 
-The first spatializer should be deliberately modest:
+The first spatializer is implemented with headphones as its reference target,
+but its two-ear propagation also remains useful through ordinary stereo
+speakers. Coordinates are meters in a fixed right-handed room space: positive
+X is right, positive Y is forward, and positive Z is up. A
+rectangular room occupies `0..width`, `0..length`, and `0..height`. The listener
+currently faces positive Y, and its virtual ears are 18 centimeters apart on
+the X axis. Listener orientation can become explicit when the interface needs
+it; speaker positions are not part of the acoustic scene. Hardware output
+mapping remains the responsibility of the final device adapter.
 
-- Produce an explicit `StereoFrame { left, right }`.
-- Use equal-power left/right gain from source direction.
-- Reproduce the current sound when every voice is at the center.
-- Keep distance and height available in the model even if the first algorithm
-  only uses horizontal direction.
+The current spatializer:
 
-Later acoustic work may add distance attenuation, inter-channel propagation
-delay, directional filtering, reflections, and room response. These belong in
-the acoustic stage because they depend on both the source and the configured
-scene.
+- Produces an explicit `StereoFrame { left, right }`.
+- Sends every direct and reflected path to both ears. Each ear receives its own
+  distance attenuation and arrival time, so a lateral source favors the nearer
+  ear without muting the farther ear. A centered legacy voice retains its
+  previous per-channel level.
+- Uses a 343 meters-per-second propagation speed and fractional delay taps.
+- Preserves the small left/right arrival-time difference derived from the two
+  ear positions.
+- Applies unity distance gain through one meter, then pressure-amplitude
+  attenuation proportional to `1 / distance`.
+- Treats a source coincident with the listener as dry, centered, and
+  zero-delay for compatibility.
+- Keeps each voice's propagation buffer alive across beats and loop boundaries,
+  so distance never truncates a note or reflection at a score boundary.
+- Adds one image-source reflection from each of a configured rectangular
+  room's six surfaces. A validated amplitude reflection gain from zero through
+  one is shared by the initial six surfaces.
 
-The device writer is a separate final adapter. A mono device can downmix a
-stereo frame. Behavior for devices with more than two channels should be made
-explicit when implemented rather than silently copying one value to every
-channel.
+A missing acoustic scene means a free field with the listener at the origin,
+and a missing voice position means the origin. Existing projects therefore
+remain dry and centered. Project configuration can persist a listener, an
+optional rectangular room, and a position for every voice. New-project and
+project-settings dialogs can enable a rectangular room and edit its width,
+length, height, and reflection gain. The room form centers the listener; when
+it enables, disables, or resizes a room, it translates voice positions by the
+same amount so their offsets from the listener remain stable. The add-voice and
+edit-voice forms expose each voice's absolute X, Y, and Z coordinates in meters,
+show the listener position and any room bounds, and reject a position outside a
+configured room. A newly added voice starts at the listener position, preserving
+the centered compatibility behavior until the user moves it.
+
+Later acoustic work may add listener orientation, per-surface materials,
+high-frequency damping and air absorption, higher-order reflections, and a
+diffuse late room response. Distance perception should ultimately use the
+direct-to-reverberant ratio rather than volume alone. These belong in the
+acoustic stage because they depend on both the source and the configured scene.
+
+The device writer is a separate final adapter. A mono device receives the
+average of a stereo frame. Stereo devices receive left and right directly. A
+device with more than two channels receives left and right in its first two
+channels and silence in the others until a deliberate multichannel layout is
+implemented.
 
 ## Effects and processing scopes
 
@@ -392,6 +423,28 @@ Effects should be placed according to what they mean:
 Effect algorithms remain Rust code. Configuration may select known effects,
 provide validated parameters, and eventually order an effect chain. A generic
 node-graph language is not required for the initial architecture.
+
+The master mixer retains square-root normalization by the number of
+acoustically active voices. Because starting or ending one voice would otherwise
+rescale every other voice in a single sample, normalization gain moves to each
+new target with a 64-sample linear ramp. During silence it returns to the
+single-voice gain so the next isolated voice starts at the expected level.
+
+The first convolution configuration is a project default applied independently
+to every mono voice before position and room acoustics. It is therefore a
+voice-local effect selected by the project, not a master effect. The immutable
+decoded response may be shared, but each voice will require its own mutable
+convolution history so tails remain independent before spatialization. A later
+voice setting may inherit the project response, bypass it, or select a custom
+response without changing this processing scope.
+
+The project-settings UI can import one mono PCM or IEEE-float WAV response up
+to 30 seconds and 64 MiB. Imported responses are content-addressed assets under
+the project directory, and project configuration stores the asset path and its
+display name. Projects without a `[voice_convolution]` table have no configured
+response. File selection, validation, persistence, reload, replacement,
+removal, and project duplication are implemented; the convolution DSP and WAV
+decoding into prepared samples remain future work.
 
 ## Real-time boundary
 
@@ -408,6 +461,12 @@ Frequency conversion, score validation, instrument construction, sample
 loading, and large buffer allocation happen outside the callback. Live updates
 publish prepared playback data; the engine reconciles runtime voices by
 `VoiceId`.
+
+Initial acoustic delay buffers are allocated before the stream starts. A live
+scene or voice-position update currently recreates affected delay buffers while
+the callback accepts its new playback snapshot, following the pre-existing
+snapshot update pattern. Move that preparation outside the callback before
+exposing continuous position automation.
 
 ## Persistence and compatibility
 
@@ -482,6 +541,10 @@ being parsed through the other's notation.
 Completion criterion: a handwritten instrument can keep meaningful state and
 sound after the beat that triggered it.
 
+Oscillator phase and acoustic delay state now live in per-voice runtimes and
+are reconciled by `VoiceId`. Typed event delivery and general instrument release
+state remain to complete this phase.
+
 ### Phase 4: explicit stereo frames
 
 - Make the engine and mixer produce `StereoFrame` values.
@@ -491,15 +554,24 @@ sound after the beat that triggered it.
 Completion criterion: left and right channels are distinct values throughout
 the engine even when the default spatializer gives them equal content.
 
+Implemented 2026-07-19. Mono devices receive an explicit average of the stereo
+frame. Stereo devices receive left and right directly. On devices with more
+than two channels, the first two receive stereo and the remaining channels are
+silenced until a deliberate multichannel layout is implemented.
+
 ### Phase 5: positions and initial spatializer
 
 - Add the acoustic scene and validated three-dimensional positions.
-- Add an equal-power stereo spatializer.
+- Add a two-ear stereo spatializer.
 - Add project persistence and compatibility defaults.
 - Add UI only after the configuration and audio behavior are established.
 
 Completion criterion: moving a voice horizontally changes its stereo image in
 a predictable, tested way.
+
+The engine, domain types, persistence, compatibility defaults, direct
+spatializer, centered-room UI, and voice-position UI are implemented as of
+2026-07-19. Explicit listener placement remains to be designed and implemented.
 
 ### Phase 6: complex instruments and acoustic effects
 
@@ -508,6 +580,10 @@ a predictable, tested way.
 - Add distance and propagation behavior.
 - Add voice-local, room, and master effects without collapsing their scopes.
 - Consider multiple emitters only when an instrument actually needs them.
+
+The first acoustic portion is implemented: physical distance delay survives
+score boundaries, and rectangular rooms provide six first-order image-source
+reflections. Surface-dependent damping and the late room response remain.
 
 ## Current code affected
 
@@ -528,6 +604,9 @@ a predictable, tested way.
   eventually store the acoustic scene and new voice representation.
 - `src/playback.rs`: stores prepared events and runtime voices, then progresses
   from mono samples to explicit stereo frames.
+- `src/acoustics.rs`: owns validated points and rooms, stereo frames,
+  two-ear propagation, image-source path preparation, and per-voice
+  fractional delay lines.
 - `src/cpal_spike.rs`: may remain MIDI-based as an isolated prototype until the
   main playback path is established.
 
@@ -538,8 +617,6 @@ These do not block Phase 1 unless noted:
 - What event grammar should the first triggered voice accept?
 - Does a non-empty pitched cell retrigger a note every beat, or will the score
   gain explicit hold and note-off syntax?
-- Should stereo coordinates model ears, speakers, or an abstract normalized
-  listener for the initial spatializer?
 - Which effects require ordered user configuration, and which belong entirely
   inside a particular instrument?
 - What runtime state is preserved when instrument parameters change during

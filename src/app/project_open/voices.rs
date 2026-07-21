@@ -3,6 +3,8 @@ use gpui::{
 };
 
 use crate::{
+    acoustics::{AcousticScene, Point3Meters},
+    app::position_form::PositionFields,
     style as s,
     view::{
         button::{self, Button},
@@ -22,11 +24,13 @@ pub enum Msg {
     AddRequested {
         name: String,
         voice_type: VoiceType,
+        position: Point3Meters,
     },
     EditRequested {
         original_name: VoiceName,
         name: String,
         voice_type: VoiceType,
+        position: Point3Meters,
     },
     DeleteRequested {
         name: VoiceName,
@@ -43,6 +47,7 @@ enum DialogView {
         name: Entity<TextInput>,
         selected_voice_type: VoiceType,
         voice_type_buttons: VoiceTypeButtons,
+        position: PositionFields,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
         form_error: Option<String>,
@@ -51,6 +56,7 @@ enum DialogView {
         name: Entity<TextInput>,
         selected_voice_type: VoiceType,
         voice_type_buttons: VoiceTypeButtons,
+        position: PositionFields,
         cancel_button: Entity<Button>,
         save_button: Entity<Button>,
         delete_button: Entity<Button>,
@@ -64,6 +70,7 @@ enum DialogView {
 
 pub struct VoicesDialog {
     voices: Vec<Voice>,
+    acoustic_scene: AcousticScene,
     selected_voice: Option<VoiceName>,
     view: DialogView,
     close_button: Entity<Button>,
@@ -72,7 +79,7 @@ pub struct VoicesDialog {
 impl EventEmitter<Msg> for VoicesDialog {}
 
 impl VoicesDialog {
-    pub fn new(voices: Vec<Voice>, cx: &mut Context<Self>) -> Self {
+    pub fn new(voices: Vec<Voice>, acoustic_scene: AcousticScene, cx: &mut Context<Self>) -> Self {
         let selected_voice = voices.first().map(|voice| voice.name.clone());
         let close_button = cx.new(|_| Button::x("close-voices"));
 
@@ -80,6 +87,7 @@ impl VoicesDialog {
 
         Self {
             voices,
+            acoustic_scene,
             selected_voice,
             view: Self::list_view(cx),
             close_button,
@@ -100,10 +108,11 @@ impl VoicesDialog {
         }
     }
 
-    fn add_view(cx: &mut Context<Self>) -> DialogView {
+    fn add_view(acoustic_scene: &AcousticScene, cx: &mut Context<Self>) -> DialogView {
         let name = cx.new(|cx| TextInput::new("", "lead", cx));
         let selected_voice_type = VoiceType::Sin;
         let voice_type_buttons = VoiceTypeButtons::new(selected_voice_type, cx);
+        let position = PositionFields::new("add-voice", acoustic_scene.listener(), cx);
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let add_button = cx.new(|_| Button::new("confirm-add-voice", "add voice"));
 
@@ -116,6 +125,7 @@ impl VoicesDialog {
             name,
             selected_voice_type,
             voice_type_buttons,
+            position,
             cancel_button,
             add_button,
             form_error: None,
@@ -127,6 +137,7 @@ impl VoicesDialog {
         let name = cx.new(move |cx| TextInput::new(voice_name, "lead", cx));
         let selected_voice_type = voice.voice_type;
         let voice_type_buttons = VoiceTypeButtons::new(selected_voice_type, cx);
+        let position = PositionFields::new("edit-voice", voice.position(), cx);
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let save_button = cx.new(|_| Button::new("save-voice", "save changes"));
         let delete_button = cx.new(|_| Button::new("delete-voice", "delete voice"));
@@ -148,6 +159,7 @@ impl VoicesDialog {
             name,
             selected_voice_type,
             voice_type_buttons,
+            position,
             cancel_button,
             save_button,
             delete_button,
@@ -174,7 +186,7 @@ impl VoicesDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        self.view = Self::add_view(cx);
+        self.view = Self::add_view(&self.acoustic_scene, cx);
         cx.notify();
     }
 
@@ -253,17 +265,31 @@ impl VoicesDialog {
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let DialogView::Add {
-            name,
-            selected_voice_type,
-            ..
-        } = &self.view
-        else {
-            return;
+        let request = match &self.view {
+            DialogView::Add {
+                name,
+                selected_voice_type,
+                position,
+                ..
+            } => position
+                .position(&self.acoustic_scene, cx)
+                .map(|position| (name.read(cx).value(), *selected_voice_type, position)),
+            _ => return,
+        };
+        let (name, voice_type, position) = match request {
+            Ok(request) => request,
+            Err(error) => {
+                if let DialogView::Add { form_error, .. } = &mut self.view {
+                    *form_error = Some(error);
+                    cx.notify();
+                }
+                return;
+            }
         };
         cx.emit(Msg::AddRequested {
-            name: name.read(cx).value(),
-            voice_type: *selected_voice_type,
+            name,
+            voice_type,
+            position,
         });
     }
 
@@ -271,18 +297,32 @@ impl VoicesDialog {
         let Some(original_name) = self.selected_voice.clone() else {
             return;
         };
-        let DialogView::Edit {
-            name,
-            selected_voice_type,
-            ..
-        } = &self.view
-        else {
-            return;
+        let request = match &self.view {
+            DialogView::Edit {
+                name,
+                selected_voice_type,
+                position,
+                ..
+            } => position
+                .position(&self.acoustic_scene, cx)
+                .map(|position| (name.read(cx).value(), *selected_voice_type, position)),
+            _ => return,
+        };
+        let (name, voice_type, position) = match request {
+            Ok(request) => request,
+            Err(error) => {
+                if let DialogView::Edit { form_error, .. } = &mut self.view {
+                    *form_error = Some(error);
+                    cx.notify();
+                }
+                return;
+            }
         };
         cx.emit(Msg::EditRequested {
             original_name,
-            name: name.read(cx).value(),
-            voice_type: *selected_voice_type,
+            name,
+            voice_type,
+            position,
         });
     }
 
@@ -415,6 +455,7 @@ impl Render for VoicesDialog {
             DialogView::Add {
                 name,
                 voice_type_buttons,
+                position,
                 cancel_button,
                 add_button,
                 form_error,
@@ -423,6 +464,7 @@ impl Render for VoicesDialog {
                 "add voice",
                 name.clone(),
                 voice_type_buttons,
+                position,
                 form_error.clone(),
                 div()
                     .flex()
@@ -434,6 +476,7 @@ impl Render for VoicesDialog {
             DialogView::Edit {
                 name,
                 voice_type_buttons,
+                position,
                 cancel_button,
                 save_button,
                 delete_button,
@@ -468,6 +511,7 @@ impl Render for VoicesDialog {
                     "edit voice",
                     name.clone(),
                     voice_type_buttons,
+                    position,
                     form_error.clone(),
                     actions,
                 )
@@ -503,6 +547,7 @@ impl VoicesDialog {
         title: &'static str,
         name: Entity<TextInput>,
         voice_type_buttons: &VoiceTypeButtons,
+        position: &PositionFields,
         form_error: Option<String>,
         actions: gpui::Div,
     ) -> gpui::Div {
@@ -518,7 +563,8 @@ impl VoicesDialog {
                     .gap_3()
                     .child(div().text_color(s::FIELD_LABEL_TEXT).child("voice type"))
                     .child(div().flex().gap_3().children(voice_type_buttons.entities())),
-            );
+            )
+            .child(position.view(&self.acoustic_scene));
 
         let form = if let Some(error) = form_error {
             form.child(error_message(error))
@@ -625,6 +671,19 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
                                     .text_color(s::TEXT_DEFAULT)
                                     .child(voice.voice_type.label()),
                             ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_color(s::TEXT_HEADER).child("position"))
+                            .child(div().text_color(s::TEXT_DEFAULT).child(format!(
+                                "X {}, Y {}, Z {} meters",
+                                voice.position().x(),
+                                voice.position().y(),
+                                voice.position().z(),
+                            ))),
                     ),
             )
             .child(div().flex().child(edit_button)),
@@ -679,4 +738,73 @@ fn voice_type_button(
 
 fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context<VoicesDialog>) {
     button.update(cx, |button, cx| button.set_depressed(selected, cx));
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{px, size, TestAppContext};
+
+    use super::{DialogView, VoicesDialog};
+    use crate::{
+        acoustics::{AcousticScene, Point3Meters, RectangularRoom},
+        voice::{Voice, VoiceType},
+    };
+
+    #[gpui::test]
+    fn add_voice_position_starts_at_the_listener(cx: &mut TestAppContext) {
+        let room = RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap();
+        let scene = AcousticScene::new(room.center(), Some(room)).unwrap();
+        let (dialog, cx) =
+            cx.add_window_view(move |_, cx| VoicesDialog::new(Vec::new(), scene, cx));
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.view = VoicesDialog::add_view(&dialog.acoustic_scene, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("add-voice-position-x").is_some());
+        assert!(cx.debug_bounds("add-voice-position-y").is_some());
+        assert!(cx.debug_bounds("add-voice-position-z").is_some());
+        let position = cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            let DialogView::Add { position, .. } = &dialog.view else {
+                panic!("add button must show the add form");
+            };
+            position.position(&dialog.acoustic_scene, cx).unwrap()
+        });
+        assert_eq!(position, Point3Meters::new(4.0, 5.0, 1.5).unwrap());
+    }
+
+    #[gpui::test]
+    fn edit_voice_position_starts_at_the_saved_position(cx: &mut TestAppContext) {
+        let scene = AcousticScene::default();
+        let saved_position = Point3Meters::new(-2.0, 4.5, 1.0).unwrap();
+        let voice = Voice::new(1, "lead", VoiceType::Saw).with_position(saved_position);
+        let (dialog, cx) =
+            cx.add_window_view(move |_, cx| VoicesDialog::new(vec![voice], scene, cx));
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        dialog.update(cx, |dialog, cx| {
+            let voice = dialog.voices[0].clone();
+            dialog.view = VoicesDialog::edit_view(&voice, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("edit-voice-position-x").is_some());
+        assert!(cx.debug_bounds("edit-voice-position-y").is_some());
+        assert!(cx.debug_bounds("edit-voice-position-z").is_some());
+        let position = cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            let DialogView::Edit { position, .. } = &dialog.view else {
+                panic!("edit button must show the edit form");
+            };
+            position.position(&dialog.acoustic_scene, cx).unwrap()
+        });
+        assert_eq!(position, saved_position);
+    }
 }

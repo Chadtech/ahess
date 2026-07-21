@@ -40,6 +40,19 @@ or when it defines how a shared component is used.
 - arrange the label above the input.
 - style field labels with `FIELD_LABEL_TEXT`.
 
+## file imports
+
+- use `view::file_import::file_import` for a project-owned file selected from
+  outside the workspace.
+- keep the current selection visible in a sunken field with choose or replace
+  and remove actions beside it.
+- give the sunken field and its action group `S4` padding and spacing so the
+  field remains visually distinct from the raised buttons inside it.
+- use the shared button component for file actions and disable remove when no
+  file is selected.
+- show concise identifying metadata in the field; report validation failures
+  through the containing dialog or status area.
+
 ## buttons
 
 - use the shared `view::button::Button` disabled state for unavailable actions
@@ -145,8 +158,12 @@ or when it defines how a shared component is used.
 
 ## dialogs
 
-- use `S10` for standard dialog widths. Use `S11` by `S10` for the wider
-  list/detail management dialogs.
+- use `S10` for standard dialog widths. Use `S11` for wider dialogs and pair it
+  with an `S10` height when a bounded list/detail layout requires it.
+- when independent settings sections would make a standard dialog excessively
+  tall, use two equal columns in an `S11`-wide dialog. Keep general settings on
+  the left, specialized settings on the right, and shared feedback and actions
+  beneath both columns.
 - when a workflow combines compact controls with a long range-selection list,
   use the wide dialog size with controls in a fixed left column and let the
   list fill the bounded right column. Keep actions beneath the controls.
