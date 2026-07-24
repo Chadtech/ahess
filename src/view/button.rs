@@ -1,6 +1,6 @@
 use gpui::{
     prelude::*, Context, CursorStyle, ElementId, EventEmitter, MouseButton, MouseDownEvent,
-    MouseUpEvent, SharedString, Window,
+    MouseUpEvent, Pixels, SharedString, Window,
 };
 
 use crate::style as s;
@@ -8,6 +8,8 @@ use crate::style as s;
 pub struct Button {
     id: ElementId,
     label: SharedString,
+    trailing_label: Option<SharedString>,
+    max_width: Option<Pixels>,
     size: Size,
     disabled: bool,
     depressed: bool,
@@ -30,6 +32,8 @@ impl Button {
         Self {
             id: id.into(),
             label: label.into(),
+            trailing_label: None,
+            max_width: None,
             size: Size::Text,
             disabled: false,
             depressed: false,
@@ -55,10 +59,22 @@ impl Button {
         self
     }
 
+    pub fn trailing_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.trailing_label = Some(label.into());
+        self
+    }
+
+    pub fn max_width(mut self, width: Pixels) -> Self {
+        self.max_width = Some(width);
+        self
+    }
+
     pub fn square(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
+            trailing_label: None,
+            max_width: None,
             size: Size::Square,
             disabled: false,
             depressed: false,
@@ -195,14 +211,34 @@ impl Render for Button {
             CursorStyle::PointingHand
         };
 
+        let label = gpui::div()
+            .flex()
+            .items_center()
+            .min_w(s::S0)
+            .max_w_full()
+            .text_color(text_color)
+            .child(
+                gpui::div()
+                    .min_w(s::S0)
+                    .truncate()
+                    .child(self.label.clone()),
+            )
+            .children(self.trailing_label.clone().map(|label| {
+                gpui::div()
+                    .flex_none()
+                    .ml(s::S3)
+                    .text_color(text_color)
+                    .child(label)
+            }));
         let button = gpui::div()
             .id(self.id.clone())
             .flex()
             .items_center()
             .justify_center()
+            .min_w(s::S0)
             .bg(background)
             .cursor(cursor)
-            .child(gpui::div().text_color(text_color).child(self.label.clone()))
+            .child(label)
             .on_hover(cx.listener(Self::on_hover))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -212,6 +248,9 @@ impl Render for Button {
             Size::Text => button.p(s::S3).px(s::S4),
             Size::Square => button.size(s::S6),
         };
+        let button = button.when_some(self.max_width, |button, width| {
+            button.max_w(width).overflow_hidden()
+        });
 
         if !self.disabled && (self.depressed || self.pressing) {
             s::sunken(button)

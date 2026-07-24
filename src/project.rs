@@ -604,6 +604,70 @@ pub enum ProjectTransactionError {
     Invalid { path: PathBuf, message: String },
 }
 
+#[derive(Debug)]
+pub enum EditPartRowsError {
+    MissingPart(String),
+    RowEdit(part::PartRowEditError),
+    TooManyRows,
+    Score(part::ScoreError),
+    Recovery(ProjectTransactionError),
+    Commit {
+        source: ProjectTransactionError,
+        rollback_error: Option<ProjectTransactionError>,
+        recovery_error: Option<part::ScoreError>,
+    },
+}
+
+impl fmt::Display for EditPartRowsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPart(name) => write!(formatter, "part {name:?} no longer exists"),
+            Self::RowEdit(error) => write!(formatter, "{error}"),
+            Self::TooManyRows => formatter.write_str("the part has too many beats"),
+            Self::Score(error) => write!(formatter, "{error}"),
+            Self::Recovery(error) => {
+                write!(formatter, "failed to recover a project update: {error}")
+            }
+            Self::Commit {
+                source,
+                rollback_error: None,
+                recovery_error: None,
+            } => write!(formatter, "{source}"),
+            Self::Commit {
+                source,
+                rollback_error,
+                recovery_error,
+            } => {
+                write!(formatter, "{source}")?;
+                if let Some(error) = rollback_error {
+                    write!(
+                        formatter,
+                        "; also failed to restore the original project files: {error}"
+                    )?;
+                }
+                if let Some(error) = recovery_error {
+                    write!(
+                        formatter,
+                        "; also failed to preserve the unsaved score: {error}"
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Error for EditPartRowsError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::RowEdit(error) => Some(error),
+            Self::Score(error) => Some(error),
+            Self::Recovery(error) | Self::Commit { source: error, .. } => Some(error),
+            Self::MissingPart(_) | Self::TooManyRows => None,
+        }
+    }
+}
+
 impl fmt::Display for ProjectTransactionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -628,6 +692,61 @@ impl Error for ProjectTransactionError {
             Self::Invalid { .. } => None,
         }
     }
+}
+
+pub fn edit_part_rows(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    part_name: &PartName,
+    score: &part::PartScore,
+    edit: part::PartRowEdit,
+) -> Result<(Project, Part, part::PartScore), EditPartRowsError> {
+    let project_directory = project_directory.as_ref();
+    recover_project_transaction(project_directory).map_err(EditPartRowsError::Recovery)?;
+
+    let part_index = project
+        .parts
+        .iter()
+        .position(|part| part.name.eq_ignore_ascii_case(part_name))
+        .ok_or_else(|| EditPartRowsError::MissingPart(part_name.as_str().to_string()))?;
+    let original_part = project.parts[part_index].clone();
+    let updated_score = score
+        .edited_rows(edit, project.voices().len())
+        .map_err(EditPartRowsError::RowEdit)?;
+    let updated_length =
+        u32::try_from(updated_score.rows().len()).map_err(|_| EditPartRowsError::TooManyRows)?;
+    let mut updated_project = project.clone();
+    updated_project.parts[part_index].length = updated_length;
+    let updated_part = updated_project.parts[part_index].clone();
+    let score_contents = updated_score
+        .validated_contents(project_directory, &updated_part, &updated_project)
+        .map_err(EditPartRowsError::Score)?;
+
+    part::PartScore::clear_recovery(project_directory, &original_part)
+        .map_err(EditPartRowsError::Score)?;
+    let score_file_name = part::csv_file_name(&updated_part.name)
+        .expect("validated project part names always produce CSV filenames");
+    let files = [
+        (score_file_name, score_contents),
+        (
+            PROJECT_CONFIG_FILE.to_string(),
+            updated_project.config_file_contents().into_bytes(),
+        ),
+    ];
+
+    if let Err(source) = commit_project_files(project_directory, &files) {
+        let rollback_error = recover_project_transaction(project_directory).err();
+        let recovery_error = score
+            .save_recovery(project_directory, &original_part, project.voices())
+            .err();
+        return Err(EditPartRowsError::Commit {
+            source,
+            rollback_error,
+            recovery_error,
+        });
+    }
+
+    Ok((updated_project, updated_part, updated_score))
 }
 
 #[derive(Debug)]
@@ -1520,16 +1639,16 @@ mod tests {
     };
 
     use super::{
-        add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_voice,
-        edit_voice_at, list_projects, load_project, project_directory_name, save_project,
-        save_project_with_voice_convolution, CreateProjectError, DuplicateProjectError,
-        LoadProjectError, Project, ProjectEntry, Voice, VoiceConvolutionChange, VoiceType,
-        PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE,
-        TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
+        add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_part_rows,
+        edit_voice, edit_voice_at, list_projects, load_project, project_directory_name,
+        save_project, save_project_with_voice_convolution, CreateProjectError,
+        DuplicateProjectError, LoadProjectError, Project, ProjectEntry, Voice,
+        VoiceConvolutionChange, VoiceType, PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY,
+        TRANSACTION_COMMITTING_FILE, TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
-        part::{self, Part, PartName, PartScore},
+        part::{self, Part, PartName, PartRowEdit, PartScore, ScoreRowIndex, ScoreRowRange},
         pitch_system::{
             ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
             PitchSystem,
@@ -1552,6 +1671,56 @@ mod tests {
         assert_eq!(project.description, "sketch");
         assert!(project.voices.is_empty());
         assert!(project.sequence().is_empty());
+    }
+
+    #[test]
+    fn structural_row_edits_commit_the_score_and_part_length_together() {
+        let root = temp_root("structural-row-edit");
+        let mut project = Project::new("rows", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 2);
+        let part = project.part(&PartName::new("intro")).unwrap().clone();
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        score.save(&project_directory, &part, &project).unwrap();
+
+        let (project, part, score) = edit_part_rows(
+            &project_directory,
+            &project,
+            &part.name,
+            &score,
+            PartRowEdit::InsertAfter(ScoreRowIndex::new(1, 2).unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(part.length, 3);
+        assert_eq!(score.rows()[2], [String::new()]);
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+        assert_eq!(
+            PartScore::load(&project_directory, &part, project.voices()).unwrap(),
+            score
+        );
+
+        let (project, part, score) = edit_part_rows(
+            &project_directory,
+            &project,
+            &part.name,
+            &score,
+            PartRowEdit::Delete(ScoreRowRange::new(0, 0, 3).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(part.length, 2);
+        assert_eq!(score.rows(), &[vec!["D4".to_string()], vec![String::new()]]);
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+        assert!(!project_directory
+            .join(PROJECT_TRANSACTION_DIRECTORY)
+            .exists());
+        assert!(!project_directory.join(".intro.csv.recovery").exists());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

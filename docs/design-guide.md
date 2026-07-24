@@ -70,6 +70,9 @@ or when it defines how a shared component is used.
   border.
 - the menu is at least as wide as its trigger, expands to keep concise option
   labels on one line, and scrolls vertically when its contents exceed `S9`.
+- use the dropdown's capped-trigger variant in dense horizontal toolbars. It
+  truncates a long selected label while keeping the arrow visible and the full
+  option labels available in the menu.
 - menu rows use the selection-list colors: `GREEN4` identifies the selected
   option, while hover uses the brighter `GREEN5` background and
   `TEXT_HOVERED` text.
@@ -82,6 +85,18 @@ or when it defines how a shared component is used.
 - the component owns scrolling, row numbering, column headers, cell dimensions,
   and raised/sunken table chrome.
 - give each independently scrollable grid view its own `ScrollHandle`.
+- when actions operate on whole rows, select rows through the numbered row
+  headers. Use click for one row and drag or shift-click for one contiguous
+  range. Clicking the sole selected row header again clears the selection.
+  Keep cell clicks independent from row selection. Row headers remain neutral
+  gray controls: hover keeps the raised treatment and brightens only the
+  numeral, while selection uses the shared sunken treatment with a bright
+  numeral. Keep the score cells themselves visually unchanged.
+- keep row actions in the editor header alongside other grid-level controls so
+  they do not consume a separate row of vertical space. Keep compact actions
+  on one line and cap or truncate flexible selectors before hiding or wrapping
+  action controls. Keep every action visible and disable actions that do not
+  apply without a row selection.
 
 ## ordered input lists
 

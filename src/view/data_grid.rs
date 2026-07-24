@@ -1,6 +1,6 @@
-use gpui::{div, point, prelude::*, ElementId, Entity, Pixels, ScrollHandle};
+use gpui::{div, point, prelude::*, CursorStyle, ElementId, Entity, Pixels, ScrollHandle};
 
-use crate::{style as s, view::text_input::TextInput};
+use crate::{part::ScoreRowRange, style as s, view::text_input::TextInput};
 
 const ROW_LABEL_WIDTH: Pixels = s::S6;
 const CELL_WIDTH: Pixels = s::S8;
@@ -13,6 +13,59 @@ pub fn editable(
     playing_row: Option<usize>,
     scroll_handle: &ScrollHandle,
 ) -> gpui::Div {
+    editable_grid(
+        id,
+        column_labels,
+        rows,
+        invalid_cells,
+        None,
+        playing_row,
+        scroll_handle,
+        false,
+        |_, header| header,
+    )
+}
+
+pub fn editable_with_row_selection<F>(
+    id: impl Into<ElementId>,
+    column_labels: Vec<String>,
+    rows: &[Vec<Entity<TextInput>>],
+    invalid_cells: &[(usize, usize)],
+    selected_rows: Option<ScoreRowRange>,
+    playing_row: Option<usize>,
+    scroll_handle: &ScrollHandle,
+    decorate_row_header: F,
+) -> gpui::Div
+where
+    F: FnMut(usize, gpui::Div) -> gpui::Div,
+{
+    editable_grid(
+        id,
+        column_labels,
+        rows,
+        invalid_cells,
+        selected_rows,
+        playing_row,
+        scroll_handle,
+        true,
+        decorate_row_header,
+    )
+}
+
+fn editable_grid<F>(
+    id: impl Into<ElementId>,
+    column_labels: Vec<String>,
+    rows: &[Vec<Entity<TextInput>>],
+    invalid_cells: &[(usize, usize)],
+    selected_rows: Option<ScoreRowRange>,
+    playing_row: Option<usize>,
+    scroll_handle: &ScrollHandle,
+    row_selection_enabled: bool,
+    mut decorate_row_header: F,
+) -> gpui::Div
+where
+    F: FnMut(usize, gpui::Div) -> gpui::Div,
+{
     let content_width = ROW_LABEL_WIDTH + CELL_WIDTH * column_labels.len() as f32;
     let header = div()
         .flex()
@@ -24,11 +77,18 @@ pub fn editable(
                 .map(|label| header_cell(label, CELL_WIDTH)),
         );
     let body_rows = rows.iter().enumerate().map(|(row_index, row)| {
+        let selected = selected_rows.is_some_and(|rows| rows.contains(row_index));
+        let row_header = row_header_cell(
+            (row_index + 1).to_string(),
+            row_index,
+            selected,
+            row_selection_enabled,
+        );
         div()
             .relative()
             .flex()
             .flex_row()
-            .child(header_cell((row_index + 1).to_string(), ROW_LABEL_WIDTH))
+            .child(decorate_row_header(row_index, row_header))
             .children(
                 row.iter()
                     .cloned()
@@ -64,6 +124,38 @@ pub fn editable(
     .min_w(s::S0)
     .min_h(s::S0)
     .overflow_hidden()
+}
+
+fn row_header_cell(label: String, row: usize, selected: bool, selectable: bool) -> gpui::Div {
+    let text_color = if selected {
+        s::TEXT_HOVERED
+    } else {
+        s::TEXT_HEADER
+    };
+    let content = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(ROW_LABEL_WIDTH)
+        .h(row_height())
+        .bg(s::GRAY2)
+        .text_color(text_color)
+        .cursor(if selectable {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::Arrow
+        })
+        .when(selectable && !selected, |header| {
+            header.hover(|style| style.text_color(s::TEXT_HOVERED))
+        })
+        .child(label);
+    let header = if selected {
+        s::sunken(content).debug_selector(move || format!("score-selected-row-header-{row}"))
+    } else {
+        s::raised(content)
+    };
+
+    div().relative().child(header)
 }
 
 fn playback_row_border(row: usize) -> gpui::Div {

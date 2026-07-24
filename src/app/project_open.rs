@@ -31,7 +31,10 @@ use self::{
     loop_range::{LoopRangeDialog, Msg as LoopRangeMsg},
     parts::PartsDialog,
     project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
-    score::{DocumentEvent, PartSelected, SaveState, ScoreDocument, ScoreEditor},
+    score::{
+        DocumentEvent, PartSelected, RowEditConfirmation, RowEditConfirmationMsg, RowEditRequested,
+        SaveState, ScoreDocument, ScoreEditor,
+    },
     voices::VoicesDialog,
 };
 
@@ -90,6 +93,7 @@ enum Dialog {
     LoopRange(Entity<LoopRangeDialog>),
     Parts(Entity<PartsDialog>),
     ProjectSettings(Entity<ProjectSettingsDialog>),
+    RowEdit(Entity<RowEditConfirmation>),
     Voices(Entity<VoicesDialog>),
 }
 
@@ -198,6 +202,7 @@ impl Model {
             Dialog::LoopRange(dialog) => dialog.clone().into_any_element(),
             Dialog::Parts(dialog) => dialog.clone().into_any_element(),
             Dialog::ProjectSettings(dialog) => dialog.clone().into_any_element(),
+            Dialog::RowEdit(dialog) => dialog.clone().into_any_element(),
             Dialog::Voices(dialog) => dialog.clone().into_any_element(),
         })
     }
@@ -451,7 +456,10 @@ impl Model {
     ) {
         if matches!(
             event,
-            DocumentEvent::CellChanged { .. } | DocumentEvent::SaveFailed
+            DocumentEvent::CellChanged { .. }
+                | DocumentEvent::RowsCleared
+                | DocumentEvent::StructureChanged { .. }
+                | DocumentEvent::SaveFailed
         ) {
             self.workspace_error = None;
         }
@@ -462,6 +470,8 @@ impl Model {
             && matches!(
                 event,
                 DocumentEvent::CellChanged { .. }
+                    | DocumentEvent::RowsCleared
+                    | DocumentEvent::StructureChanged { .. }
                     | DocumentEvent::Reset
                     | DocumentEvent::ProjectChanged
             )
@@ -629,6 +639,8 @@ impl Model {
         let editor = cx.new(move |cx| ScoreEditor::new(view_index, document, part_names, cx));
         cx.subscribe(&editor, Self::on_score_editor_part_selected)
             .detach();
+        cx.subscribe(&editor, Self::on_score_editor_row_edit_requested)
+            .detach();
         if let Some(view) = self.score_views.get_mut(view_index) {
             view.part_name = Some(part_name);
             view.editor = Some(editor);
@@ -655,6 +667,114 @@ impl Model {
         };
         self.activate_score_view(view_index, cx);
         self.assign_part_to_view(view_index, selected.part_name.clone(), cx);
+    }
+
+    fn on_score_editor_row_edit_requested(
+        &mut self,
+        _: Entity<ScoreEditor>,
+        request: &RowEditRequested,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let needs_confirmation = request.populated_cell_count > 0
+            && matches!(
+                request.edit,
+                part::PartRowEdit::Clear(_) | part::PartRowEdit::Delete(_)
+            );
+        if needs_confirmation {
+            let request = request.clone();
+            let dialog = cx.new(move |cx| RowEditConfirmation::new(request, cx));
+            cx.subscribe(&dialog, Self::on_row_edit_confirmation_msg)
+                .detach();
+            self.dialog = Some(Dialog::RowEdit(dialog));
+            cx.notify();
+        } else {
+            self.apply_row_edit(request.clone(), cx);
+        }
+    }
+
+    fn on_row_edit_confirmation_msg(
+        &mut self,
+        _: Entity<RowEditConfirmation>,
+        msg: &RowEditConfirmationMsg,
+        cx: &mut Context<Self>,
+    ) {
+        self.dialog = None;
+        if let RowEditConfirmationMsg::Confirmed(request) = msg {
+            self.apply_row_edit(request.clone(), cx);
+        }
+        cx.notify();
+    }
+
+    fn apply_row_edit(&mut self, request: RowEditRequested, cx: &mut Context<Self>) {
+        let Some(document) = self
+            .score_documents
+            .iter()
+            .find(|entry| entry.part_name.eq_ignore_ascii_case(&request.part_name))
+            .map(|entry| entry.document.clone())
+        else {
+            self.workspace_error = Some(format!(
+                "part {:?} no longer exists",
+                request.part_name.as_str()
+            ));
+            cx.notify();
+            return;
+        };
+
+        if let part::PartRowEdit::Clear(rows) = request.edit {
+            match document.update(cx, |document, cx| document.clear_rows(rows, cx)) {
+                Ok(()) => self.workspace_error = None,
+                Err(error) => self.workspace_error = Some(error.to_string()),
+            }
+            cx.notify();
+            return;
+        }
+
+        let score = document.read(cx).score().clone();
+        let Some(selected_rows) = request.edit.selection_after(score.rows().len()) else {
+            self.workspace_error =
+                Some("a part must keep at least one beat; clear the rows instead".to_string());
+            cx.notify();
+            return;
+        };
+        let previous_arrangement_beat_count = self.project.arrangement_beat_count();
+        match project::edit_part_rows(
+            &self.project_directory,
+            &self.project,
+            &request.part_name,
+            &score,
+            request.edit,
+        ) {
+            Ok((project, part, score)) => {
+                self.stop_playback(cx);
+                self.project = project;
+                let updated_project = self.project.clone();
+                document.update(cx, |document, cx| {
+                    document.apply_saved_structure_change(
+                        updated_project.clone(),
+                        part,
+                        score,
+                        request.source_editor,
+                        selected_rows,
+                        cx,
+                    );
+                });
+                for entry in &self.score_documents {
+                    if !entry.part_name.eq_ignore_ascii_case(&request.part_name) {
+                        let project = updated_project.clone();
+                        entry.document.update(cx, |document, cx| {
+                            document.project_settings_changed(project, cx);
+                        });
+                    }
+                }
+                self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                self.workspace_error = None;
+            }
+            Err(error) => self.workspace_error = Some(error.to_string()),
+        }
+        cx.notify();
     }
 
     fn sync_score_editor_parts(&self, cx: &mut Context<Self>) {
@@ -882,7 +1002,8 @@ impl Model {
             }
             Some(Dialog::LoopRange(_))
             | Some(Dialog::Parts(_))
-            | Some(Dialog::ProjectSettings(_)) => return,
+            | Some(Dialog::ProjectSettings(_))
+            | Some(Dialog::RowEdit(_)) => return,
             None => {}
         }
 
@@ -910,6 +1031,7 @@ impl Model {
             }
             Some(Dialog::LoopRange(_))
             | Some(Dialog::ProjectSettings(_))
+            | Some(Dialog::RowEdit(_))
             | Some(Dialog::Voices(_)) => return,
             None => {}
         }
@@ -1774,11 +1896,11 @@ mod tests {
 
     use super::{
         create_project_part, delete_project_part, duplicate_project_part, loop_range_button_label,
-        parts, playing_score_row, rename_project_part, update_project_sequence, Model,
-        PartChangeError, PartsDialog, StatusAction,
+        parts, playing_score_row, rename_project_part, update_project_sequence, Dialog, Model,
+        PartChangeError, PartsDialog, RowEditConfirmationMsg, RowEditRequested, StatusAction,
     };
     use crate::{
-        part::{Part, PartName, PartScore},
+        part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
@@ -2002,6 +2124,122 @@ mod tests {
         });
         assert!(!project_directory.join("intro.csv").exists());
         assert!(project_directory.join("opening-theme.csv").is_file());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn repeated_insert_clicks_add_one_selected_row_at_a_time(cx: &mut TestAppContext) {
+        let root = temp_root("repeated-row-insert");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let part = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        PartScore::from_rows(vec![vec![String::new()]; 2])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let first_row = cx.debug_bounds("score-row-header-0").unwrap();
+        cx.simulate_click(first_row.center(), Default::default());
+        let insert_after = cx.debug_bounds("insert-row-after-control").unwrap();
+        cx.simulate_click(insert_after.center(), Default::default());
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.parts()[0].length),
+            3
+        );
+
+        let insert_after = cx.debug_bounds("insert-row-after-control").unwrap();
+        cx.simulate_click(insert_after.center(), Default::default());
+        cx.run_until_parked();
+
+        let (project, document) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.project.clone(),
+                model.score_documents[0].document.clone(),
+            )
+        });
+        assert_eq!(project.parts()[0].length, 4);
+        assert_eq!(cx.update(|_, cx| document.read(cx).score().rows().len()), 4);
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
+        assert_eq!(
+            PartScore::load(&project_directory, &project.parts()[0], project.voices())
+                .unwrap()
+                .rows()
+                .len(),
+            4
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn clearing_populated_rows_requires_confirmation_and_keeps_the_part_length(
+        cx: &mut TestAppContext,
+    ) {
+        let root = temp_root("confirmed-row-clear");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let part = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        PartScore::from_rows(vec![vec!["C4".to_string()], vec![String::new()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let first_row = cx.debug_bounds("score-row-header-0").unwrap();
+        cx.simulate_click(first_row.center(), Default::default());
+        let clear = cx.debug_bounds("clear-score-rows-control").unwrap();
+        cx.simulate_click(clear.center(), Default::default());
+        cx.run_until_parked();
+
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_some()));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "C4"
+        );
+
+        let dialog = cx.update(|_, cx| match &model.read(cx).dialog {
+            Some(Dialog::RowEdit(dialog)) => dialog.clone(),
+            _ => panic!("expected a row edit confirmation"),
+        });
+        model.update(cx, |model, cx| {
+            model.on_row_edit_confirmation_msg(
+                dialog,
+                &RowEditConfirmationMsg::Confirmed(RowEditRequested {
+                    source_editor: u64::MAX,
+                    part_name: part.name,
+                    edit: PartRowEdit::Clear(ScoreRowRange::new(0, 0, 2).unwrap()),
+                    populated_cell_count: 1,
+                }),
+                cx,
+            );
+        });
+
+        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_none()));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.parts()[0].length),
+            2
+        );
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            ""
+        );
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
 
         fs::remove_dir_all(root).unwrap();
     }

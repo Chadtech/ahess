@@ -360,6 +360,111 @@ pub struct PartScore {
     rows: Vec<Vec<String>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScoreRowIndex(usize);
+
+impl ScoreRowIndex {
+    pub fn new(index: usize, row_count: usize) -> Option<Self> {
+        (index < row_count).then_some(Self(index))
+    }
+
+    pub fn value(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScoreRowRange {
+    first: ScoreRowIndex,
+    last: ScoreRowIndex,
+}
+
+impl ScoreRowRange {
+    pub fn new(first: usize, last: usize, row_count: usize) -> Option<Self> {
+        (first <= last).then_some(Self {
+            first: ScoreRowIndex::new(first, row_count)?,
+            last: ScoreRowIndex::new(last, row_count)?,
+        })
+    }
+
+    pub fn first(self) -> usize {
+        self.first.value()
+    }
+
+    pub fn last(self) -> usize {
+        self.last.value()
+    }
+
+    pub fn len(self) -> usize {
+        self.last() - self.first() + 1
+    }
+
+    pub fn contains(self, row: usize) -> bool {
+        (self.first()..=self.last()).contains(&row)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PartRowEdit {
+    InsertBefore(ScoreRowIndex),
+    InsertAfter(ScoreRowIndex),
+    Clear(ScoreRowRange),
+    Delete(ScoreRowRange),
+}
+
+impl PartRowEdit {
+    pub fn selected_rows(self, row_count: usize) -> Option<ScoreRowRange> {
+        match self {
+            Self::InsertBefore(row) | Self::InsertAfter(row) => {
+                ScoreRowRange::new(row.value(), row.value(), row_count)
+            }
+            Self::Clear(rows) | Self::Delete(rows) => {
+                ScoreRowRange::new(rows.first(), rows.last(), row_count)
+            }
+        }
+    }
+
+    pub fn selection_after(self, original_row_count: usize) -> Option<ScoreRowRange> {
+        match self {
+            Self::InsertBefore(row) => {
+                ScoreRowRange::new(row.value(), row.value(), original_row_count.checked_add(1)?)
+            }
+            Self::InsertAfter(row) => {
+                let inserted = row.value().checked_add(1)?;
+                ScoreRowRange::new(inserted, inserted, original_row_count.checked_add(1)?)
+            }
+            Self::Clear(rows) => ScoreRowRange::new(rows.first(), rows.last(), original_row_count),
+            Self::Delete(rows) => {
+                let remaining = original_row_count.checked_sub(rows.len())?;
+                if remaining == 0 {
+                    return None;
+                }
+                let selected = rows.first().min(remaining - 1);
+                ScoreRowRange::new(selected, selected, remaining)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PartRowEditError {
+    SelectionOutOfBounds,
+    WouldDeleteEveryRow,
+}
+
+impl fmt::Display for PartRowEditError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SelectionOutOfBounds => formatter.write_str("the selected beats no longer exist"),
+            Self::WouldDeleteEveryRow => {
+                formatter.write_str("a part must keep at least one beat; clear the rows instead")
+            }
+        }
+    }
+}
+
+impl Error for PartRowEditError {}
+
 impl PartScore {
     pub fn from_rows(rows: Vec<Vec<String>>) -> Self {
         Self { rows }
@@ -406,6 +511,40 @@ impl PartScore {
         &self.rows
     }
 
+    pub fn edited_rows(
+        &self,
+        edit: PartRowEdit,
+        voice_count: usize,
+    ) -> Result<Self, PartRowEditError> {
+        let row_count = self.rows.len();
+        let selected = edit
+            .selected_rows(row_count)
+            .ok_or(PartRowEditError::SelectionOutOfBounds)?;
+        let mut rows = self.rows.clone();
+
+        match edit {
+            PartRowEdit::InsertBefore(_) => {
+                rows.insert(selected.first(), vec![String::new(); voice_count]);
+            }
+            PartRowEdit::InsertAfter(_) => {
+                rows.insert(selected.last() + 1, vec![String::new(); voice_count]);
+            }
+            PartRowEdit::Clear(_) => {
+                for row in &mut rows[selected.first()..=selected.last()] {
+                    row.fill(String::new());
+                }
+            }
+            PartRowEdit::Delete(_) => {
+                if selected.len() == row_count {
+                    return Err(PartRowEditError::WouldDeleteEveryRow);
+                }
+                rows.drain(selected.first()..=selected.last());
+            }
+        }
+
+        Ok(Self::from_rows(rows))
+    }
+
     pub fn resolved_rows(
         &self,
         part: &Part,
@@ -440,14 +579,21 @@ impl PartScore {
         part: &Part,
         project: &Project,
     ) -> Result<(), ScoreError> {
-        self.resolved_rows(part, project)?;
-        let contents = serialize_part_table(project.voices(), &self.rows).map_err(|source| {
-            ScoreError::Csv {
-                path: part_file_path(project_directory.as_ref(), part),
-                source,
-            }
-        })?;
+        let contents = self.validated_contents(project_directory.as_ref(), part, project)?;
         atomic_write_part_score(project_directory.as_ref(), part, &contents)
+    }
+
+    pub(crate) fn validated_contents(
+        &self,
+        project_directory: &Path,
+        part: &Part,
+        project: &Project,
+    ) -> Result<Vec<u8>, ScoreError> {
+        self.resolved_rows(part, project)?;
+        serialize_part_table(project.voices(), &self.rows).map_err(|source| ScoreError::Csv {
+            path: part_file_path(project_directory, part),
+            source,
+        })
     }
 
     pub fn save_recovery(
@@ -1140,8 +1286,8 @@ mod tests {
 
     use super::{
         available_deleted_path, create_part_file, csv_file_name, duplicate_part_file,
-        rename_part_file, soft_delete_part_file, DeletedPartPathError, Part, PartName, PartScore,
-        DELETED_PARTS_DIRECTORY,
+        rename_part_file, soft_delete_part_file, DeletedPartPathError, Part, PartName, PartRowEdit,
+        PartRowEditError, PartScore, ScoreRowIndex, ScoreRowRange, DELETED_PARTS_DIRECTORY,
     };
     use crate::{
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
@@ -1155,6 +1301,73 @@ mod tests {
             "part-a.csv"
         );
         assert!(csv_file_name(&PartName::new("!!!")).is_err());
+    }
+
+    #[test]
+    fn row_edits_insert_one_clear_ranges_and_preserve_one_row() {
+        let score = PartScore::from_rows(vec![
+            vec!["a".to_string(), "b".to_string()],
+            vec!["c".to_string(), "d".to_string()],
+            vec!["e".to_string(), "f".to_string()],
+        ]);
+
+        let second = ScoreRowIndex::new(1, 3).unwrap();
+        let inserted_before = score
+            .edited_rows(PartRowEdit::InsertBefore(second), 2)
+            .unwrap();
+        assert_eq!(
+            inserted_before.rows(),
+            &[
+                vec!["a".to_string(), "b".to_string()],
+                vec![String::new(), String::new()],
+                vec!["c".to_string(), "d".to_string()],
+                vec!["e".to_string(), "f".to_string()],
+            ]
+        );
+
+        let inserted_after = score
+            .edited_rows(PartRowEdit::InsertAfter(second), 2)
+            .unwrap();
+        assert_eq!(inserted_after.rows()[2], [String::new(), String::new()]);
+
+        let last_two = ScoreRowRange::new(1, 2, 3).unwrap();
+        let cleared = score.edited_rows(PartRowEdit::Clear(last_two), 2).unwrap();
+        assert_eq!(cleared.rows()[0], ["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            &cleared.rows()[1..],
+            &[
+                vec![String::new(), String::new()],
+                vec![String::new(), String::new()],
+            ]
+        );
+
+        let deleted = score.edited_rows(PartRowEdit::Delete(last_two), 2).unwrap();
+        assert_eq!(deleted.rows(), &[vec!["a".to_string(), "b".to_string()]]);
+        assert_eq!(
+            score
+                .edited_rows(PartRowEdit::Delete(ScoreRowRange::new(0, 2, 3).unwrap()), 2,)
+                .unwrap_err(),
+            PartRowEditError::WouldDeleteEveryRow
+        );
+    }
+
+    #[test]
+    fn insertion_selects_the_new_row_and_deletion_selects_the_nearest_survivor() {
+        let selected = ScoreRowRange::new(1, 2, 4).unwrap();
+        assert_eq!(
+            PartRowEdit::InsertBefore(ScoreRowIndex::new(selected.first(), 4).unwrap())
+                .selection_after(4),
+            ScoreRowRange::new(1, 1, 5)
+        );
+        assert_eq!(
+            PartRowEdit::InsertAfter(ScoreRowIndex::new(selected.last(), 4).unwrap())
+                .selection_after(4),
+            ScoreRowRange::new(3, 3, 5)
+        );
+        assert_eq!(
+            PartRowEdit::Delete(selected).selection_after(4),
+            ScoreRowRange::new(1, 1, 2)
+        );
     }
 
     #[test]

@@ -149,6 +149,13 @@ reordered, or unrelated score cells are edited. Changing the project seed
 deterministically changes the complete timing pattern. Random sampling happens
 while playback data is prepared, never in the real-time audio callback.
 
+Inserting or deleting score rows is a structural timing edit: it changes the
+part length, shifts later absolute arrangement beats, and therefore may change
+their deterministic timing variance. The editor stops active playback before
+publishing that coordinated project-and-score update. Clearing rows keeps the
+part length and absolute beat positions unchanged and can update live playback
+like an ordinary cell edit.
+
 ## Domain sketch
 
 The exact names may change, but the model should preserve these relationships.

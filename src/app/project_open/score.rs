@@ -5,16 +5,20 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, AsyncApp, Context, Entity, EventEmitter, ScrollHandle, SharedString, Task,
-    WeakEntity, Window,
+    div, prelude::*, AsyncApp, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ScrollHandle, SharedString, Task, WeakEntity, Window,
 };
 
 use crate::{
-    part::{Part, PartScore, ScoreError},
+    part::{
+        Part, PartRowEdit, PartRowEditError, PartScore, ScoreError, ScoreRowIndex, ScoreRowRange,
+    },
     project::Project,
     style as s,
     view::{
+        button::{self, Button},
         data_grid,
+        dialog::{destructive_confirmation, title_bar},
         dropdown::{self, Dropdown},
         text_input::{Changed, TextInput},
     },
@@ -64,6 +68,11 @@ pub enum DocumentEvent {
     Saved,
     RecoverySaved,
     SaveFailed,
+    RowsCleared,
+    StructureChanged {
+        source_editor: u64,
+        selected_rows: ScoreRowRange,
+    },
     Reset,
     ProjectChanged,
 }
@@ -73,6 +82,14 @@ impl EventEmitter<DocumentEvent> for ScoreDocument {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartSelected {
     pub part_name: crate::part::PartName,
+}
+
+#[derive(Clone, Debug)]
+pub struct RowEditRequested {
+    pub source_editor: u64,
+    pub part_name: crate::part::PartName,
+    pub edit: PartRowEdit,
+    pub populated_cell_count: usize,
 }
 
 impl ScoreDocument {
@@ -177,6 +194,51 @@ impl ScoreDocument {
             row,
             column,
             value,
+        });
+        cx.notify();
+    }
+
+    pub fn clear_rows(
+        &mut self,
+        rows: ScoreRowRange,
+        cx: &mut Context<Self>,
+    ) -> Result<(), PartRowEditError> {
+        let score = self
+            .score
+            .edited_rows(PartRowEdit::Clear(rows), self.project.voices().len())?;
+        if score == self.score {
+            return Ok(());
+        }
+
+        self.score = score;
+        self.dirty = true;
+        self.last_save_error = None;
+        self.schedule_autosave(cx);
+        cx.emit(DocumentEvent::RowsCleared);
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn apply_saved_structure_change(
+        &mut self,
+        project: Project,
+        part: Part,
+        score: PartScore,
+        source_editor: u64,
+        selected_rows: ScoreRowRange,
+        cx: &mut Context<Self>,
+    ) {
+        self.project = project;
+        self.part = part;
+        self.score = score;
+        self.dirty = false;
+        self.last_save_error = None;
+        self.save_state = SaveState::Saved;
+        self.pending_autosave_since = None;
+        self.autosave_task.take();
+        cx.emit(DocumentEvent::StructureChanged {
+            source_editor,
+            selected_rows,
         });
         cx.notify();
     }
@@ -300,17 +362,160 @@ impl ScoreDocument {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AnchoredRowSelection {
+    anchor: usize,
+    head: usize,
+}
+
+impl AnchoredRowSelection {
+    fn new(anchor: usize, head: usize, row_count: usize) -> Option<Self> {
+        (anchor < row_count && head < row_count).then_some(Self { anchor, head })
+    }
+
+    fn rows(self, row_count: usize) -> Option<ScoreRowRange> {
+        ScoreRowRange::new(
+            self.anchor.min(self.head),
+            self.anchor.max(self.head),
+            row_count,
+        )
+    }
+}
+
+pub enum RowEditConfirmationMsg {
+    Confirmed(RowEditRequested),
+    Cancelled,
+}
+
+pub struct RowEditConfirmation {
+    request: RowEditRequested,
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+}
+
+impl EventEmitter<RowEditConfirmationMsg> for RowEditConfirmation {}
+
+impl RowEditConfirmation {
+    pub fn new(request: RowEditRequested, cx: &mut Context<Self>) -> Self {
+        let source_editor = request.source_editor;
+        let cancel_button =
+            cx.new(move |_| Button::new(("cancel-row-edit", source_editor), "keep rows"));
+        let confirm_label = match request.edit {
+            PartRowEdit::Clear(_) => "clear rows",
+            PartRowEdit::Delete(_) => "delete rows",
+            PartRowEdit::InsertBefore(_) | PartRowEdit::InsertAfter(_) => "continue",
+        };
+        let confirm_button =
+            cx.new(move |_| Button::new(("confirm-row-edit", source_editor), confirm_label));
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
+            .detach();
+
+        Self {
+            request,
+            cancel_button,
+            confirm_button,
+        }
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(RowEditConfirmationMsg::Cancelled);
+    }
+
+    fn on_confirm_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(RowEditConfirmationMsg::Confirmed(self.request.clone()));
+    }
+
+    fn message(&self) -> String {
+        let cell_label = if self.request.populated_cell_count == 1 {
+            "score value"
+        } else {
+            "score values"
+        };
+        let (verb, rows, consequence) = match self.request.edit {
+            PartRowEdit::Clear(rows) => ("clear", rows, "the part length will stay the same"),
+            PartRowEdit::Delete(rows) => (
+                "delete",
+                rows,
+                "later beats will shift earlier and the part will become shorter",
+            ),
+            PartRowEdit::InsertBefore(_) | PartRowEdit::InsertAfter(_) => {
+                return "continue with this row change?".to_string();
+            }
+        };
+        let beat_label = if rows.len() == 1 {
+            format!("beat {}", rows.first() + 1)
+        } else {
+            format!("beats {}–{}", rows.first() + 1, rows.last() + 1)
+        };
+        format!(
+            "{verb} {beat_label}? {} {cell_label} will be removed; {consequence}.",
+            self.request.populated_cell_count
+        )
+    }
+}
+
+impl Render for RowEditConfirmation {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let actions = div()
+            .flex()
+            .justify_end()
+            .gap(s::S3)
+            .child(
+                div()
+                    .debug_selector(|| "cancel-row-edit-control".to_string())
+                    .child(self.cancel_button.clone()),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "confirm-row-edit-control".to_string())
+                    .child(self.confirm_button.clone()),
+            );
+        s::raised(
+            div()
+                .flex()
+                .flex_col()
+                .w(s::S10)
+                .bg(s::GRAY2)
+                .child(title_bar("confirm row change", None))
+                .child(
+                    div()
+                        .p(s::CONTENT_PADDING)
+                        .child(destructive_confirmation(self.message(), actions)),
+                ),
+        )
+    }
+}
+
 pub struct ScoreEditor {
     editor_id: u64,
     document: Entity<ScoreDocument>,
     part_names: Vec<crate::part::PartName>,
     part_dropdown: Entity<Dropdown>,
     cells: Vec<Vec<Entity<TextInput>>>,
+    row_selection: Option<AnchoredRowSelection>,
+    drag_anchor: Option<usize>,
+    insert_before_button: Entity<Button>,
+    insert_after_button: Entity<Button>,
+    clear_rows_button: Entity<Button>,
+    delete_rows_button: Entity<Button>,
     playing_row: Option<usize>,
     scroll_handle: ScrollHandle,
 }
 
 impl EventEmitter<PartSelected> for ScoreEditor {}
+impl EventEmitter<RowEditRequested> for ScoreEditor {}
 
 impl ScoreEditor {
     pub fn new(
@@ -332,17 +537,34 @@ impl ScoreEditor {
             .map(|name| name.as_str().to_string())
             .collect::<Vec<_>>();
         let part_dropdown = cx.new(move |cx| {
-            Dropdown::new(
+            Dropdown::new_with_trigger_max_width(
                 ("score-part", view_index),
                 dropdown_options,
                 selected_index,
+                s::S8,
                 cx,
             )
         });
         let cells = Self::build_cells(editor_id, &score, cx);
+        let insert_before_button = cx
+            .new(move |_| Button::new(("insert-row-before", editor_id), "+ above").disabled(true));
+        let insert_after_button =
+            cx.new(move |_| Button::new(("insert-row-after", editor_id), "+ below").disabled(true));
+        let clear_rows_button =
+            cx.new(move |_| Button::new(("clear-score-rows", editor_id), "clear").disabled(true));
+        let delete_rows_button =
+            cx.new(move |_| Button::new(("delete-score-rows", editor_id), "delete").disabled(true));
 
         cx.subscribe(&document, Self::on_document_event).detach();
         cx.subscribe(&part_dropdown, Self::on_part_selected)
+            .detach();
+        cx.subscribe(&insert_before_button, Self::on_insert_before_clicked)
+            .detach();
+        cx.subscribe(&insert_after_button, Self::on_insert_after_clicked)
+            .detach();
+        cx.subscribe(&clear_rows_button, Self::on_clear_rows_clicked)
+            .detach();
+        cx.subscribe(&delete_rows_button, Self::on_delete_rows_clicked)
             .detach();
 
         Self {
@@ -351,6 +573,12 @@ impl ScoreEditor {
             part_names,
             part_dropdown,
             cells,
+            row_selection: None,
+            drag_anchor: None,
+            insert_before_button,
+            insert_after_button,
+            clear_rows_button,
+            delete_rows_button,
             playing_row: None,
             scroll_handle: ScrollHandle::new(),
         }
@@ -428,6 +656,166 @@ impl ScoreEditor {
         });
     }
 
+    fn selected_rows(&self) -> Option<ScoreRowRange> {
+        self.row_selection
+            .and_then(|selection| selection.rows(self.cells.len()))
+    }
+
+    fn set_row_selection(
+        &mut self,
+        selection: Option<AnchoredRowSelection>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.row_selection == selection {
+            return;
+        }
+        self.row_selection = selection;
+        self.sync_row_action_buttons(cx);
+        cx.notify();
+    }
+
+    fn sync_row_action_buttons(&self, cx: &mut Context<Self>) {
+        let selected = self.selected_rows();
+        let no_selection = selected.is_none();
+        let delete_disabled = selected.is_none_or(|rows| rows.len() == self.cells.len());
+        for button in [
+            &self.insert_before_button,
+            &self.insert_after_button,
+            &self.clear_rows_button,
+        ] {
+            button.update(cx, |button, cx| button.set_disabled(no_selection, cx));
+        }
+        self.delete_rows_button.update(cx, |button, cx| {
+            button.set_disabled(delete_disabled, cx);
+        });
+    }
+
+    fn on_row_mouse_down(
+        &mut self,
+        row: usize,
+        event: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let toggles_off = !event.modifiers.shift
+            && self
+                .selected_rows()
+                .is_some_and(|rows| rows.len() == 1 && rows.contains(row));
+        if toggles_off {
+            self.drag_anchor = Some(row);
+            self.set_row_selection(None, cx);
+            return;
+        }
+        let anchor = if event.modifiers.shift {
+            self.row_selection.map_or(row, |selection| selection.anchor)
+        } else {
+            row
+        };
+        self.drag_anchor = Some(anchor);
+        self.set_row_selection(AnchoredRowSelection::new(anchor, row, self.cells.len()), cx);
+    }
+
+    fn on_row_mouse_move(
+        &mut self,
+        row: usize,
+        event: &MouseMoveEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging() {
+            return;
+        }
+        let Some(anchor) = self.drag_anchor else {
+            return;
+        };
+        self.set_row_selection(AnchoredRowSelection::new(anchor, row, self.cells.len()), cx);
+    }
+
+    fn on_row_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.drag_anchor = None;
+    }
+
+    fn on_insert_before_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(rows) = self.selected_rows() else {
+            return;
+        };
+        let Some(row) = ScoreRowIndex::new(rows.first(), self.cells.len()) else {
+            return;
+        };
+        self.request_row_edit(PartRowEdit::InsertBefore(row), 0, cx);
+    }
+
+    fn on_insert_after_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(rows) = self.selected_rows() else {
+            return;
+        };
+        let Some(row) = ScoreRowIndex::new(rows.last(), self.cells.len()) else {
+            return;
+        };
+        self.request_row_edit(PartRowEdit::InsertAfter(row), 0, cx);
+    }
+
+    fn on_clear_rows_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(rows) = self.selected_rows() else {
+            return;
+        };
+        let populated_cell_count = self.populated_cell_count(rows, cx);
+        self.request_row_edit(PartRowEdit::Clear(rows), populated_cell_count, cx);
+    }
+
+    fn on_delete_rows_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(rows) = self.selected_rows() else {
+            return;
+        };
+        if rows.len() == self.cells.len() {
+            return;
+        }
+        let populated_cell_count = self.populated_cell_count(rows, cx);
+        self.request_row_edit(PartRowEdit::Delete(rows), populated_cell_count, cx);
+    }
+
+    fn populated_cell_count(&self, rows: ScoreRowRange, cx: &Context<Self>) -> usize {
+        self.document.read(cx).score().rows()[rows.first()..=rows.last()]
+            .iter()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .count()
+    }
+
+    fn request_row_edit(
+        &self,
+        edit: PartRowEdit,
+        populated_cell_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(RowEditRequested {
+            source_editor: self.editor_id,
+            part_name: self.document.read(cx).part().name.clone(),
+            edit,
+            populated_cell_count,
+        });
+    }
+
     fn on_document_event(
         &mut self,
         _: Entity<ScoreDocument>,
@@ -448,9 +836,34 @@ impl ScoreEditor {
                     }
                 }
             }
+            DocumentEvent::RowsCleared => {
+                let score = self.document.read(cx).score().clone();
+                self.cells = Self::build_cells(self.editor_id, &score, cx);
+            }
+            DocumentEvent::StructureChanged {
+                source_editor,
+                selected_rows,
+            } => {
+                let score = self.document.read(cx).score().clone();
+                self.cells = Self::build_cells(self.editor_id, &score, cx);
+                self.drag_anchor = None;
+                self.row_selection = if *source_editor == self.editor_id {
+                    AnchoredRowSelection::new(
+                        selected_rows.first(),
+                        selected_rows.last(),
+                        self.cells.len(),
+                    )
+                } else {
+                    None
+                };
+                self.sync_row_action_buttons(cx);
+            }
             DocumentEvent::Reset => {
                 let score = self.document.read(cx).score().clone();
                 self.cells = Self::build_cells(self.editor_id, &score, cx);
+                self.drag_anchor = None;
+                self.row_selection = None;
+                self.sync_row_action_buttons(cx);
             }
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
@@ -502,10 +915,41 @@ impl Render for ScoreEditor {
             .into_iter()
             .map(|issue| (issue.row, issue.column))
             .collect::<Vec<_>>();
+        let row_actions = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_end()
+            .gap(s::S4)
+            .children([
+                div()
+                    .debug_selector(|| "insert-row-before-control".to_string())
+                    .child(self.insert_before_button.clone()),
+                div()
+                    .debug_selector(|| "insert-row-after-control".to_string())
+                    .child(self.insert_after_button.clone()),
+                div()
+                    .debug_selector(|| "clear-score-rows-control".to_string())
+                    .child(self.clear_rows_button.clone()),
+                div()
+                    .debug_selector(|| "delete-score-rows-control".to_string())
+                    .child(self.delete_rows_button.clone()),
+            ]);
         let header = div()
             .flex()
             .items_center()
-            .child(self.part_dropdown.clone());
+            .justify_between()
+            .min_w(s::S0)
+            .gap(s::S4)
+            .child(
+                div()
+                    .flex_shrink()
+                    .min_w(s::S0)
+                    .overflow_hidden()
+                    .child(self.part_dropdown.clone()),
+            )
+            .child(row_actions);
+        let selected_rows = self.selected_rows();
         let score_content = if !has_voices {
             div()
                 .flex()
@@ -515,16 +959,31 @@ impl Render for ScoreEditor {
                 .text_color(s::TEXT_DEFAULT)
                 .child("add a sin or saw voice to edit and play this part")
         } else {
-            data_grid::editable(
+            data_grid::editable_with_row_selection(
                 ("score-grid", self.editor_id),
                 column_labels,
                 &self.cells,
                 &invalid_cells,
+                selected_rows,
                 self.playing_row,
                 &self.scroll_handle,
+                |row, header| {
+                    header
+                        .debug_selector(move || format!("score-row-header-{row}"))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |editor, event, window, cx| {
+                                editor.on_row_mouse_down(row, event, window, cx);
+                            }),
+                        )
+                        .on_mouse_move(cx.listener(move |editor, event, window, cx| {
+                            editor.on_row_mouse_move(row, event, window, cx);
+                        }))
+                        .on_mouse_up(MouseButton::Left, cx.listener(Self::on_row_mouse_up))
+                        .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_row_mouse_up))
+                },
             )
         };
-
         s::raised(
             div()
                 .flex()
@@ -553,7 +1012,9 @@ impl Render for ScoreEditor {
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
-    use super::ScoreDocument;
+    use gpui::{point, px, AppContext, Modifiers, TestAppContext};
+
+    use super::{ScoreDocument, ScoreEditor};
     use crate::{
         part::{Part, PartScore},
         pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
@@ -605,5 +1066,84 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!((issues[0].row, issues[0].column), (1, 0));
         assert!(issues[0].message.contains("not defined in \"embers\""));
+    }
+
+    #[gpui::test]
+    fn row_actions_stay_visible_and_follow_the_row_selection(cx: &mut TestAppContext) {
+        let part = Part::new("part-a", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec![String::new()], vec![String::new()]]);
+        let part_name = part.name.clone();
+        let (editor, cx) = cx.add_window_view(move |_, cx| {
+            let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
+            ScoreEditor::new(0, document, vec![part_name], cx)
+        });
+        let (insert_before, insert_after, clear, delete) = cx.update(|_, cx| {
+            let editor = editor.read(cx);
+            (
+                editor.insert_before_button.clone(),
+                editor.insert_after_button.clone(),
+                editor.clear_rows_button.clone(),
+                editor.delete_rows_button.clone(),
+            )
+        });
+
+        for id in [
+            "insert-row-before-control",
+            "insert-row-after-control",
+            "clear-score-rows-control",
+            "delete-score-rows-control",
+        ] {
+            assert!(cx.debug_bounds(id).is_some(), "missing visible button {id}");
+        }
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
+
+        let first = cx.debug_bounds("score-row-header-0").unwrap();
+        cx.simulate_click(
+            point(
+                first.origin.x + first.size.width + px(20.0),
+                first.center().y,
+            ),
+            Modifiers::default(),
+        );
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
+
+        cx.simulate_click(first.center(), Modifiers::default());
+        assert!(!cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(!cx.update(|_, cx| insert_after.read(cx).is_disabled()));
+        assert!(!cx.update(|_, cx| clear.read(cx).is_disabled()));
+        assert!(!cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.debug_bounds("score-selected-row-header-0").is_some());
+
+        cx.simulate_click(first.center(), Modifiers::default());
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
+
+        cx.simulate_click(first.center(), Modifiers::default());
+        let second = cx.debug_bounds("score-row-header-1").unwrap();
+        cx.simulate_click(
+            second.center(),
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        assert!(!cx.update(|_, cx| clear.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.debug_bounds("score-selected-row-header-0").is_some());
+        assert!(cx.debug_bounds("score-selected-row-header-1").is_some());
     }
 }

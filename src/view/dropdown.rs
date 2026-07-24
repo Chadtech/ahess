@@ -33,8 +33,34 @@ impl Dropdown {
         selected_index: usize,
         cx: &mut Context<Self>,
     ) -> Self {
-        let id = id.into();
         let options = options.into_iter().map(Into::into).collect::<Vec<_>>();
+        Self::build(id.into(), options, selected_index, None, cx)
+    }
+
+    pub fn new_with_trigger_max_width(
+        id: impl Into<ElementId>,
+        options: impl IntoIterator<Item = impl Into<SharedString>>,
+        selected_index: usize,
+        trigger_max_width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let options = options.into_iter().map(Into::into).collect::<Vec<_>>();
+        Self::build(
+            id.into(),
+            options,
+            selected_index,
+            Some(trigger_max_width),
+            cx,
+        )
+    }
+
+    fn build(
+        id: ElementId,
+        options: Vec<SharedString>,
+        selected_index: usize,
+        trigger_max_width: Option<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         assert!(
             !options.is_empty(),
             "a dropdown requires at least one option"
@@ -46,8 +72,14 @@ impl Dropdown {
 
         let trigger = cx.new({
             let trigger_id = (id.clone(), "trigger");
-            let label = trigger_label(&options[selected_index]);
-            move |_| Button::new(trigger_id, label)
+            let label = options[selected_index].clone();
+            move |_| {
+                let button = Button::new(trigger_id, label).trailing_label("▾");
+                match trigger_max_width {
+                    Some(width) => button.max_width(width),
+                    None => button,
+                }
+            }
         });
         cx.subscribe(&trigger, Self::on_trigger_clicked).detach();
 
@@ -158,7 +190,7 @@ impl Dropdown {
     }
 
     fn sync_trigger(&self, cx: &mut Context<Self>) {
-        let label = trigger_label(&self.options[self.selected_index]);
+        let label = self.options[self.selected_index].clone();
         self.trigger.update(cx, |button, cx| {
             button.set_label(label, cx);
         });
@@ -261,10 +293,6 @@ impl Render for Dropdown {
                     .then(|| deferred(self.menu(window, cx)).with_priority(1)),
             )
     }
-}
-
-fn trigger_label(option: &SharedString) -> SharedString {
-    format!("{option} ▾").into()
 }
 
 fn trigger_height() -> gpui::Pixels {
@@ -381,6 +409,32 @@ mod tests {
             menu.size.width,
             trigger.size.width
         );
+    }
+
+    #[gpui::test]
+    fn capped_trigger_truncates_without_capping_the_menu(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| DropdownHost {
+            dropdown: cx.new(|cx| {
+                Dropdown::new_with_trigger_max_width(
+                    "capped-dropdown",
+                    ["a selected option much wider than its trigger", "two"],
+                    0,
+                    crate::style::S8,
+                    cx,
+                )
+            }),
+        });
+        let trigger = cx.debug_bounds("capped-dropdown-trigger").unwrap();
+        assert!(
+            trigger.size.width <= crate::style::S8,
+            "capped trigger width was {}",
+            trigger.size.width
+        );
+
+        cx.simulate_click(trigger.center(), Modifiers::default());
+
+        let menu = cx.debug_bounds("capped-dropdown-menu").unwrap();
+        assert!(menu.size.width > trigger.size.width);
     }
 
     #[gpui::test]
