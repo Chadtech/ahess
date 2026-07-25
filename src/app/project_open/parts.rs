@@ -35,6 +35,10 @@ pub enum Msg {
     DeleteRequested {
         name: PartName,
     },
+    CombineRequested {
+        sources: Vec<PartName>,
+        name: String,
+    },
     SequenceChangeRequested {
         sequence: Vec<PartName>,
         selected_occurrence: Option<usize>,
@@ -44,6 +48,7 @@ pub enum Msg {
 
 struct ListView {
     add_new_button: Entity<Button>,
+    combine_button: Entity<Button>,
     edit_button: Entity<Button>,
     duplicate_button: Entity<Button>,
     delete_button: Entity<Button>,
@@ -88,6 +93,19 @@ enum DialogView {
         save_button: Entity<Button>,
         form_error: Option<String>,
     },
+    Combine {
+        available_part: Option<PartName>,
+        sources: Vec<PartName>,
+        selected_source: Option<usize>,
+        name: Entity<TextInput>,
+        add_source_button: Entity<Button>,
+        move_source_earlier_button: Entity<Button>,
+        move_source_later_button: Entity<Button>,
+        remove_source_button: Entity<Button>,
+        cancel_button: Entity<Button>,
+        combine_button: Entity<Button>,
+        form_error: Option<String>,
+    },
 }
 
 pub struct PartsDialog {
@@ -123,6 +141,7 @@ impl PartsDialog {
 
     fn list_view(cx: &mut Context<Self>) -> DialogView {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
+        let combine_button = cx.new(|_| Button::new("combine-parts", "combine"));
         let edit_button = cx.new(|_| Button::new("edit-part", "edit part"));
         let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate part"));
         let delete_button = cx.new(|_| Button::new("delete-part", "delete part"));
@@ -136,6 +155,8 @@ impl PartsDialog {
         let remove_occurrence_button = cx.new(|_| Button::new("remove-arrangement-part", "remove"));
 
         cx.subscribe(&add_new_button, Self::on_add_new_clicked)
+            .detach();
+        cx.subscribe(&combine_button, Self::on_combine_clicked)
             .detach();
         cx.subscribe(&edit_button, Self::on_edit_clicked).detach();
         cx.subscribe(&duplicate_button, Self::on_duplicate_clicked)
@@ -161,6 +182,7 @@ impl PartsDialog {
 
         DialogView::List(Box::new(ListView {
             add_new_button,
+            combine_button,
             edit_button,
             duplicate_button,
             delete_button,
@@ -256,6 +278,56 @@ impl PartsDialog {
         }
     }
 
+    fn combine_view(parts: &[Part], cx: &mut Context<Self>) -> DialogView {
+        let available_part = parts.first().map(|part| part.name.clone());
+        let name = cx.new(|cx| TextInput::new("", "combined part", cx));
+        let add_source_button = cx.new(|_| {
+            Button::new("add-combination-source", "add →").disabled(available_part.is_none())
+        });
+        let move_source_earlier_button =
+            cx.new(|_| Button::square("move-combination-source-earlier", "↑").disabled(true));
+        let move_source_later_button =
+            cx.new(|_| Button::square("move-combination-source-later", "↓").disabled(true));
+        let remove_source_button =
+            cx.new(|_| Button::new("remove-combination-source", "remove").disabled(true));
+        let cancel_button = cx.new(|_| Button::new("cancel-combine-parts", "cancel"));
+        let combine_button =
+            cx.new(|_| Button::new("confirm-combine-parts", "combine").disabled(true));
+
+        cx.subscribe(&add_source_button, Self::on_add_source_clicked)
+            .detach();
+        cx.subscribe(
+            &move_source_earlier_button,
+            Self::on_move_source_earlier_clicked,
+        )
+        .detach();
+        cx.subscribe(
+            &move_source_later_button,
+            Self::on_move_source_later_clicked,
+        )
+        .detach();
+        cx.subscribe(&remove_source_button, Self::on_remove_source_clicked)
+            .detach();
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&combine_button, Self::on_combine_confirmed)
+            .detach();
+
+        DialogView::Combine {
+            available_part,
+            sources: Vec::new(),
+            selected_source: None,
+            name,
+            add_source_button,
+            move_source_earlier_button,
+            move_source_later_button,
+            remove_source_button,
+            cancel_button,
+            combine_button,
+            form_error: None,
+        }
+    }
+
     fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         cx.emit(Msg::Closed);
     }
@@ -267,6 +339,16 @@ impl PartsDialog {
         cx: &mut Context<Self>,
     ) {
         self.view = Self::add_view(cx);
+        cx.notify();
+    }
+
+    fn on_combine_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.view = Self::combine_view(&self.parts, cx);
         cx.notify();
     }
 
@@ -383,6 +465,127 @@ impl PartsDialog {
             source: source.clone(),
             name: name.read(cx).value(),
         });
+    }
+
+    fn on_combine_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Combine { sources, name, .. } = &self.view else {
+            return;
+        };
+        if sources.len() < 2 {
+            return;
+        }
+        cx.emit(Msg::CombineRequested {
+            sources: sources.clone(),
+            name: name.read(cx).value(),
+        });
+    }
+
+    fn on_add_source_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Combine {
+            available_part,
+            sources,
+            selected_source,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        let Some(source) = available_part.clone() else {
+            return;
+        };
+        sources.push(source);
+        *selected_source = Some(sources.len() - 1);
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
+    }
+
+    fn on_move_source_earlier_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Combine {
+            sources,
+            selected_source,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        let Some(index) = selected_source.filter(|index| *index > 0 && *index < sources.len())
+        else {
+            return;
+        };
+        sources.swap(index, index - 1);
+        *selected_source = Some(index - 1);
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
+    }
+
+    fn on_move_source_later_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Combine {
+            sources,
+            selected_source,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        let Some(index) = selected_source.filter(|index| *index + 1 < sources.len()) else {
+            return;
+        };
+        sources.swap(index, index + 1);
+        *selected_source = Some(index + 1);
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
+    }
+
+    fn on_remove_source_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Combine {
+            sources,
+            selected_source,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        let Some(index) = selected_source.filter(|index| *index < sources.len()) else {
+            return;
+        };
+        sources.remove(index);
+        *selected_source =
+            (!sources.is_empty()).then(|| index.min(sources.len().saturating_sub(1)));
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
     }
 
     fn on_delete_clicked(
@@ -549,6 +752,46 @@ impl PartsDialog {
         });
     }
 
+    fn select_available_part(&mut self, name: &PartName, cx: &mut Context<Self>) {
+        if find_part(&self.parts, name).is_none() {
+            return;
+        }
+        let DialogView::Combine {
+            available_part,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        if available_part.as_ref() == Some(name) {
+            return;
+        }
+        *available_part = Some(name.clone());
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
+    }
+
+    fn select_combination_source(&mut self, index: usize, cx: &mut Context<Self>) {
+        let DialogView::Combine {
+            sources,
+            selected_source,
+            form_error,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        if index >= sources.len() || *selected_source == Some(index) {
+            return;
+        }
+        *selected_source = Some(index);
+        *form_error = None;
+        self.sync_combine_button_states(cx);
+        cx.notify();
+    }
+
     fn select_part(&mut self, name: &PartName, cx: &mut Context<Self>) {
         let Some(part) = find_part(&self.parts, name) else {
             return;
@@ -602,6 +845,42 @@ impl PartsDialog {
         });
         view.move_later_button.update(cx, |button, cx| {
             button.set_disabled(!can_move_later, cx);
+        });
+    }
+
+    fn sync_combine_button_states(&self, cx: &mut Context<Self>) {
+        let DialogView::Combine {
+            available_part,
+            sources,
+            selected_source,
+            add_source_button,
+            move_source_earlier_button,
+            move_source_later_button,
+            remove_source_button,
+            combine_button,
+            ..
+        } = &self.view
+        else {
+            return;
+        };
+        let selected_source = selected_source.filter(|index| *index < sources.len());
+        add_source_button.update(cx, |button, cx| {
+            button.set_disabled(available_part.is_none(), cx);
+        });
+        move_source_earlier_button.update(cx, |button, cx| {
+            button.set_disabled(selected_source.is_none_or(|index| index == 0), cx);
+        });
+        move_source_later_button.update(cx, |button, cx| {
+            button.set_disabled(
+                selected_source.is_none_or(|index| index + 1 >= sources.len()),
+                cx,
+            );
+        });
+        remove_source_button.update(cx, |button, cx| {
+            button.set_disabled(selected_source.is_none(), cx);
+        });
+        combine_button.update(cx, |button, cx| {
+            button.set_disabled(sources.len() < 2, cx);
         });
     }
 
@@ -698,6 +977,13 @@ impl PartsDialog {
         cx.notify();
     }
 
+    pub fn combine_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Combine { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
     pub fn sequence_change_failed(&mut self, error: String, cx: &mut Context<Self>) {
         if let DialogView::List(view) = &mut self.view {
             view.arrangement_error = Some(error);
@@ -716,8 +1002,10 @@ impl Render for PartsDialog {
                     part_list(&self.parts, self.selected_part.as_ref(), cx),
                     div()
                         .flex()
+                        .gap_3()
                         .debug_selector(|| "part-list-actions".to_string())
-                        .child(view.add_new_button.clone()),
+                        .child(view.add_new_button.clone())
+                        .child(view.combine_button.clone()),
                 ),
                 details: part_details(
                     self.selected_part
@@ -860,8 +1148,224 @@ impl Render for PartsDialog {
                         .child(save_button.clone()),
                 )
             }
+            DialogView::Combine {
+                available_part,
+                sources,
+                selected_source,
+                name,
+                add_source_button,
+                move_source_earlier_button,
+                move_source_later_button,
+                remove_source_button,
+                cancel_button,
+                combine_button,
+                form_error,
+            } => {
+                let available = combine_available_parts(&self.parts, available_part.as_ref(), cx);
+                let selected = combination_sources(&self.parts, sources, *selected_source, cx);
+                let source_actions = div()
+                    .flex()
+                    .justify_end()
+                    .debug_selector(|| "combine-available-actions".to_string())
+                    .child(add_source_button.clone());
+                let movement_actions = div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().text_color(s::TEXT_HEADER).child("move"))
+                    .child(move_source_earlier_button.clone())
+                    .child(move_source_later_button.clone());
+                let selected_actions = div()
+                    .flex()
+                    .justify_between()
+                    .gap(s::S4)
+                    .debug_selector(|| "combine-selected-actions".to_string())
+                    .child(movement_actions)
+                    .child(remove_source_button.clone());
+                let columns = div()
+                    .flex()
+                    .flex_1()
+                    .min_h(s::S0)
+                    .gap(s::CONTENT_PADDING)
+                    .debug_selector(|| "combine-columns".to_string())
+                    .child(
+                        dialog::column_with_actions(available, source_actions)
+                            .flex_1()
+                            .w(s::S0)
+                            .min_w(s::S0)
+                            .debug_selector(|| "combine-available-column".to_string()),
+                    )
+                    .child(
+                        dialog::column_with_actions(selected, selected_actions)
+                            .flex_1()
+                            .w(s::S0)
+                            .min_w(s::S0)
+                            .debug_selector(|| "combine-selected-column".to_string()),
+                    );
+                let form = div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(s::S0)
+                    .gap(s::CONTENT_PADDING)
+                    .debug_selector(|| "combine-form".to_string())
+                    .child(field_group("new part name", name.clone()).flex_none())
+                    .child(columns);
+                let form = if let Some(error) = form_error {
+                    form.child(error_message(error.clone()))
+                } else {
+                    form
+                };
+
+                management_form_dialog(
+                    "combine parts",
+                    self.close_button.clone(),
+                    form,
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_3()
+                        .debug_selector(|| "combine-dialog-actions".to_string())
+                        .child(cancel_button.clone())
+                        .child(combine_button.clone()),
+                )
+            }
         }
     }
+}
+
+fn combine_available_parts(
+    parts: &[Part],
+    selected_part: Option<&PartName>,
+    cx: &mut Context<PartsDialog>,
+) -> gpui::Div {
+    let rows = parts
+        .iter()
+        .enumerate()
+        .map(|(index, part)| {
+            let part_name = part.name.clone();
+            let beat_label = if part.length == 1 { "beat" } else { "beats" };
+            selection_list::row(
+                index,
+                selected_part == Some(&part.name),
+                format!("{} · {} {beat_label}", part.name.as_str(), part.length),
+            )
+            .debug_selector(move || format!("combine-available-part-{index}"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
+                    dialog.select_available_part(&part_name, cx);
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(s::S0)
+        .child(
+            div()
+                .pb(s::S4)
+                .text_color(s::TEXT_HEADER)
+                .child("available parts"),
+        )
+        .child(
+            selection_list::list("combine-available-parts-scroll", "no parts available", rows)
+                .w_full()
+                .debug_selector(|| "combine-available-list".to_string()),
+        )
+}
+
+fn combination_sources(
+    parts: &[Part],
+    sources: &[PartName],
+    selected_source: Option<usize>,
+    cx: &mut Context<PartsDialog>,
+) -> gpui::Div {
+    let rows = sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            let beat_count = find_part(parts, source).map_or(0, |part| part.length);
+            let beat_label = if beat_count == 1 { "beat" } else { "beats" };
+            selection_list::row(
+                index,
+                selected_source == Some(index),
+                format!(
+                    "{}. {} · {beat_count} {beat_label}",
+                    index + 1,
+                    source.as_str()
+                ),
+            )
+            .debug_selector(move || format!("combination-source-{index}"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
+                    dialog.select_combination_source(index, cx);
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    let source_parts = sources
+        .iter()
+        .filter_map(|source| find_part(parts, source))
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_beats = source_parts
+        .iter()
+        .map(|part| u64::from(part.length))
+        .sum::<u64>();
+    let source_label = if sources.len() == 1 { "part" } else { "parts" };
+    let beat_label = if total_beats == 1 { "beat" } else { "beats" };
+    let subdivision = combined_subdivision_pattern(&source_parts).map_or_else(
+        || {
+            if source_parts
+                .iter()
+                .all(|part| part.subdivision_pattern().is_none())
+            {
+                "subdivision pattern: none".to_string()
+            } else {
+                "subdivision pattern: none because the sources differ".to_string()
+            }
+        },
+        |pattern| format!("subdivision pattern: {pattern}"),
+    );
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(s::S0)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(s::S4)
+                .pb(s::S3)
+                .child(div().text_color(s::TEXT_HEADER).child("combined part"))
+                .child(div().text_color(s::TEXT_DEFAULT).child(format!(
+                    "{} {source_label}, {total_beats} {beat_label}",
+                    sources.len()
+                ))),
+        )
+        .child(
+            div()
+                .pb(s::S4)
+                .text_color(s::TEXT_DEFAULT)
+                .child(subdivision),
+        )
+        .child(
+            selection_list::list(
+                "combination-sources-scroll",
+                "add parts from the left",
+                rows,
+            )
+            .w_full()
+            .debug_selector(|| "combine-selected-list".to_string()),
+        )
 }
 
 fn part_list(
@@ -1223,6 +1727,14 @@ fn sequence_with_removed_part(
     Some((updated, selected_occurrence))
 }
 
+pub(super) fn combined_subdivision_pattern(parts: &[Part]) -> Option<SubdivisionPattern> {
+    let first = parts.first()?.subdivision_pattern()?;
+    parts
+        .iter()
+        .all(|part| part.subdivision_pattern() == Some(first))
+        .then(|| first.clone())
+}
+
 fn find_part<'a>(parts: &'a [Part], name: &PartName) -> Option<&'a Part> {
     parts
         .iter()
@@ -1258,12 +1770,13 @@ mod tests {
     use gpui::{point, px, size, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
-        parse_part_length, parse_subdivision_pattern, sequence_with_inserted_part,
-        sequence_with_moved_part, sequence_with_removed_part, sequence_with_repeated_part,
-        DialogView, PartsDialog,
+        combined_subdivision_pattern, parse_part_length, parse_subdivision_pattern,
+        sequence_with_inserted_part, sequence_with_moved_part, sequence_with_removed_part,
+        sequence_with_repeated_part, DialogView, PartsDialog,
     };
     use crate::{
-        part::{Part, PartName},
+        part::{Part, PartName, SubdivisionPattern},
+        style as s,
         view::button,
     };
 
@@ -1289,6 +1802,24 @@ mod tests {
         assert!(parse_subdivision_pattern("4,,3").is_err());
         assert!(parse_subdivision_pattern("4, 0").is_err());
         assert!(parse_subdivision_pattern("4, 1.5").is_err());
+    }
+
+    #[test]
+    fn combined_parts_keep_only_a_common_subdivision_pattern() {
+        let common = SubdivisionPattern::new([4]).unwrap();
+        let matching = vec![
+            Part::new("intro", 8).with_subdivision_pattern(Some(common.clone())),
+            Part::new("verse", 16).with_subdivision_pattern(Some(common.clone())),
+        ];
+        assert_eq!(combined_subdivision_pattern(&matching), Some(common));
+
+        let mixed = vec![
+            Part::new("intro", 8)
+                .with_subdivision_pattern(Some(SubdivisionPattern::new([4]).unwrap())),
+            Part::new("bridge", 7)
+                .with_subdivision_pattern(Some(SubdivisionPattern::new([3, 4]).unwrap())),
+        ];
+        assert!(combined_subdivision_pattern(&mixed).is_none());
     }
 
     #[test]
@@ -1524,6 +2055,222 @@ mod tests {
             assert_eq!(source.as_str(), "intro");
             assert_eq!(name.read(cx).value(), "");
         });
+    }
+
+    #[gpui::test]
+    fn combine_opens_an_empty_ordered_source_list(cx: &mut TestAppContext) {
+        let parts = vec![Part::new("intro", 8), Part::new("verse", 16)];
+        let sequence = names(["intro", "verse"]);
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, sequence, cx));
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let combine = cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            view.combine_button.clone()
+        });
+        combine.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+
+        let name = cx.update(|_, cx| {
+            let DialogView::Combine {
+                available_part,
+                sources,
+                selected_source,
+                name,
+                combine_button,
+                ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("combine action should open its form");
+            };
+            assert_eq!(available_part.as_ref().map(PartName::as_str), Some("intro"));
+            assert!(sources.is_empty());
+            assert_eq!(*selected_source, None);
+            assert_eq!(name.read(cx).value(), "");
+            assert!(combine_button.read(cx).is_disabled());
+            name.clone()
+        });
+        name.update(cx, |name, cx| name.sync_value("party", cx));
+        cx.run_until_parked();
+
+        let columns = cx.debug_bounds("combine-columns").unwrap();
+        let available = cx.debug_bounds("combine-available-column").unwrap();
+        let selected = cx.debug_bounds("combine-selected-column").unwrap();
+        for selector in [
+            "combine-form",
+            "combine-available-list",
+            "combine-available-actions",
+            "combine-selected-list",
+            "combine-selected-actions",
+            "combine-dialog-actions",
+        ] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(
+                bounds.size.width > px(0.0) && bounds.size.height > px(0.0),
+                "{selector} should remain visible after editing the name: {bounds:?}"
+            );
+        }
+        assert!(
+            columns.size.height > px(0.0),
+            "combine columns should be visible: {columns:?}"
+        );
+        assert!(
+            columns.size.height >= s::S9,
+            "the name field should leave a usable composer viewport: {columns:?}"
+        );
+        assert!(
+            available.size.height > px(0.0),
+            "available-parts column should be visible: {available:?}"
+        );
+        assert!(
+            selected.size.height > px(0.0),
+            "selected-parts column should be visible: {selected:?}"
+        );
+        assert_eq!(available.size.width, selected.size.width);
+        assert!(available.origin.x < selected.origin.x);
+        assert!(available.origin.x >= columns.origin.x);
+        assert!(selected.origin.x + selected.size.width <= columns.origin.x + columns.size.width);
+        assert!(cx.debug_bounds("combine-available-part-0").is_some());
+        assert!(cx.debug_bounds("combination-source-0").is_none());
+    }
+
+    #[gpui::test]
+    fn combination_sources_can_be_added_reordered_and_removed(cx: &mut TestAppContext) {
+        let parts = vec![Part::new("intro", 8), Part::new("verse", 16)];
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, Vec::new(), cx));
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let open_combine = cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            view.combine_button.clone()
+        });
+        open_combine.update(cx, |_, cx| cx.emit(button::Clicked));
+
+        let add_source = cx.update(|_, cx| {
+            let DialogView::Combine {
+                add_source_button, ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("combine action should open its form");
+            };
+            add_source_button.clone()
+        });
+        add_source.update(cx, |_, cx| cx.emit(button::Clicked));
+        dialog.update(cx, |dialog, cx| {
+            dialog.select_available_part(&PartName::new("verse"), cx);
+        });
+        add_source.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+
+        let (move_earlier, remove_source) = cx.update(|_, cx| {
+            let DialogView::Combine {
+                sources,
+                selected_source,
+                move_source_earlier_button,
+                remove_source_button,
+                combine_button,
+                ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("combine action should stay on its form");
+            };
+            assert_eq!(name_strings(sources), ["intro", "verse"]);
+            assert_eq!(*selected_source, Some(1));
+            assert!(!combine_button.read(cx).is_disabled());
+            (
+                move_source_earlier_button.clone(),
+                remove_source_button.clone(),
+            )
+        });
+
+        move_earlier.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let DialogView::Combine {
+                sources,
+                selected_source,
+                ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("combine action should stay on its form");
+            };
+            assert_eq!(name_strings(sources), ["verse", "intro"]);
+            assert_eq!(*selected_source, Some(0));
+        });
+
+        remove_source.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let DialogView::Combine {
+                sources,
+                selected_source,
+                combine_button,
+                ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("combine action should stay on its form");
+            };
+            assert_eq!(name_strings(sources), ["intro"]);
+            assert_eq!(*selected_source, Some(0));
+            assert!(combine_button.read(cx).is_disabled());
+        });
+    }
+
+    #[gpui::test]
+    fn long_combination_lists_stay_inside_the_dialog(cx: &mut TestAppContext) {
+        let parts = (0..24)
+            .map(|index| Part::new(format!("part-{index}"), 16))
+            .collect::<Vec<_>>();
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, Vec::new(), cx));
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let open_combine = cx.update(|_, cx| {
+            let DialogView::List(view) = &dialog.read(cx).view else {
+                panic!("parts dialog should show its list view");
+            };
+            view.combine_button.clone()
+        });
+        open_combine.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.run_until_parked();
+
+        let available_list = cx.debug_bounds("combine-available-list").unwrap();
+        let actions = cx.debug_bounds("combine-dialog-actions").unwrap();
+        for selector in [
+            "combine-form",
+            "combine-columns",
+            "combine-available-column",
+            "combine-available-list",
+            "combine-selected-column",
+            "combine-selected-list",
+            "combine-dialog-actions",
+        ] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(
+                bounds.origin.y + bounds.size.height <= s::S10,
+                "{selector} should stay inside the dialog: {bounds:?}"
+            );
+        }
+
+        let last_part_before = cx.debug_bounds("combine-available-part-23").unwrap();
+        cx.simulate_event(ScrollWheelEvent {
+            position: available_list.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-500.0))),
+            ..Default::default()
+        });
+        let last_part_after = cx.debug_bounds("combine-available-part-23").unwrap();
+        assert!(last_part_after.origin.y < last_part_before.origin.y);
+        assert_eq!(
+            cx.debug_bounds("combine-available-list").unwrap(),
+            available_list
+        );
+        assert_eq!(cx.debug_bounds("combine-dialog-actions").unwrap(), actions);
     }
 
     #[gpui::test]

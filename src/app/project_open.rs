@@ -242,11 +242,21 @@ impl Model {
         part_name: &PartName,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        self.flush_part_score_changes_for(std::slice::from_ref(part_name), cx)
+    }
+
+    fn flush_part_score_changes_for(
+        &self,
+        part_names: &[PartName],
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let documents = self
             .score_documents
             .iter()
             .filter(|entry| {
-                entry.part_name.eq_ignore_ascii_case(part_name)
+                part_names
+                    .iter()
+                    .any(|name| entry.part_name.eq_ignore_ascii_case(name))
                     && entry.document.read(cx).is_dirty()
             })
             .map(|entry| (entry.part_name.clone(), entry.document.clone()))
@@ -1535,6 +1545,40 @@ impl Model {
                     }
                 }
             }
+            parts::Msg::CombineRequested { sources, name } => {
+                if let Err(error) = self.flush_part_score_changes_for(sources, cx) {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.combine_failed(
+                            format!("couldn't save source score changes: {error}"),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                match combine_project_parts(
+                    &self.project_directory,
+                    &mut self.project,
+                    sources,
+                    name,
+                ) {
+                    Ok(part) => {
+                        let combined_name = part.name.clone();
+                        let parts = self.project.parts.clone();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.part_added(parts, part.name, cx);
+                        });
+                        self.update_score_documents_for_project_settings(cx);
+                        self.select_part(combined_name, cx);
+                        self.sync_score_editor_parts(cx);
+                        self.workspace_error = None;
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.combine_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
             parts::Msg::SequenceChangeRequested {
                 sequence,
                 selected_occurrence,
@@ -1797,6 +1841,16 @@ fn workspace(
 enum PartChangeError {
     Recovery(project::ProjectTransactionError),
     CreateFile(part::CreatePartError),
+    CombineNeedsTwoParts,
+    CombinedPartTooLong,
+    LoadCombinationScore {
+        name: String,
+        source: part::PartFileError,
+    },
+    SaveCombinedScore {
+        source: part::ScoreError,
+        rollback_error: Option<part::PartFileRollbackError>,
+    },
     ExportSelectionOutOfBounds,
     ExportScore {
         source: part::ScoreError,
@@ -1828,6 +1882,22 @@ impl fmt::Display for PartChangeError {
         match self {
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
             Self::CreateFile(error) => write!(f, "{error}"),
+            Self::CombineNeedsTwoParts => f.write_str("select at least two parts to combine"),
+            Self::CombinedPartTooLong => f.write_str("the combined part has too many beats"),
+            Self::LoadCombinationScore { name, source } => {
+                write!(f, "couldn't read part {name:?}: {source}")
+            }
+            Self::SaveCombinedScore {
+                source,
+                rollback_error: None,
+            } => write!(f, "{source}"),
+            Self::SaveCombinedScore {
+                source,
+                rollback_error: Some(rollback_error),
+            } => write!(
+                f,
+                "{source}; also failed to remove the incomplete combined part: {rollback_error}"
+            ),
             Self::ExportSelectionOutOfBounds => f.write_str("the selected beats no longer exist"),
             Self::ExportScore {
                 source,
@@ -1899,13 +1969,17 @@ impl std::error::Error for PartChangeError {
         match self {
             Self::Recovery(error) => Some(error),
             Self::CreateFile(error) => Some(error),
+            Self::LoadCombinationScore { source, .. } => Some(source),
+            Self::SaveCombinedScore { source, .. } => Some(source),
             Self::ExportScore { source, .. } => Some(source),
             Self::RenameFile(error) => Some(error),
             Self::DeleteFile(error) => Some(error),
             Self::SaveCreated { source, .. }
             | Self::SaveDeleted { source, .. }
             | Self::SaveRenamed { source, .. } => Some(source),
-            Self::ExportSelectionOutOfBounds
+            Self::CombineNeedsTwoParts
+            | Self::CombinedPartTooLong
+            | Self::ExportSelectionOutOfBounds
             | Self::MissingPart(_)
             | Self::PartInSequence { .. } => None,
         }
@@ -2032,6 +2106,79 @@ fn duplicate_project_part(
     }
 
     Ok(created.commit())
+}
+
+fn combine_project_parts(
+    project_directory: &Path,
+    project: &mut Project,
+    sources: &[PartName],
+    name: &str,
+) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
+    if sources.len() < 2 {
+        return Err(PartChangeError::CombineNeedsTwoParts);
+    }
+    let source_parts = sources
+        .iter()
+        .map(|source_name| {
+            project
+                .part(source_name)
+                .cloned()
+                .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let combined_length = source_parts
+        .iter()
+        .try_fold(0_u32, |length, part| length.checked_add(part.length));
+    let combined_length = combined_length.ok_or(PartChangeError::CombinedPartTooLong)?;
+    let scores = source_parts
+        .iter()
+        .map(|source_part| {
+            PartScore::load(project_directory, source_part, project.voices()).map_err(|source| {
+                PartChangeError::LoadCombinationScore {
+                    name: source_part.name.as_str().to_string(),
+                    source,
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let combined_score = PartScore::from_rows(
+        scores
+            .into_iter()
+            .flat_map(|score| score.rows().to_vec())
+            .collect(),
+    );
+    let created = part::create_part_file(
+        project_directory,
+        &project.parts,
+        project.voices(),
+        name,
+        combined_length,
+    )
+    .map_err(PartChangeError::CreateFile)?;
+    let combined_part = created
+        .part()
+        .clone()
+        .with_subdivision_pattern(parts::combined_subdivision_pattern(&source_parts));
+    if let Err(source) = combined_score.save(project_directory, &combined_part, project) {
+        return Err(PartChangeError::SaveCombinedScore {
+            source,
+            rollback_error: created.rollback().err(),
+        });
+    }
+
+    project.add_part(combined_part.clone());
+    if let Err(source) = project::save_project(project_directory, project) {
+        project.remove_part(&combined_part.name);
+        return Err(PartChangeError::SaveCreated {
+            source,
+            rollback_error: created.rollback().err(),
+        });
+    }
+
+    created.commit();
+    Ok(combined_part)
 }
 
 fn export_project_part_rows(
@@ -2204,11 +2351,11 @@ mod tests {
 
     use super::score::ScoreAction;
     use super::{
-        create_configured_project_part, create_project_part, delete_project_part,
-        duplicate_project_part, export_project_part_rows, loop_range_button_label, parts,
-        playing_score_row, rename_project_part, update_project_sequence, Dialog,
-        ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError, PartsDialog,
-        RowEditConfirmationMsg, RowEditRequested, StatusAction,
+        combine_project_parts, create_configured_project_part, create_project_part,
+        delete_project_part, duplicate_project_part, export_project_part_rows,
+        loop_range_button_label, parts, playing_score_row, rename_project_part,
+        update_project_sequence, Dialog, ExportRowsConfirmed, ExportRowsDialogMsg, Model,
+        PartChangeError, PartsDialog, RowEditConfirmationMsg, RowEditRequested, StatusAction,
     };
     use crate::{
         part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
@@ -2344,6 +2491,113 @@ mod tests {
             project::load_project(&project_directory).unwrap().project,
             project
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn combined_parts_concatenate_an_explicit_source_list_without_changing_the_arrangement() {
+        let root = temp_root("combine-project-parts");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let pattern = SubdivisionPattern::new([2]).unwrap();
+        let intro = create_configured_project_part(
+            &project_directory,
+            &mut project,
+            "intro",
+            2,
+            Some(pattern.clone()),
+        )
+        .unwrap();
+        let verse = create_configured_project_part(
+            &project_directory,
+            &mut project,
+            "verse",
+            2,
+            Some(pattern.clone()),
+        )
+        .unwrap();
+        let outro = create_project_part(&project_directory, &mut project, "outro", 1).unwrap();
+        PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]])
+            .save(&project_directory, &intro, &project)
+            .unwrap();
+        PartScore::from_rows(vec![vec!["E4".to_string()], vec!["F4".to_string()]])
+            .save(&project_directory, &verse, &project)
+            .unwrap();
+        update_project_sequence(
+            &project_directory,
+            &mut project,
+            vec![
+                intro.name.clone(),
+                verse.name.clone(),
+                verse.name.clone(),
+                outro.name.clone(),
+            ],
+        )
+        .unwrap();
+        let sequence_before = project.sequence().to_vec();
+        let sources = vec![intro.name.clone(), verse.name.clone(), verse.name.clone()];
+
+        let combined = combine_project_parts(
+            &project_directory,
+            &mut project,
+            &sources,
+            "intro and verses",
+        )
+        .unwrap();
+
+        assert_eq!(combined.length, 6);
+        assert_eq!(
+            combined.subdivision_pattern(),
+            Some(&pattern),
+            "a common subdivision pattern should be preserved"
+        );
+        assert_eq!(
+            PartScore::load(&project_directory, &combined, project.voices())
+                .unwrap()
+                .rows(),
+            [
+                vec!["C4".to_string()],
+                vec!["D4".to_string()],
+                vec!["E4".to_string()],
+                vec!["F4".to_string()],
+                vec!["E4".to_string()],
+                vec!["F4".to_string()],
+            ]
+        );
+        assert_eq!(project.sequence(), sequence_before);
+        assert!(project.part(&intro.name).is_some());
+        assert!(project.part(&verse.name).is_some());
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn combining_requires_at_least_two_sources() {
+        let root = temp_root("combine-project-parts-invalid-sources");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let intro = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        update_project_sequence(&project_directory, &mut project, vec![intro.name.clone()])
+            .unwrap();
+
+        let error = combine_project_parts(
+            &project_directory,
+            &mut project,
+            std::slice::from_ref(&intro.name),
+            "not combined",
+        )
+        .err()
+        .unwrap();
+
+        assert!(matches!(error, PartChangeError::CombineNeedsTwoParts));
+        assert!(project.part(&"not combined".into()).is_none());
+        assert!(!project_directory.join("not-combined.csv").exists());
 
         fs::remove_dir_all(root).unwrap();
     }

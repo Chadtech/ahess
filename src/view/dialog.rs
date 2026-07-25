@@ -175,6 +175,7 @@ pub fn management_form_dialog(
                     .flex()
                     .flex_col()
                     .flex_1()
+                    .min_h(px(0.0))
                     .justify_between()
                     .gap(s::CONTENT_PADDING)
                     .p(s::CONTENT_PADDING)
