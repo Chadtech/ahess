@@ -142,9 +142,9 @@ impl PartsDialog {
     fn list_view(cx: &mut Context<Self>) -> DialogView {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
         let combine_button = cx.new(|_| Button::new("combine-parts", "combine"));
-        let edit_button = cx.new(|_| Button::new("edit-part", "edit part"));
-        let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate part"));
-        let delete_button = cx.new(|_| Button::new("delete-part", "delete part"));
+        let edit_button = cx.new(|_| Button::new("edit-part", "edit"));
+        let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate"));
+        let delete_button = cx.new(|_| Button::new("delete-part", "delete"));
         let add_to_arrangement_button =
             cx.new(|_| Button::new("add-to-arrangement", "add to arrangement"));
         let move_earlier_button =
@@ -1935,6 +1935,12 @@ mod tests {
         assert!(
             add_to_arrangement.size.width < details.size.width
                 && duplicate_part.size.width < details.size.width
+        );
+        assert!(
+            delete_part_control.origin.x + delete_part_control.size.width
+                <= details.origin.x + details.size.width,
+            "part actions should stay inside details: actions {part_details_actions:?}, \
+             delete {delete_part_control:?}, details {details:?}"
         );
 
         dialog.update(cx, |dialog, cx| {
