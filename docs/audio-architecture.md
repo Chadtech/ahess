@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-20
+Last updated: 2026-07-24
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -149,12 +149,41 @@ reordered, or unrelated score cells are edited. Changing the project seed
 deterministically changes the complete timing pattern. Random sampling happens
 while playback data is prepared, never in the real-time audio callback.
 
+An isolated part loop has no arrangement position, so its audition uses
+one-based part-local beats as its deterministic timing seed positions. The
+same part may therefore have different humanization when auditioned alone than
+when played at a later position in the arrangement.
+
 Inserting or deleting score rows is a structural timing edit: it changes the
 part length, shifts later absolute arrangement beats, and therefore may change
 their deterministic timing variance. The editor stops active playback before
 publishing that coordinated project-and-score update. Clearing rows keeps the
 part length and absolute beat positions unchanged and can update live playback
 like an ordinary cell edit.
+
+### Frequency variance is deterministic detuning
+
+`frequency_variance` is the greatest fractional distance by which a pitched
+event may vary above or below its resolved frequency. For example, `0.01`
+allows a frequency to vary by up to one percent in either direction. Playback
+derives a local seed from a frequency-variance domain, the project seed, the
+one-based absolute arrangement beat, and the stable `VoiceId`. It samples a
+normal distribution centered on the resolved frequency and clips it to the
+inclusive configured range, with each boundary three standard deviations from
+the center. The fractional offset is applied to the resolved frequency before
+the prepared event reaches the audio callback.
+
+The frequency and timing seed domains are separate, so adding frequency
+variance does not reuse a timing draw. Absolute arrangement beats and stable
+voice IDs give frequency variance the same edit, reorder, and overlapping-loop
+stability as timing variance. A value of zero preserves the resolved frequency
+exactly. Projects created before this setting existed load with zero frequency
+variance. Values must be at least zero and less than one, which keeps the lower
+bound positive. Sampling happens during playback preparation rather than in the
+real-time audio callback.
+
+Like timing variance, an isolated part audition uses one-based part-local beat
+positions because it has no arrangement position.
 
 ## Domain sketch
 

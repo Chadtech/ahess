@@ -17,14 +17,16 @@ use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
-    project::{Project, VoiceId, VoiceType},
+    project::{FrequencyVariance, Project, VoiceId, VoiceType},
     seed::{standard_normal, Seed},
 };
 
 const MASTER_GAIN: f32 = 0.22;
 const MIX_GAIN_RAMP_SAMPLES: u32 = 64;
 const TIMING_SEED_DOMAIN: u64 = 0x7469_6d69_6e67_2d31;
+const FREQUENCY_VARIANCE_SEED_DOMAIN: u64 = 0x6672_6571_2d76_6172;
 const TIMING_STANDARD_DEVIATIONS: f64 = 3.0;
+const FREQUENCY_STANDARD_DEVIATIONS: f64 = 3.0;
 
 pub struct Playback {
     _stream: Stream,
@@ -112,6 +114,17 @@ impl BeatRange {
 }
 
 impl PlaybackLoop {
+    pub fn from_part(
+        project: &Project,
+        part: &Part,
+        score: &PartScore,
+    ) -> Result<Self, PlaybackError> {
+        let rows = score.resolved_rows(part, project).map_err(|error| {
+            PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
+        })?;
+        Self::from_rows(project, rows, 1)
+    }
+
     pub fn from_project_arrangement(
         project: &Project,
         arrangement_scores: &[(Part, PartScore)],
@@ -181,7 +194,16 @@ impl PlaybackLoop {
                     .acoustic_scene()
                     .validate_source(voice.position())
                     .map_err(|error| PlaybackError::new(error.to_string()))?;
-                let frequencies = rows.iter().map(|row| row[voice_index]).collect::<Vec<_>>();
+                let frequencies = rows
+                    .iter()
+                    .enumerate()
+                    .map(|(beat_index, row)| {
+                        let arrangement_beat = first_arrangement_beat + beat_index as u64;
+                        let seed =
+                            frequency_variance_seed(project.seed, arrangement_beat, voice.id());
+                        varied_frequency(row[voice_index], seed, project.frequency_variance())
+                    })
+                    .collect::<Result<Vec<_>, PlaybackError>>()?;
                 let delays = frequencies
                     .iter()
                     .enumerate()
@@ -220,6 +242,13 @@ fn timing_seed(project_seed: Seed, arrangement_beat: u64, voice_id: VoiceId) -> 
         .derive(voice_id.value())
 }
 
+fn frequency_variance_seed(project_seed: Seed, arrangement_beat: u64, voice_id: VoiceId) -> Seed {
+    project_seed
+        .derive(FREQUENCY_VARIANCE_SEED_DOMAIN)
+        .derive(arrangement_beat)
+        .derive(voice_id.value())
+}
+
 fn normally_distributed_delay(seed: Seed, maximum_delay: u32) -> u32 {
     if maximum_delay == 0 {
         return 0;
@@ -231,6 +260,32 @@ fn normally_distributed_delay(seed: Seed, maximum_delay: u32) -> u32 {
     let delay = mean + standard_deviation_units * standard_deviation;
 
     delay.clamp(0.0, f64::from(maximum_delay)).round() as u32
+}
+
+fn varied_frequency(
+    frequency: Option<FrequencyHz>,
+    seed: Seed,
+    maximum_variance: FrequencyVariance,
+) -> Result<Option<FrequencyHz>, PlaybackError> {
+    let Some(frequency) = frequency else {
+        return Ok(None);
+    };
+    let maximum_ratio = maximum_variance.ratio();
+    if maximum_ratio == 0.0 {
+        return Ok(Some(frequency));
+    }
+
+    let standard_deviation = maximum_ratio / FREQUENCY_STANDARD_DEVIATIONS;
+    let (standard_deviation_units, _) = seed.generate(standard_normal());
+    let ratio =
+        (standard_deviation_units * standard_deviation).clamp(-maximum_ratio, maximum_ratio);
+    FrequencyHz::new(frequency.as_hz() * (1.0 + ratio))
+        .map(Some)
+        .map_err(|error| {
+            PlaybackError::new(format!(
+                "frequency variation produced an unsupported frequency: {error}"
+            ))
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -585,14 +640,14 @@ mod tests {
     };
 
     use super::{
-        normally_distributed_delay, timing_seed, write_device_frame, AudioEngine, BeatRange,
-        GainRamp, PlaybackLoop, MIX_GAIN_RAMP_SAMPLES,
+        frequency_variance_seed, normally_distributed_delay, timing_seed, varied_frequency,
+        write_device_frame, AudioEngine, BeatRange, GainRamp, PlaybackLoop, MIX_GAIN_RAMP_SAMPLES,
     };
     use crate::{
         acoustics::{Point3Meters, StereoFrame},
         part::{Part, PartScore},
         pitch_system::{FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem},
-        project::{Project, Voice, VoiceId, VoiceType},
+        project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType},
         seed::Seed,
     };
 
@@ -625,6 +680,29 @@ mod tests {
     }
 
     #[test]
+    fn isolated_part_loops_use_the_complete_part_and_part_local_beats() {
+        let project = Project::new("test", 800, 25, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let part = Part::new("not arranged", 2);
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+
+        let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+
+        assert_eq!(playback_loop.first_arrangement_beat, 1);
+        assert_eq!(playback_loop.beat_count, 2);
+        assert_eq!(
+            playback_loop.voices[0].frequencies,
+            [
+                project.pitch_system().resolve_cell("C4").unwrap(),
+                project.pitch_system().resolve_cell("D4").unwrap(),
+            ]
+        );
+    }
+
+    #[test]
     fn tiny_score_has_visible_deterministic_timing_variation() {
         let project = Project::new("test", 800, 120, Seed::new(7)).with_voices(vec![
             Voice::new(1, "lead", VoiceType::Saw),
@@ -644,6 +722,42 @@ mod tests {
         //                         arrangement beat:  1   2   3   4
         assert_eq!(playback_loop.voices[0].delays, vec![36, 78, 77, 11]);
         assert_eq!(playback_loop.voices[1].delays, vec![48, 73, 62, 81]);
+    }
+
+    #[test]
+    fn project_frequency_variance_detunes_each_voice_and_beat_around_its_target() {
+        let maximum_variance = FrequencyVariance::new(0.05).unwrap();
+        let project = Project::new("test", 800, 0, Seed::new(7))
+            .with_frequency_variance(maximum_variance)
+            .with_voices(vec![
+                Voice::new(1, "lead", VoiceType::Saw),
+                Voice::new(2, "bass", VoiceType::Sin),
+            ]);
+        let part = Part::new("example", 4);
+        let score = PartScore::from_rows(vec![
+            vec!["A4".to_string(), "A3".to_string()],
+            vec!["A4".to_string(), "A3".to_string()],
+            vec!["A4".to_string(), "A3".to_string()],
+            vec!["A4".to_string(), "A3".to_string()],
+        ]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+
+        let first = PlaybackLoop::from_rows(&project, rows.clone(), 1).unwrap();
+        let second = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+
+        assert_eq!(first.voices[0].frequencies, second.voices[0].frequencies);
+        assert_eq!(first.voices[1].frequencies, second.voices[1].frequencies);
+        let lead_target = project.pitch_system().resolve_cell("A4").unwrap().unwrap();
+        let offsets = first.voices[0]
+            .frequencies
+            .iter()
+            .map(|frequency| (frequency.unwrap().as_hz() / lead_target.as_hz()) - 1.0)
+            .collect::<Vec<_>>();
+        assert!(offsets
+            .iter()
+            .all(|offset| offset.abs() <= maximum_variance.ratio() + 1e-12));
+        assert!(offsets.iter().any(|offset| *offset < 0.0));
+        assert!(offsets.iter().any(|offset| *offset > 0.0));
     }
 
     #[test]
@@ -672,6 +786,33 @@ mod tests {
     }
 
     #[test]
+    fn varied_frequencies_are_stable_for_the_same_absolute_beat_in_overlapping_loops() {
+        let project = Project::new("test", 800, 0, Seed::new(1))
+            .with_frequency_variance(FrequencyVariance::new(0.025).unwrap())
+            .with_voices(vec![
+                Voice::new(1, "lead", VoiceType::Saw),
+                Voice::new(2, "bass", VoiceType::Sin),
+            ]);
+        let part = Part::new("intro", 3);
+        let score = PartScore::from_rows(vec![
+            vec!["C4".to_string(), "C2".to_string()],
+            vec!["D4".to_string(), "D2".to_string()],
+            vec!["E4".to_string(), "E2".to_string()],
+        ]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+
+        let full_loop = PlaybackLoop::from_rows(&project, rows.clone(), 10).unwrap();
+        let overlapping_loop = PlaybackLoop::from_rows(&project, rows[1..].to_vec(), 11).unwrap();
+
+        for voice_index in 0..project.voices().len() {
+            assert_eq!(
+                &full_loop.voices[voice_index].frequencies[1..],
+                overlapping_loop.voices[voice_index].frequencies
+            );
+        }
+    }
+
+    #[test]
     fn each_voice_and_arrangement_beat_derives_its_own_timing_seed() {
         let project_seed = Seed::new(1);
         let seeds = (1..=16)
@@ -684,6 +825,28 @@ mod tests {
         assert_ne!(
             timing_seed(Seed::new(1), 3, VoiceId::new(2)),
             timing_seed(Seed::new(2), 3, VoiceId::new(2))
+        );
+    }
+
+    #[test]
+    fn frequency_variation_uses_a_separate_seed_per_voice_and_arrangement_beat() {
+        let project_seed = Seed::new(1);
+        let seeds = (1..=16)
+            .flat_map(|beat| {
+                (1..=4).map(move |voice_id| {
+                    frequency_variance_seed(project_seed, beat, VoiceId::new(voice_id))
+                })
+            })
+            .collect::<HashSet<_>>();
+
+        assert_eq!(seeds.len(), 16 * 4);
+        assert_ne!(
+            frequency_variance_seed(Seed::new(1), 3, VoiceId::new(2)),
+            frequency_variance_seed(Seed::new(2), 3, VoiceId::new(2))
+        );
+        assert_ne!(
+            frequency_variance_seed(project_seed, 3, VoiceId::new(2)),
+            timing_seed(project_seed, 3, VoiceId::new(2))
         );
     }
 
@@ -703,6 +866,37 @@ mod tests {
         assert!(delays.contains(&0));
         assert!(delays.contains(&maximum_delay));
         assert_eq!(normally_distributed_delay(Seed::new(1), 0), 0);
+    }
+
+    #[test]
+    fn normally_distributed_frequency_variation_is_bounded_and_centered_on_the_target() {
+        let target = FrequencyHz::new(440.0).unwrap();
+        let maximum_variance = FrequencyVariance::new(0.05).unwrap();
+        let offsets = (0..10_000)
+            .map(|index| {
+                let varied = varied_frequency(Some(target), Seed::new(index), maximum_variance)
+                    .unwrap()
+                    .unwrap();
+                (varied.as_hz() / target.as_hz()) - 1.0
+            })
+            .collect::<Vec<_>>();
+        let central_count = offsets
+            .iter()
+            .filter(|&&offset| (-0.025..=0.025).contains(&offset))
+            .count();
+
+        assert!(offsets.iter().all(|offset| offset.abs() <= 0.05 + 1e-12));
+        assert!(central_count > 8_000);
+        assert!(offsets.iter().any(|offset| *offset <= -0.049_999));
+        assert!(offsets.iter().any(|offset| *offset >= 0.049_999));
+        assert_eq!(
+            varied_frequency(Some(target), Seed::new(1), FrequencyVariance::default()).unwrap(),
+            Some(target)
+        );
+        assert_eq!(
+            varied_frequency(None, Seed::new(1), maximum_variance).unwrap(),
+            None
+        );
     }
 
     #[test]

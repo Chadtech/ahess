@@ -3,7 +3,7 @@ use gpui::{
 };
 
 use crate::{
-    part::{Part, PartName},
+    part::{Part, PartName, SubdivisionPattern},
     style as s,
     view::{
         button::{self, Button},
@@ -21,14 +21,16 @@ pub enum Msg {
     AddRequested {
         name: String,
         length: u32,
+        subdivision_pattern: Option<SubdivisionPattern>,
     },
     DuplicateRequested {
         source: PartName,
         name: String,
     },
-    RenameRequested {
+    UpdateRequested {
         source: PartName,
         name: String,
+        subdivision_pattern: Option<SubdivisionPattern>,
     },
     DeleteRequested {
         name: PartName,
@@ -42,7 +44,7 @@ pub enum Msg {
 
 struct ListView {
     add_new_button: Entity<Button>,
-    rename_button: Entity<Button>,
+    edit_button: Entity<Button>,
     duplicate_button: Entity<Button>,
     delete_button: Entity<Button>,
     delete_confirmation: Option<DeleteConfirmation>,
@@ -66,6 +68,7 @@ enum DialogView {
     Add {
         name: Entity<TextInput>,
         length: Entity<TextInput>,
+        subdivision_pattern: Entity<TextInput>,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
         form_error: Option<String>,
@@ -77,11 +80,12 @@ enum DialogView {
         duplicate_button: Entity<Button>,
         form_error: Option<String>,
     },
-    Rename {
+    Edit {
         source: PartName,
         name: Entity<TextInput>,
+        subdivision_pattern: Entity<TextInput>,
         cancel_button: Entity<Button>,
-        rename_button: Entity<Button>,
+        save_button: Entity<Button>,
         form_error: Option<String>,
     },
 }
@@ -119,7 +123,7 @@ impl PartsDialog {
 
     fn list_view(cx: &mut Context<Self>) -> DialogView {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
-        let rename_button = cx.new(|_| Button::new("rename-part", "rename part"));
+        let edit_button = cx.new(|_| Button::new("edit-part", "edit part"));
         let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate part"));
         let delete_button = cx.new(|_| Button::new("delete-part", "delete part"));
         let add_to_arrangement_button =
@@ -133,8 +137,7 @@ impl PartsDialog {
 
         cx.subscribe(&add_new_button, Self::on_add_new_clicked)
             .detach();
-        cx.subscribe(&rename_button, Self::on_rename_clicked)
-            .detach();
+        cx.subscribe(&edit_button, Self::on_edit_clicked).detach();
         cx.subscribe(&duplicate_button, Self::on_duplicate_clicked)
             .detach();
         cx.subscribe(&delete_button, Self::on_delete_clicked)
@@ -158,7 +161,7 @@ impl PartsDialog {
 
         DialogView::List(Box::new(ListView {
             add_new_button,
-            rename_button,
+            edit_button,
             duplicate_button,
             delete_button,
             delete_confirmation: None,
@@ -206,21 +209,28 @@ impl PartsDialog {
         }
     }
 
-    fn rename_view(source: PartName, cx: &mut Context<Self>) -> DialogView {
+    fn edit_view(part: Part, cx: &mut Context<Self>) -> DialogView {
+        let source = part.name.clone();
         let name = cx.new(|cx| TextInput::new(source.as_str().to_owned(), "part name", cx));
-        let cancel_button = cx.new(|_| Button::new("cancel-rename-part", "cancel"));
-        let rename_button = cx.new(|_| Button::new("confirm-rename-part", "rename part"));
+        let subdivision_pattern = part
+            .subdivision_pattern()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let subdivision_pattern =
+            cx.new(|cx| TextInput::new(subdivision_pattern, "4 or 4, 3, 3", cx));
+        let cancel_button = cx.new(|_| Button::new("cancel-edit-part", "cancel"));
+        let save_button = cx.new(|_| Button::new("confirm-edit-part", "save part"));
 
         cx.subscribe(&cancel_button, Self::on_cancel_clicked)
             .detach();
-        cx.subscribe(&rename_button, Self::on_rename_confirmed)
-            .detach();
+        cx.subscribe(&save_button, Self::on_edit_confirmed).detach();
 
-        DialogView::Rename {
+        DialogView::Edit {
             source,
             name,
+            subdivision_pattern,
             cancel_button,
-            rename_button,
+            save_button,
             form_error: None,
         }
     }
@@ -228,6 +238,7 @@ impl PartsDialog {
     fn add_view(cx: &mut Context<Self>) -> DialogView {
         let name = cx.new(|cx| TextInput::new("", "intro", cx));
         let length = cx.new(|cx| TextInput::new("16", "16", cx));
+        let subdivision_pattern = cx.new(|cx| TextInput::new("", "4 or 4, 3, 3", cx));
         let cancel_button = cx.new(|_| Button::new("cancel-add-part", "cancel"));
         let add_button = cx.new(|_| Button::new("confirm-add-part", "add part"));
 
@@ -238,6 +249,7 @@ impl PartsDialog {
         DialogView::Add {
             name,
             length,
+            subdivision_pattern,
             cancel_button,
             add_button,
             form_error: None,
@@ -272,17 +284,15 @@ impl PartsDialog {
         cx.notify();
     }
 
-    fn on_rename_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_edit_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         let Some(source) = self.selected_part.clone() else {
             return;
         };
+        let Some(part) = find_part(&self.parts, &source).cloned() else {
+            return;
+        };
 
-        self.view = Self::rename_view(source, cx);
+        self.view = Self::edit_view(part, cx);
         cx.notify();
     }
 
@@ -299,15 +309,60 @@ impl PartsDialog {
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let DialogView::Add { name, length, .. } = &self.view else {
+        let DialogView::Add {
+            name,
+            length,
+            subdivision_pattern,
+            ..
+        } = &self.view
+        else {
             return;
         };
         let name = name.read(cx).value();
         let length = length.read(cx).value();
-        match parse_part_length(&length) {
-            Ok(length) => cx.emit(Msg::AddRequested { name, length }),
-            Err(error) => {
+        let subdivision_pattern = subdivision_pattern.read(cx).value();
+        match (
+            parse_part_length(&length),
+            parse_subdivision_pattern(&subdivision_pattern),
+        ) {
+            (Ok(length), Ok(subdivision_pattern)) => cx.emit(Msg::AddRequested {
+                name,
+                length,
+                subdivision_pattern,
+            }),
+            (Err(error), _) | (_, Err(error)) => {
                 if let DialogView::Add { form_error, .. } = &mut self.view {
+                    *form_error = Some(error);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn on_edit_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let DialogView::Edit {
+            source,
+            name,
+            subdivision_pattern,
+            ..
+        } = &self.view
+        else {
+            return;
+        };
+        let subdivision_pattern = subdivision_pattern.read(cx).value();
+        match parse_subdivision_pattern(&subdivision_pattern) {
+            Ok(subdivision_pattern) => cx.emit(Msg::UpdateRequested {
+                source: source.clone(),
+                name: name.read(cx).value(),
+                subdivision_pattern,
+            }),
+            Err(error) => {
+                if let DialogView::Edit { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
                 }
@@ -325,21 +380,6 @@ impl PartsDialog {
             return;
         };
         cx.emit(Msg::DuplicateRequested {
-            source: source.clone(),
-            name: name.read(cx).value(),
-        });
-    }
-
-    fn on_rename_confirmed(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        let DialogView::Rename { source, name, .. } = &self.view else {
-            return;
-        };
-        cx.emit(Msg::RenameRequested {
             source: source.clone(),
             name: name.read(cx).value(),
         });
@@ -596,23 +636,23 @@ impl PartsDialog {
         }
     }
 
-    pub fn part_renamed(
+    pub fn part_updated(
         &mut self,
         parts: Vec<Part>,
         sequence: Vec<PartName>,
-        renamed: PartName,
+        updated: PartName,
         cx: &mut Context<Self>,
     ) {
         self.parts = parts;
         self.sequence = sequence;
-        self.selected_part = Some(renamed);
+        self.selected_part = Some(updated);
         self.view = Self::list_view(cx);
         self.sync_button_states(cx);
         cx.notify();
     }
 
-    pub fn rename_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Rename { form_error, .. } = &mut self.view {
+    pub fn update_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let DialogView::Edit { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -684,7 +724,7 @@ impl Render for PartsDialog {
                         .as_ref()
                         .and_then(|name| find_part(&self.parts, name)),
                     PartDetailsButtons {
-                        rename: view.rename_button.clone(),
+                        edit: view.edit_button.clone(),
                         duplicate: view.duplicate_button.clone(),
                         delete: view.delete_button.clone(),
                         delete_confirmation: view.delete_confirmation.clone(),
@@ -712,6 +752,7 @@ impl Render for PartsDialog {
             DialogView::Add {
                 name,
                 length,
+                subdivision_pattern,
                 cancel_button,
                 add_button,
                 form_error,
@@ -721,7 +762,11 @@ impl Render for PartsDialog {
                     .flex_col()
                     .gap_5()
                     .child(field_group("part name", name.clone()))
-                    .child(field_group("length in beats", length.clone()));
+                    .child(field_group("length in beats", length.clone()))
+                    .child(field_group(
+                        "subdivision pattern (optional)",
+                        subdivision_pattern.clone(),
+                    ));
                 let form = if let Some(error) = form_error {
                     form.child(error_message(error.clone()))
                 } else {
@@ -775,11 +820,12 @@ impl Render for PartsDialog {
                         .child(duplicate_button.clone()),
                 )
             }
-            DialogView::Rename {
+            DialogView::Edit {
                 source,
                 name,
+                subdivision_pattern,
                 cancel_button,
-                rename_button,
+                save_button,
                 form_error,
             } => {
                 let form = div()
@@ -789,9 +835,13 @@ impl Render for PartsDialog {
                     .child(
                         div()
                             .text_color(s::TEXT_DEFAULT)
-                            .child(format!("renaming {:?}", source.as_str())),
+                            .child(format!("editing {:?}", source.as_str())),
                     )
-                    .child(field_group("part name", name.clone()));
+                    .child(field_group("part name", name.clone()))
+                    .child(field_group(
+                        "subdivision pattern (optional)",
+                        subdivision_pattern.clone(),
+                    ));
                 let form = if let Some(error) = form_error {
                     form.child(error_message(error.clone()))
                 } else {
@@ -799,7 +849,7 @@ impl Render for PartsDialog {
                 };
 
                 management_form_dialog(
-                    "rename part",
+                    "edit part",
                     self.close_button.clone(),
                     form,
                     div()
@@ -807,7 +857,7 @@ impl Render for PartsDialog {
                         .justify_end()
                         .gap_3()
                         .child(cancel_button.clone())
-                        .child(rename_button.clone()),
+                        .child(save_button.clone()),
                 )
             }
         }
@@ -848,7 +898,7 @@ fn part_list_row(
 }
 
 struct PartDetailsButtons {
-    rename: Entity<Button>,
+    edit: Entity<Button>,
     duplicate: Entity<Button>,
     delete: Entity<Button>,
     delete_confirmation: Option<DeleteConfirmation>,
@@ -862,7 +912,7 @@ fn part_details(
     sequence: &[PartName],
 ) -> gpui::Div {
     let PartDetailsButtons {
-        rename,
+        edit,
         duplicate,
         delete,
         delete_confirmation,
@@ -906,8 +956,8 @@ fn part_details(
                                 .gap_3()
                                 .child(
                                     div()
-                                        .debug_selector(|| "rename-part-control".to_string())
-                                        .child(rename),
+                                        .debug_selector(|| "edit-part-control".to_string())
+                                        .child(edit),
                                 )
                                 .child(
                                     div()
@@ -959,6 +1009,24 @@ fn part_details(
                                     div()
                                         .text_color(s::TEXT_DEFAULT)
                                         .child(format!("{} {beat_label}", part.length)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_color(s::TEXT_HEADER)
+                                        .child("subdivision pattern"),
+                                )
+                                .child(
+                                    div().text_color(s::TEXT_DEFAULT).child(
+                                        part.subdivision_pattern()
+                                            .map(ToString::to_string)
+                                            .unwrap_or_else(|| "none".to_string()),
+                                    ),
                                 ),
                         )
                         .child(
@@ -1173,13 +1241,26 @@ fn parse_part_length(value: &str) -> Result<u32, String> {
     Ok(length)
 }
 
+fn parse_subdivision_pattern(value: &str) -> Result<Option<SubdivisionPattern>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse::<SubdivisionPattern>()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{point, px, size, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
-        parse_part_length, sequence_with_inserted_part, sequence_with_moved_part,
-        sequence_with_removed_part, sequence_with_repeated_part, DialogView, PartsDialog,
+        parse_part_length, parse_subdivision_pattern, sequence_with_inserted_part,
+        sequence_with_moved_part, sequence_with_removed_part, sequence_with_repeated_part,
+        DialogView, PartsDialog,
     };
     use crate::{
         part::{Part, PartName},
@@ -1192,6 +1273,22 @@ mod tests {
         assert!(parse_part_length("").is_err());
         assert!(parse_part_length("0").is_err());
         assert!(parse_part_length("1.5").is_err());
+    }
+
+    #[test]
+    fn subdivision_patterns_are_optional_positive_comma_separated_whole_numbers() {
+        assert!(parse_subdivision_pattern("  ").unwrap().is_none());
+        assert_eq!(
+            parse_subdivision_pattern(" 4, 3,3 ")
+                .unwrap()
+                .unwrap()
+                .subdivisions()
+                .collect::<Vec<_>>(),
+            [4, 3, 3]
+        );
+        assert!(parse_subdivision_pattern("4,,3").is_err());
+        assert!(parse_subdivision_pattern("4, 0").is_err());
+        assert!(parse_subdivision_pattern("4, 1.5").is_err());
     }
 
     #[test]
@@ -1298,11 +1395,11 @@ mod tests {
         );
         assert!(cx.debug_bounds("arrangement-occurrence-2").is_some());
         let add_to_arrangement = cx.debug_bounds("add-to-arrangement-control").unwrap();
-        let rename_part = cx.debug_bounds("rename-part-control").unwrap();
+        let edit_part = cx.debug_bounds("edit-part-control").unwrap();
         let duplicate_part = cx.debug_bounds("duplicate-part-control").unwrap();
         let delete_part_control = cx.debug_bounds("delete-part-control").unwrap();
         assert!(add_to_arrangement.origin.y < duplicate_part.origin.y);
-        assert_eq!(rename_part.origin.y, duplicate_part.origin.y);
+        assert_eq!(edit_part.origin.y, duplicate_part.origin.y);
         assert_eq!(duplicate_part.origin.y, delete_part_control.origin.y);
         assert!(
             add_to_arrangement.size.width < details.size.width
@@ -1430,22 +1527,34 @@ mod tests {
     }
 
     #[gpui::test]
-    fn rename_part_action_opens_a_form_with_the_current_name(cx: &mut TestAppContext) {
+    fn edit_part_action_opens_a_form_with_the_current_configuration(cx: &mut TestAppContext) {
+        let pattern = "4, 3, 3".parse().unwrap();
         let (dialog, cx) = cx.add_window_view(|_, cx| {
-            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
+            PartsDialog::new(
+                vec![Part::new("intro", 16).with_subdivision_pattern(Some(pattern))],
+                Vec::new(),
+                cx,
+            )
         });
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
-        let rename = cx.debug_bounds("rename-part-control").unwrap();
-        cx.simulate_click(rename.center(), Default::default());
+        let edit = cx.debug_bounds("edit-part-control").unwrap();
+        cx.simulate_click(edit.center(), Default::default());
 
         cx.update(|_, cx| {
-            let DialogView::Rename { source, name, .. } = &dialog.read(cx).view else {
-                panic!("rename action should open its form");
+            let DialogView::Edit {
+                source,
+                name,
+                subdivision_pattern,
+                ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("edit action should open its form");
             };
             assert_eq!(source.as_str(), "intro");
             assert_eq!(name.read(cx).value(), "intro");
+            assert_eq!(subdivision_pattern.read(cx).value(), "4, 3, 3");
         });
     }
 

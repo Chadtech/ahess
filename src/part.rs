@@ -3,7 +3,9 @@ use std::{
     fmt,
     fs::{self, OpenOptions},
     io::{self, Write},
+    num::NonZeroU32,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use serde::Deserialize;
@@ -49,6 +51,8 @@ impl From<String> for PartName {
 pub struct Part {
     pub name: PartName,
     pub length: u32,
+    #[serde(default)]
+    subdivision_pattern: Option<SubdivisionPattern>,
 }
 
 impl Part {
@@ -56,7 +60,162 @@ impl Part {
         Self {
             name: name.into(),
             length,
+            subdivision_pattern: None,
         }
+    }
+
+    pub fn with_subdivision_pattern(
+        mut self,
+        subdivision_pattern: Option<SubdivisionPattern>,
+    ) -> Self {
+        self.subdivision_pattern = subdivision_pattern;
+        self
+    }
+
+    pub fn subdivision_pattern(&self) -> Option<&SubdivisionPattern> {
+        self.subdivision_pattern.as_ref()
+    }
+
+    pub fn beat_label(&self, beat_index: usize) -> String {
+        self.subdivision_pattern.as_ref().map_or_else(
+            || (beat_index + 1).to_string(),
+            |pattern| pattern.beat_position(beat_index).label(),
+        )
+    }
+
+    pub fn beat_is_highlighted(&self, beat_index: usize) -> bool {
+        self.subdivision_pattern
+            .as_ref()
+            .is_some_and(|pattern| pattern.beat_position(beat_index).group_index % 2 == 1)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<u32>")]
+pub struct SubdivisionPattern(Vec<NonZeroU32>);
+
+impl SubdivisionPattern {
+    pub fn new(
+        subdivisions: impl IntoIterator<Item = u32>,
+    ) -> Result<Self, InvalidSubdivisionPattern> {
+        let subdivisions = subdivisions
+            .into_iter()
+            .map(|subdivision| {
+                NonZeroU32::new(subdivision).ok_or(InvalidSubdivisionPattern::ZeroSubdivision)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if subdivisions.is_empty() {
+            return Err(InvalidSubdivisionPattern::Empty);
+        }
+
+        Ok(Self(subdivisions))
+    }
+
+    pub fn subdivisions(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().map(|subdivision| subdivision.get())
+    }
+
+    fn beat_position(&self, beat_index: usize) -> SubdivisionPosition {
+        let cycle_length = self
+            .0
+            .iter()
+            .map(|subdivision| u64::from(subdivision.get()))
+            .sum::<u64>();
+        let beat_index = beat_index as u64;
+        let cycle = beat_index / cycle_length;
+        let mut offset_in_cycle = beat_index % cycle_length;
+
+        for (pattern_index, subdivision_count) in self.0.iter().enumerate() {
+            let subdivision_count = u64::from(subdivision_count.get());
+            if offset_in_cycle < subdivision_count {
+                return SubdivisionPosition {
+                    group_index: cycle * self.0.len() as u64 + pattern_index as u64,
+                    subdivision_index: offset_in_cycle,
+                };
+            }
+            offset_in_cycle -= subdivision_count;
+        }
+
+        unreachable!("a beat within a non-empty subdivision cycle always has a position")
+    }
+}
+
+impl fmt::Display for SubdivisionPattern {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, subdivision) in self.subdivisions().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{subdivision}")?;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for SubdivisionPattern {
+    type Err = InvalidSubdivisionPattern;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.trim().is_empty() {
+            return Err(InvalidSubdivisionPattern::Empty);
+        }
+        let subdivisions = value
+            .split(',')
+            .map(|item| {
+                let item = item.trim();
+                if item.is_empty() {
+                    return Err(InvalidSubdivisionPattern::MissingSubdivision);
+                }
+                item.parse::<u32>()
+                    .map_err(|_| InvalidSubdivisionPattern::NotWholeNumber(item.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(subdivisions)
+    }
+}
+
+impl TryFrom<Vec<u32>> for SubdivisionPattern {
+    type Error = InvalidSubdivisionPattern;
+
+    fn try_from(subdivisions: Vec<u32>) -> Result<Self, Self::Error> {
+        Self::new(subdivisions)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvalidSubdivisionPattern {
+    Empty,
+    MissingSubdivision,
+    NotWholeNumber(String),
+    ZeroSubdivision,
+}
+
+impl fmt::Display for InvalidSubdivisionPattern {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("subdivision pattern must not be empty"),
+            Self::MissingSubdivision => {
+                formatter.write_str("each comma must be followed by a subdivision")
+            }
+            Self::NotWholeNumber(value) => {
+                write!(formatter, "subdivision {value:?} must be a whole number")
+            }
+            Self::ZeroSubdivision => formatter.write_str("subdivisions must be at least one beat"),
+        }
+    }
+}
+
+impl Error for InvalidSubdivisionPattern {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SubdivisionPosition {
+    group_index: u64,
+    subdivision_index: u64,
+}
+
+impl SubdivisionPosition {
+    fn label(self) -> String {
+        format!("{}.{}", self.group_index + 1, self.subdivision_index + 1)
     }
 }
 
@@ -823,7 +982,8 @@ pub fn duplicate_part_file(
     drop(file);
 
     Ok(CreatedPartFile {
-        part: Part::new(part_name, source_part.length),
+        part: Part::new(part_name, source_part.length)
+            .with_subdivision_pattern(source_part.subdivision_pattern().cloned()),
         path,
     })
 }
@@ -871,7 +1031,8 @@ pub fn rename_part_file(
     }
 
     Ok(RenamedPartFile {
-        part: Part::new(part_name, source_part.length),
+        part: Part::new(part_name, source_part.length)
+            .with_subdivision_pattern(source_part.subdivision_pattern().cloned()),
         original_path,
         renamed_path,
     })
@@ -1287,7 +1448,8 @@ mod tests {
     use super::{
         available_deleted_path, create_part_file, csv_file_name, duplicate_part_file,
         rename_part_file, soft_delete_part_file, DeletedPartPathError, Part, PartName, PartRowEdit,
-        PartRowEditError, PartScore, ScoreRowIndex, ScoreRowRange, DELETED_PARTS_DIRECTORY,
+        PartRowEditError, PartScore, ScoreRowIndex, ScoreRowRange, SubdivisionPattern,
+        DELETED_PARTS_DIRECTORY,
     };
     use crate::{
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
@@ -1301,6 +1463,39 @@ mod tests {
             "part-a.csv"
         );
         assert!(csv_file_name(&PartName::new("!!!")).is_err());
+    }
+
+    #[test]
+    fn subdivision_patterns_label_and_highlight_repeating_groups() {
+        let part = Part::new("mixed meter", 16)
+            .with_subdivision_pattern(Some(SubdivisionPattern::new([4, 3, 3]).unwrap()));
+
+        assert_eq!(
+            (0..14)
+                .map(|beat| part.beat_label(beat))
+                .collect::<Vec<_>>(),
+            [
+                "1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "3.1", "3.2", "3.3", "4.1", "4.2",
+                "4.3", "4.4",
+            ]
+        );
+        assert_eq!(
+            (0..14)
+                .map(|beat| part.beat_is_highlighted(beat))
+                .collect::<Vec<_>>(),
+            [
+                false, false, false, false, true, true, true, false, false, false, true, true,
+                true, true,
+            ]
+        );
+    }
+
+    #[test]
+    fn subdivision_patterns_reject_invalid_values() {
+        assert!(SubdivisionPattern::new([]).is_err());
+        assert!(SubdivisionPattern::new([4, 0, 3]).is_err());
+        assert!("4,,3".parse::<SubdivisionPattern>().is_err());
+        assert!("4, 1.5".parse::<SubdivisionPattern>().is_err());
     }
 
     #[test]

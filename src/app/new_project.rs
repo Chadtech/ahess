@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
     app::room_form::RoomFields,
-    project::{self, ProjectOpened},
+    project::{self, FrequencyVariance, ProjectOpened},
     seed::Seed,
     style as s,
     tuning_system::{self, TuningSystem},
@@ -91,7 +91,10 @@ impl NewProjectDialog {
     ) -> Result<ProjectOpened, CreateProjectFormError> {
         let project_name = self.fields.project_name.read(cx).value().trim().to_string();
         let beat_length = parse_beat_length_field(&self.fields.beat_length.read(cx).value())?;
-        let timing_variance = parse_u32_field("variance", &self.fields.variance.read(cx).value())?;
+        let timing_variance =
+            parse_u32_field("timing variance", &self.fields.variance.read(cx).value())?;
+        let frequency_variance =
+            parse_frequency_variance_field(&self.fields.frequency_variance.read(cx).value())?;
         let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
         let description = self.fields.description.read(cx).value();
         let tuning_system = self
@@ -104,6 +107,7 @@ impl NewProjectDialog {
             .room(cx)
             .map_err(CreateProjectFormError::InvalidField)?;
         let mut project = project::Project::new(project_name, beat_length, timing_variance, seed)
+            .with_frequency_variance(frequency_variance)
             .with_description(description)
             .with_tuning_system(tuning_system);
         project
@@ -173,6 +177,18 @@ fn parse_beat_length_field(value: &str) -> Result<u32, CreateProjectFormError> {
     Ok(beat_length)
 }
 
+fn parse_frequency_variance_field(
+    value: &str,
+) -> Result<FrequencyVariance, CreateProjectFormError> {
+    let ratio = value.trim().parse::<f64>().map_err(|_| {
+        CreateProjectFormError::InvalidField(
+            "frequency variance must be a decimal from 0 up to but not including 1".to_string(),
+        )
+    })?;
+    FrequencyVariance::new(ratio)
+        .map_err(|error| CreateProjectFormError::InvalidField(error.to_string()))
+}
+
 fn parse_seed_field(value: &str) -> Result<Seed, CreateProjectFormError> {
     value.trim().parse::<u64>().map(Seed::new).map_err(|_| {
         CreateProjectFormError::InvalidField("seed must be a whole number".to_string())
@@ -183,6 +199,7 @@ struct NewProjectFields {
     project_name: Entity<TextInput>,
     beat_length: Entity<TextInput>,
     variance: Entity<TextInput>,
+    frequency_variance: Entity<TextInput>,
     seed: Entity<TextInput>,
     description: Entity<TextInput>,
     room: RoomFields,
@@ -194,6 +211,7 @@ impl NewProjectFields {
             project_name: cx.new(|cx| TextInput::new("", "", cx)),
             beat_length: cx.new(|cx| TextInput::new("", "800", cx)),
             variance: cx.new(|cx| TextInput::new("", "", cx)),
+            frequency_variance: cx.new(|cx| TextInput::new("", "", cx)),
             seed: cx.new(|cx| TextInput::new("", "1234", cx)),
             description: cx.new(|cx| TextInput::new("", "", cx)),
             room: RoomFields::new("new-project", "new-project-room-kind", None, cx),
@@ -216,7 +234,13 @@ fn new_project_form(
         .child(control_group("tuning system", tuning_dropdown))
         .child(div().flex().gap_4().children([
             field_group("beat length (samples)", fields.beat_length.clone()),
-            field_group("variance", fields.variance.clone()),
+            field_group("timing variance (samples)", fields.variance.clone()),
+        ]))
+        .child(div().flex().gap_4().children([
+            field_group(
+                "frequency variance (decimal)",
+                fields.frequency_variance.clone(),
+            ),
             field_group("seed", fields.seed.clone()),
         ]))
         .child(field_group("description", fields.description.clone()))
@@ -256,7 +280,9 @@ mod tests {
 
     use gpui::{px, size, Modifiers, TestAppContext};
 
-    use super::{parse_beat_length_field, parse_seed_field, parse_u32_field};
+    use super::{
+        parse_beat_length_field, parse_frequency_variance_field, parse_seed_field, parse_u32_field,
+    };
     use crate::{project, seed::Seed, style as s};
 
     #[test]
@@ -265,6 +291,12 @@ mod tests {
         assert!(parse_u32_field("beat length", "4.0").is_err());
         assert_eq!(parse_beat_length_field("800").unwrap(), 800);
         assert!(parse_beat_length_field("0").is_err());
+        assert_eq!(
+            parse_frequency_variance_field(" 0.025 ").unwrap().ratio(),
+            0.025
+        );
+        assert!(parse_frequency_variance_field("1.0").is_err());
+        assert!(parse_frequency_variance_field("-0.1").is_err());
     }
 
     #[test]
@@ -308,6 +340,7 @@ mod tests {
                 (fields.project_name.clone(), "room project"),
                 (fields.beat_length.clone(), "800"),
                 (fields.variance.clone(), "0"),
+                (fields.frequency_variance.clone(), "0.025"),
                 (fields.seed.clone(), "1"),
             ];
             for (input, value) in values {
@@ -330,6 +363,7 @@ mod tests {
             project.acoustic_scene().listener(),
             crate::acoustics::Point3Meters::new(4.0, 5.0, 1.5).unwrap()
         );
+        assert_eq!(project.frequency_variance().ratio(), 0.025);
 
         fs::remove_dir_all(root).unwrap();
     }

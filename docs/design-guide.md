@@ -79,12 +79,30 @@ or when it defines how a shared component is used.
 - keep the option text concise; use a dialog or full selection list when the
   choices require supporting detail.
 
+## action menus
+
+- use `view::action_menu::ActionMenu` when several commands share one compact
+  toolbar location and no command represents a persistent selection.
+- label the trigger `actions` when its scope is already clear from the
+  containing editor. Use short verb-first labels for menu items.
+- keep unavailable commands visible and disabled so the menu remains stable
+  and users can discover selection-dependent actions.
+- action menus open toward the inside of their containing toolbar and use the
+  same border, hover, height limit, and one-line labels as dropdown menus.
+
 ## data grids
 
 - use `view::data_grid::editable` for an editable row-and-column table.
 - the component owns scrolling, row numbering, column headers, cell dimensions,
   and raised/sunken table chrome.
-- give each independently scrollable grid view its own `ScrollHandle`.
+- use the data grid's custom row-label input when the domain gives rows a
+  structured position such as a beat subdivision; keep row labels concise and
+  derived from domain state.
+- give each independently scrollable grid view its own `DataGridScrollHandle`;
+  grid rows have a uniform height and the component renders only the visible
+  rows.
+- use compact data-grid columns for short values of up to six monospaced
+  characters; column headers truncate within that width.
 - when actions operate on whole rows, select rows through the numbered row
   headers. Use click for one row and drag or shift-click for one contiguous
   range. Clicking the sole selected row header again clears the selection.
@@ -94,9 +112,10 @@ or when it defines how a shared component is used.
   numeral. Keep the score cells themselves visually unchanged.
 - keep row actions in the editor header alongside other grid-level controls so
   they do not consume a separate row of vertical space. Keep compact actions
-  on one line and cap or truncate flexible selectors before hiding or wrapping
-  action controls. Keep every action visible and disable actions that do not
-  apply without a row selection.
+  on one line and cap or truncate flexible selectors before wrapping controls.
+  When the command set outgrows a compact toolbar, put the complete set in a
+  shared action menu rather than adding another toolbar row. Keep every menu
+  item visible and disable actions that do not apply without a row selection.
 
 ## ordered input lists
 
@@ -186,6 +205,9 @@ or when it defines how a shared component is used.
 - use `view::dialog::error_message` for errors within dialog content.
 - use `view::dialog::destructive_confirmation` for irreversible confirmation
   prompts. It groups the warning text and actions in a dark-red, sunken panel.
+- when an irreversible confirmation is the only content in a standalone dialog,
+  use `view::dialog::destructive_dialog`. Its dark-red body directly contains
+  the warning and actions without an additional sunken panel.
 - use `view::dialog::list_detail_dialog` and
   `view::dialog::management_form_dialog` for management dialogs that pair a
   selectable resource list and detail view with an add form.

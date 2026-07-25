@@ -4,7 +4,7 @@ use gpui::{
     actions, div, fill, point, prelude::*, px, relative, rgba, size, App, Bounds, ClipboardItem,
     Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Rgba, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -62,6 +62,7 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    background: Rgba,
 }
 
 pub struct Changed;
@@ -84,7 +85,18 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            background: s::GREEN3,
         }
+    }
+
+    pub fn with_background(mut self, background: Rgba) -> Self {
+        self.background = background;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn background(&self) -> Rgba {
+        self.background
     }
 
     pub fn value(&self) -> String {
@@ -682,7 +694,7 @@ impl Render for TextInput {
             .line_height(s::TEXT_LINE_HEIGHT)
             .text_size(s::TEXT_SIZE)
             .text_color(s::TEXT_DEFAULT)
-            .bg(s::GREEN3)
+            .bg(self.background)
             .border_1()
             .border_color(s::GREEN3)
             .child(TextElement { input: cx.entity() })

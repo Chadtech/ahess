@@ -16,7 +16,7 @@ use gpui::{
 };
 
 use crate::{
-    part::{self, PartName, PartScore},
+    part::{self, PartName, PartScore, SubdivisionPattern},
     playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
     style as s,
@@ -32,8 +32,9 @@ use self::{
     parts::PartsDialog,
     project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
     score::{
-        DocumentEvent, PartSelected, RowEditConfirmation, RowEditConfirmationMsg, RowEditRequested,
-        SaveState, ScoreDocument, ScoreEditor,
+        DocumentEvent, ExportRowsConfirmed, ExportRowsDialog, ExportRowsDialogMsg,
+        ExportRowsRequested, PartLoopRequested, PartSelected, RowEditConfirmation,
+        RowEditConfirmationMsg, RowEditRequested, SaveState, ScoreDocument, ScoreEditor,
     },
     voices::VoicesDialog,
 };
@@ -61,7 +62,7 @@ pub struct Model {
     score_views: Vec<ScoreViewEntry>,
     active_score_view: usize,
     loop_range: Option<BeatRange>,
-    playback: Option<Playback>,
+    playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
     transport_error: Option<String>,
     workspace_error: Option<String>,
@@ -77,6 +78,17 @@ struct ScoreViewEntry {
     editor: Option<Entity<ScoreEditor>>,
 }
 
+struct ActivePlayback {
+    output: Playback,
+    target: PlaybackTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PlaybackTarget {
+    Arrangement,
+    Part(PartName),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum StatusAction {
     RevealIssue {
@@ -90,6 +102,7 @@ enum StatusAction {
 type ProjectStatus = status_bar::Status<StatusAction>;
 
 enum Dialog {
+    ExportRows(Entity<ExportRowsDialog>),
     LoopRange(Entity<LoopRangeDialog>),
     Parts(Entity<PartsDialog>),
     ProjectSettings(Entity<ProjectSettingsDialog>),
@@ -199,6 +212,7 @@ impl Model {
 
     pub fn active_dialog(&self) -> Option<AnyElement> {
         self.dialog.as_ref().map(|dialog| match dialog {
+            Dialog::ExportRows(dialog) => dialog.clone().into_any_element(),
             Dialog::LoopRange(dialog) => dialog.clone().into_any_element(),
             Dialog::Parts(dialog) => dialog.clone().into_any_element(),
             Dialog::ProjectSettings(dialog) => dialog.clone().into_any_element(),
@@ -278,19 +292,17 @@ impl Model {
             };
         }
 
-        let mut parse_issues = self
-            .score_documents
-            .iter()
-            .flat_map(|entry| {
-                entry
-                    .document
-                    .read(cx)
+        let mut parse_issues = Vec::new();
+        for entry in &self.score_documents {
+            let document = entry.document.read(cx);
+            parse_issues.extend(
+                document
                     .parse_issues()
-                    .into_iter()
-                    .map(|issue| (entry.part_name.clone(), issue))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+                    .iter()
+                    .cloned()
+                    .map(|issue| (entry.part_name.clone(), issue)),
+            );
+        }
         if !parse_issues.is_empty() {
             if let Some(active_part) = self.active_part() {
                 if let Some(active_issue) = parse_issues
@@ -481,7 +493,10 @@ impl Model {
         cx.notify();
     }
 
-    fn playback_loop(&mut self, cx: &mut Context<Self>) -> Result<PlaybackLoop, String> {
+    fn arrangement_playback_loop(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<PlaybackLoop, String> {
         let range = self.loop_range.ok_or_else(|| {
             "add at least one part to the arrangement before starting playback".to_string()
         })?;
@@ -497,14 +512,40 @@ impl Model {
             .map_err(|error| error.to_string())
     }
 
-    fn update_live_playback(&mut self, cx: &mut Context<Self>) {
-        if self.playback.is_none() {
-            return;
+    fn part_playback_loop(
+        &mut self,
+        part_name: &PartName,
+        cx: &mut Context<Self>,
+    ) -> Result<PlaybackLoop, String> {
+        let document = self.score_document(part_name, cx)?;
+        let document = document.read(cx);
+        PlaybackLoop::from_part(&self.project, document.part(), document.score())
+            .map_err(|error| error.to_string())
+    }
+
+    fn playback_loop_for_target(
+        &mut self,
+        target: &PlaybackTarget,
+        cx: &mut Context<Self>,
+    ) -> Result<PlaybackLoop, String> {
+        match target {
+            PlaybackTarget::Arrangement => self.arrangement_playback_loop(cx),
+            PlaybackTarget::Part(part_name) => self.part_playback_loop(part_name, cx),
         }
-        match self.playback_loop(cx) {
+    }
+
+    fn update_live_playback(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self
+            .playback
+            .as_ref()
+            .map(|playback| playback.target.clone())
+        else {
+            return;
+        };
+        match self.playback_loop_for_target(&target, cx) {
             Ok(playback_loop) => {
                 if let Some(playback) = &self.playback {
-                    playback.update(playback_loop);
+                    playback.output.update(playback_loop);
                 }
                 self.transport_error = None;
             }
@@ -517,7 +558,8 @@ impl Model {
     }
 
     fn on_play_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let playback_loop = match self.playback_loop(cx) {
+        let target = PlaybackTarget::Arrangement;
+        let playback_loop = match self.playback_loop_for_target(&target, cx) {
             Ok(playback_loop) => playback_loop,
             Err(error) => {
                 self.transport_error = Some(error);
@@ -526,12 +568,24 @@ impl Model {
             }
         };
 
+        self.start_playback(target, playback_loop, cx);
+    }
+
+    fn start_playback(
+        &mut self,
+        target: PlaybackTarget,
+        playback_loop: PlaybackLoop,
+        cx: &mut Context<Self>,
+    ) {
         self.playhead_task.take();
         self.clear_playhead_highlights(cx);
         self.playback = None;
         match Playback::start(playback_loop) {
             Ok(playback) => {
-                self.playback = Some(playback);
+                self.playback = Some(ActivePlayback {
+                    output: playback,
+                    target,
+                });
                 self.transport_error = None;
                 self.set_transport_playing(true, cx);
                 self.start_playhead_tracking(cx);
@@ -589,7 +643,13 @@ impl Model {
 
     fn sync_playhead_highlights(&self, cx: &mut Context<Self>) {
         let playing_position = self.playback.as_ref().and_then(|playback| {
-            playing_score_row(&self.project, playback.current_arrangement_beat())
+            let beat = playback.output.current_arrangement_beat();
+            match &playback.target {
+                PlaybackTarget::Arrangement => playing_score_row(&self.project, beat),
+                PlaybackTarget::Part(part_name) => usize::try_from(beat.checked_sub(1)?)
+                    .ok()
+                    .map(|row| (part_name.clone(), row)),
+            }
         });
         for view in &self.score_views {
             let playing_row = view.part_name.as_ref().and_then(|view_part| {
@@ -641,6 +701,10 @@ impl Model {
             .detach();
         cx.subscribe(&editor, Self::on_score_editor_row_edit_requested)
             .detach();
+        cx.subscribe(&editor, Self::on_score_editor_part_loop_requested)
+            .detach();
+        cx.subscribe(&editor, Self::on_score_editor_export_rows_requested)
+            .detach();
         if let Some(view) = self.score_views.get_mut(view_index) {
             view.part_name = Some(part_name);
             view.editor = Some(editor);
@@ -667,6 +731,118 @@ impl Model {
         };
         self.activate_score_view(view_index, cx);
         self.assign_part_to_view(view_index, selected.part_name.clone(), cx);
+    }
+
+    fn on_score_editor_part_loop_requested(
+        &mut self,
+        editor: Entity<ScoreEditor>,
+        request: &PartLoopRequested,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(view_index) = self
+            .score_views
+            .iter()
+            .position(|view| view.editor.as_ref() == Some(&editor))
+        {
+            self.activate_score_view(view_index, cx);
+        }
+
+        let target = PlaybackTarget::Part(request.part_name.clone());
+        match self.playback_loop_for_target(&target, cx) {
+            Ok(playback_loop) => self.start_playback(target, playback_loop, cx),
+            Err(error) => {
+                self.transport_error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    fn on_score_editor_export_rows_requested(
+        &mut self,
+        editor: Entity<ScoreEditor>,
+        request: &ExportRowsRequested,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if let Some(view_index) = self
+            .score_views
+            .iter()
+            .position(|view| view.editor.as_ref() == Some(&editor))
+        {
+            self.activate_score_view(view_index, cx);
+        }
+
+        let request = request.clone();
+        let dialog = cx.new(move |cx| ExportRowsDialog::new(request, cx));
+        cx.subscribe(&dialog, Self::on_export_rows_dialog_msg)
+            .detach();
+        self.dialog = Some(Dialog::ExportRows(dialog));
+        cx.notify();
+    }
+
+    fn on_export_rows_dialog_msg(
+        &mut self,
+        dialog: Entity<ExportRowsDialog>,
+        msg: &ExportRowsDialogMsg,
+        cx: &mut Context<Self>,
+    ) {
+        match msg {
+            ExportRowsDialogMsg::Cancelled => {
+                self.dialog = None;
+            }
+            ExportRowsDialogMsg::Confirmed(request) => {
+                self.export_selected_rows(dialog, request, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn export_selected_rows(
+        &mut self,
+        dialog: Entity<ExportRowsDialog>,
+        request: &ExportRowsConfirmed,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(document) = self
+            .score_documents
+            .iter()
+            .find(|entry| entry.part_name.eq_ignore_ascii_case(&request.part_name))
+            .map(|entry| entry.document.clone())
+        else {
+            dialog.update(cx, |dialog, cx| {
+                dialog.export_failed(
+                    format!("part {:?} no longer exists", request.part_name.as_str()),
+                    cx,
+                );
+            });
+            return;
+        };
+        let score = document.read(cx).score().clone();
+
+        match export_project_part_rows(
+            &self.project_directory,
+            &mut self.project,
+            &request.part_name,
+            &score,
+            request.rows,
+            &request.new_part_name,
+        ) {
+            Ok(part) => {
+                let part_name = part.name.clone();
+                self.dialog = None;
+                self.update_score_documents_for_project_settings(cx);
+                self.select_part(part_name, cx);
+                self.sync_score_editor_parts(cx);
+                self.workspace_error = None;
+            }
+            Err(error) => {
+                dialog.update(cx, |dialog, cx| {
+                    dialog.export_failed(error.to_string(), cx);
+                });
+            }
+        }
     }
 
     fn on_score_editor_row_edit_requested(
@@ -1000,7 +1176,8 @@ impl Model {
                 cx.notify();
                 return;
             }
-            Some(Dialog::LoopRange(_))
+            Some(Dialog::ExportRows(_))
+            | Some(Dialog::LoopRange(_))
             | Some(Dialog::Parts(_))
             | Some(Dialog::ProjectSettings(_))
             | Some(Dialog::RowEdit(_)) => return,
@@ -1029,7 +1206,8 @@ impl Model {
                 cx.notify();
                 return;
             }
-            Some(Dialog::LoopRange(_))
+            Some(Dialog::ExportRows(_))
+            | Some(Dialog::LoopRange(_))
             | Some(Dialog::ProjectSettings(_))
             | Some(Dialog::RowEdit(_))
             | Some(Dialog::Voices(_)) => return,
@@ -1191,9 +1369,18 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         match msg {
-            parts::Msg::AddRequested { name, length } => {
-                match create_project_part(&self.project_directory, &mut self.project, name, *length)
-                {
+            parts::Msg::AddRequested {
+                name,
+                length,
+                subdivision_pattern,
+            } => {
+                match create_configured_project_part(
+                    &self.project_directory,
+                    &mut self.project,
+                    name,
+                    *length,
+                    subdivision_pattern.clone(),
+                ) {
                     Ok(part) => {
                         let added_name = part.name.clone();
                         let parts = self.project.parts.clone();
@@ -1240,21 +1427,30 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::RenameRequested { source, name } => {
+            parts::Msg::UpdateRequested {
+                source,
+                name,
+                subdivision_pattern,
+            } => {
                 if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
-                        dialog.rename_failed(format!("couldn't save score changes: {error}"), cx);
+                        dialog.update_failed(format!("couldn't save score changes: {error}"), cx);
                     });
                     return;
                 }
-                match rename_project_part(&self.project_directory, &mut self.project, source, name)
-                {
+                match update_project_part(
+                    &self.project_directory,
+                    &mut self.project,
+                    source,
+                    name,
+                    subdivision_pattern.clone(),
+                ) {
                     Ok(part) => {
-                        let renamed_name = part.name.clone();
+                        let updated_name = part.name.clone();
                         let project = self.project.clone();
                         for entry in &mut self.score_documents {
                             if entry.part_name.eq_ignore_ascii_case(source) {
-                                entry.part_name = renamed_name.clone();
+                                entry.part_name = updated_name.clone();
                                 let score = entry.document.read(cx).score().clone();
                                 let project = project.clone();
                                 let part = part.clone();
@@ -1274,13 +1470,13 @@ impl Model {
                                 .as_ref()
                                 .is_some_and(|part_name| part_name.eq_ignore_ascii_case(source))
                             {
-                                view.part_name = Some(renamed_name.clone());
+                                view.part_name = Some(updated_name.clone());
                             }
                         }
                         let parts = self.project.parts.clone();
                         let sequence = self.project.sequence().to_vec();
                         dialog.update(cx, |dialog, cx| {
-                            dialog.part_renamed(parts, sequence, renamed_name, cx);
+                            dialog.part_updated(parts, sequence, updated_name, cx);
                         });
                         self.sync_score_editor_parts(cx);
                         self.workspace_error = None;
@@ -1290,7 +1486,7 @@ impl Model {
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
-                            dialog.rename_failed(error.to_string(), cx);
+                            dialog.update_failed(error.to_string(), cx);
                         });
                     }
                 }
@@ -1601,6 +1797,11 @@ fn workspace(
 enum PartChangeError {
     Recovery(project::ProjectTransactionError),
     CreateFile(part::CreatePartError),
+    ExportSelectionOutOfBounds,
+    ExportScore {
+        source: part::ScoreError,
+        rollback_error: Option<part::PartFileRollbackError>,
+    },
     RenameFile(part::RenamePartError),
     DeleteFile(part::DeletePartError),
     MissingPart(String),
@@ -1627,6 +1828,18 @@ impl fmt::Display for PartChangeError {
         match self {
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
             Self::CreateFile(error) => write!(f, "{error}"),
+            Self::ExportSelectionOutOfBounds => f.write_str("the selected beats no longer exist"),
+            Self::ExportScore {
+                source,
+                rollback_error: None,
+            } => write!(f, "{source}"),
+            Self::ExportScore {
+                source,
+                rollback_error: Some(rollback_error),
+            } => write!(
+                f,
+                "{source}; also failed to remove the incomplete part file: {rollback_error}"
+            ),
             Self::RenameFile(error) => write!(f, "{error}"),
             Self::DeleteFile(error) => write!(f, "{error}"),
             Self::MissingPart(name) => write!(f, "part {name:?} no longer exists"),
@@ -1686,12 +1899,15 @@ impl std::error::Error for PartChangeError {
         match self {
             Self::Recovery(error) => Some(error),
             Self::CreateFile(error) => Some(error),
+            Self::ExportScore { source, .. } => Some(source),
             Self::RenameFile(error) => Some(error),
             Self::DeleteFile(error) => Some(error),
             Self::SaveCreated { source, .. }
             | Self::SaveDeleted { source, .. }
             | Self::SaveRenamed { source, .. } => Some(source),
-            Self::MissingPart(_) | Self::PartInSequence { .. } => None,
+            Self::ExportSelectionOutOfBounds
+            | Self::MissingPart(_)
+            | Self::PartInSequence { .. } => None,
         }
     }
 }
@@ -1745,11 +1961,22 @@ fn update_project_sequence(
     Ok(sequence)
 }
 
+#[cfg(test)]
 fn create_project_part(
     project_directory: &Path,
     project: &mut Project,
     name: &str,
     length: u32,
+) -> Result<part::Part, PartChangeError> {
+    create_configured_project_part(project_directory, project, name, length, None)
+}
+
+fn create_configured_project_part(
+    project_directory: &Path,
+    project: &mut Project,
+    name: &str,
+    length: u32,
+    subdivision_pattern: Option<SubdivisionPattern>,
 ) -> Result<part::Part, PartChangeError> {
     project::recover_pending_project_update(project_directory)
         .map_err(PartChangeError::Recovery)?;
@@ -1761,7 +1988,10 @@ fn create_project_part(
         length,
     )
     .map_err(PartChangeError::CreateFile)?;
-    let part = created.part().clone();
+    let part = created
+        .part()
+        .clone()
+        .with_subdivision_pattern(subdivision_pattern);
     project.add_part(part.clone());
 
     if let Err(source) = project::save_project(project_directory, project) {
@@ -1772,7 +2002,8 @@ fn create_project_part(
         });
     }
 
-    Ok(created.commit())
+    created.commit();
+    Ok(part)
 }
 
 fn duplicate_project_part(
@@ -1803,11 +2034,84 @@ fn duplicate_project_part(
     Ok(created.commit())
 }
 
+fn export_project_part_rows(
+    project_directory: &Path,
+    project: &mut Project,
+    source_name: &PartName,
+    source_score: &PartScore,
+    rows: part::ScoreRowRange,
+    name: &str,
+) -> Result<part::Part, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
+    let source_part = project
+        .part(source_name)
+        .cloned()
+        .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))?;
+    let rows = part::ScoreRowRange::new(rows.first(), rows.last(), source_score.rows().len())
+        .ok_or(PartChangeError::ExportSelectionOutOfBounds)?;
+    let exported_score =
+        PartScore::from_rows(source_score.rows()[rows.first()..=rows.last()].to_vec());
+    let length =
+        u32::try_from(rows.len()).expect("a selection from a u32-length part always fits in u32");
+    let created = part::create_part_file(
+        project_directory,
+        &project.parts,
+        project.voices(),
+        name,
+        length,
+    )
+    .map_err(PartChangeError::CreateFile)?;
+    let exported_part = created
+        .part()
+        .clone()
+        .with_subdivision_pattern(source_part.subdivision_pattern().cloned());
+
+    if let Err(source) = exported_score.save(project_directory, &exported_part, project) {
+        return Err(PartChangeError::ExportScore {
+            source,
+            rollback_error: created.rollback().err(),
+        });
+    }
+
+    project.add_part(exported_part.clone());
+    if let Err(source) = project::save_project(project_directory, project) {
+        project.remove_part(&exported_part.name);
+        return Err(PartChangeError::SaveCreated {
+            source,
+            rollback_error: created.rollback().err(),
+        });
+    }
+
+    created.commit();
+    Ok(exported_part)
+}
+
+#[cfg(test)]
 fn rename_project_part(
     project_directory: &Path,
     project: &mut Project,
     source_name: &PartName,
     name: &str,
+) -> Result<part::Part, PartChangeError> {
+    let subdivision_pattern = project
+        .part(source_name)
+        .and_then(|part| part.subdivision_pattern().cloned());
+    update_project_part(
+        project_directory,
+        project,
+        source_name,
+        name,
+        subdivision_pattern,
+    )
+}
+
+fn update_project_part(
+    project_directory: &Path,
+    project: &mut Project,
+    source_name: &PartName,
+    name: &str,
+    subdivision_pattern: Option<SubdivisionPattern>,
 ) -> Result<part::Part, PartChangeError> {
     project::recover_pending_project_update(project_directory)
         .map_err(PartChangeError::Recovery)?;
@@ -1819,7 +2123,10 @@ fn rename_project_part(
     let source_part = project.parts[index].clone();
     let renamed = part::rename_part_file(project_directory, &project.parts, &source_part, name)
         .map_err(PartChangeError::RenameFile)?;
-    let renamed_part = renamed.part().clone();
+    let renamed_part = renamed
+        .part()
+        .clone()
+        .with_subdivision_pattern(subdivision_pattern);
     let original_sequence = project.sequence().to_vec();
     let updated_sequence = original_sequence
         .iter()
@@ -1843,7 +2150,8 @@ fn rename_project_part(
         });
     }
 
-    Ok(renamed.commit())
+    renamed.commit();
+    Ok(renamed_part)
 }
 
 fn delete_project_part(
@@ -1894,13 +2202,16 @@ mod tests {
 
     use gpui::{px, size, AppContext, TestAppContext};
 
+    use super::score::ScoreAction;
     use super::{
-        create_project_part, delete_project_part, duplicate_project_part, loop_range_button_label,
-        parts, playing_score_row, rename_project_part, update_project_sequence, Dialog, Model,
-        PartChangeError, PartsDialog, RowEditConfirmationMsg, RowEditRequested, StatusAction,
+        create_configured_project_part, create_project_part, delete_project_part,
+        duplicate_project_part, export_project_part_rows, loop_range_button_label, parts,
+        playing_score_row, rename_project_part, update_project_sequence, Dialog,
+        ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError, PartsDialog,
+        RowEditConfirmationMsg, RowEditRequested, StatusAction,
     };
     use crate::{
-        part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange},
+        part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
@@ -2001,7 +2312,14 @@ mod tests {
         let mut project = Project::new("test project", 800, 0, Seed::new(12))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
         let project_directory = project::create_project(&root, &project).unwrap();
-        let source = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        let source = create_configured_project_part(
+            &project_directory,
+            &mut project,
+            "intro",
+            2,
+            Some(SubdivisionPattern::new([4, 3, 3]).unwrap()),
+        )
+        .unwrap();
         let score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
         score.save(&project_directory, &source, &project).unwrap();
 
@@ -2015,6 +2333,10 @@ mod tests {
 
         assert_eq!(duplicated.length, source.length);
         assert_eq!(
+            duplicated.subdivision_pattern(),
+            source.subdivision_pattern()
+        );
+        assert_eq!(
             PartScore::load(&project_directory, &duplicated, project.voices()).unwrap(),
             score
         );
@@ -2022,6 +2344,81 @@ mod tests {
             project::load_project(&project_directory).unwrap().project,
             project
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn selected_rows_export_as_a_new_part_with_the_source_meter() {
+        let root = temp_root("export-project-part-rows");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let source = create_configured_project_part(
+            &project_directory,
+            &mut project,
+            "theme",
+            4,
+            Some(SubdivisionPattern::new([2, 3]).unwrap()),
+        )
+        .unwrap();
+        let score = PartScore::from_rows(vec![
+            vec!["C4".to_string()],
+            vec!["D4".to_string()],
+            vec!["E4".to_string()],
+            vec!["F4".to_string()],
+        ]);
+        score.save(&project_directory, &source, &project).unwrap();
+
+        let exported = export_project_part_rows(
+            &project_directory,
+            &mut project,
+            &source.name,
+            &score,
+            ScoreRowRange::new(1, 2, 4).unwrap(),
+            "theme middle",
+        )
+        .unwrap();
+
+        assert_eq!(exported.length, 2);
+        assert_eq!(exported.subdivision_pattern(), source.subdivision_pattern());
+        assert_eq!(
+            PartScore::load(&project_directory, &exported, project.voices())
+                .unwrap()
+                .rows(),
+            [vec!["D4".to_string()], vec!["E4".to_string()]]
+        );
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_selected_rows_do_not_leave_an_incomplete_export() {
+        let root = temp_root("invalid-export-project-part-rows");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let source = create_project_part(&project_directory, &mut project, "theme", 2).unwrap();
+        let score =
+            PartScore::from_rows(vec![vec!["not-a-note".to_string()], vec!["C4".to_string()]]);
+
+        let error = export_project_part_rows(
+            &project_directory,
+            &mut project,
+            &source.name,
+            &score,
+            ScoreRowRange::new(0, 0, 2).unwrap(),
+            "broken excerpt",
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, PartChangeError::ExportScore { .. }));
+        assert_eq!(project.parts().len(), 1);
+        assert!(!project_directory.join("broken-excerpt.csv").exists());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2078,7 +2475,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn renaming_an_open_part_updates_its_score_document_and_view(cx: &mut TestAppContext) {
+    fn editing_an_open_part_updates_its_score_document_and_view(cx: &mut TestAppContext) {
         let root = temp_root("rename-open-project-part");
         let mut project = Project::new("test project", 800, 0, Seed::new(12))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
@@ -2096,9 +2493,10 @@ mod tests {
         model.update(cx, |model, cx| {
             model.on_parts_msg(
                 dialog,
-                &parts::Msg::RenameRequested {
+                &parts::Msg::UpdateRequested {
                     source: intro.name,
                     name: "opening theme".to_string(),
+                    subdivision_pattern: Some(SubdivisionPattern::new([4, 3, 3]).unwrap()),
                 },
                 cx,
             );
@@ -2121,9 +2519,31 @@ mod tests {
                 model.score_views[0].part_name.as_ref().unwrap().as_str(),
                 "opening theme"
             );
+            assert_eq!(
+                model.score_documents[0]
+                    .document
+                    .read(cx)
+                    .part()
+                    .subdivision_pattern()
+                    .unwrap()
+                    .subdivisions()
+                    .collect::<Vec<_>>(),
+                [4, 3, 3]
+            );
         });
         assert!(!project_directory.join("intro.csv").exists());
         assert!(project_directory.join("opening-theme.csv").is_file());
+        assert_eq!(
+            project::load_project(&project_directory)
+                .unwrap()
+                .project
+                .parts()[0]
+                .subdivision_pattern()
+                .unwrap()
+                .subdivisions()
+                .collect::<Vec<_>>(),
+            [4, 3, 3]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2146,16 +2566,26 @@ mod tests {
 
         let first_row = cx.debug_bounds("score-row-header-0").unwrap();
         cx.simulate_click(first_row.center(), Default::default());
-        let insert_after = cx.debug_bounds("insert-row-after-control").unwrap();
-        cx.simulate_click(insert_after.center(), Default::default());
+        let actions = cx.update(|_, cx| {
+            model.read(cx).score_views[0]
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .actions()
+        });
+        actions.update(cx, |menu, cx| {
+            menu.activate(ScoreAction::InsertAfter.index(), cx);
+        });
         cx.run_until_parked();
         assert_eq!(
             cx.update(|_, cx| model.read(cx).project.parts()[0].length),
             3
         );
 
-        let insert_after = cx.debug_bounds("insert-row-after-control").unwrap();
-        cx.simulate_click(insert_after.center(), Default::default());
+        actions.update(cx, |menu, cx| {
+            menu.activate(ScoreAction::InsertAfter.index(), cx);
+        });
         cx.run_until_parked();
 
         let (project, document) = cx.update(|_, cx| {
@@ -2183,6 +2613,67 @@ mod tests {
     }
 
     #[gpui::test]
+    fn exporting_selected_rows_creates_and_selects_the_new_part(cx: &mut TestAppContext) {
+        let root = temp_root("open-export-score-rows");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let part = create_project_part(&project_directory, &mut project, "intro", 2).unwrap();
+        PartScore::from_rows(vec![vec![String::new()]; 2])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let first_row = cx.debug_bounds("score-row-header-0").unwrap();
+        cx.simulate_click(first_row.center(), Default::default());
+        let actions = cx.update(|_, cx| {
+            model.read(cx).score_views[0]
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .actions()
+        });
+        actions.update(cx, |menu, cx| {
+            menu.activate(ScoreAction::ExportRows.index(), cx);
+        });
+        cx.run_until_parked();
+
+        let dialog = cx.update(|_, cx| match &model.read(cx).dialog {
+            Some(Dialog::ExportRows(dialog)) => dialog.clone(),
+            _ => panic!("expected an export rows dialog"),
+        });
+        model.update(cx, |model, cx| {
+            model.on_export_rows_dialog_msg(
+                dialog,
+                &ExportRowsDialogMsg::Confirmed(ExportRowsConfirmed {
+                    part_name: part.name,
+                    rows: ScoreRowRange::new(0, 0, 2).unwrap(),
+                    new_part_name: "intro excerpt".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert!(model.dialog.is_none());
+            assert_eq!(model.project.parts().len(), 2);
+            assert_eq!(
+                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                "intro excerpt"
+            );
+        });
+        assert!(project_directory.join("intro-excerpt.csv").is_file());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
     fn clearing_populated_rows_requires_confirmation_and_keeps_the_part_length(
         cx: &mut TestAppContext,
     ) {
@@ -2202,8 +2693,17 @@ mod tests {
 
         let first_row = cx.debug_bounds("score-row-header-0").unwrap();
         cx.simulate_click(first_row.center(), Default::default());
-        let clear = cx.debug_bounds("clear-score-rows-control").unwrap();
-        cx.simulate_click(clear.center(), Default::default());
+        let actions = cx.update(|_, cx| {
+            model.read(cx).score_views[0]
+                .editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .actions()
+        });
+        actions.update(cx, |menu, cx| {
+            menu.activate(ScoreAction::ClearRows.index(), cx);
+        });
         cx.run_until_parked();
 
         let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());

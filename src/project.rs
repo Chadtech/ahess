@@ -29,11 +29,52 @@ const TRANSACTION_OLD_DIRECTORY: &str = "old";
 const TRANSACTION_COMMITTING_FILE: &str = "committing";
 const TRANSACTION_COMMITTED_FILE: &str = "committed";
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, PartialOrd)]
+#[serde(try_from = "f64")]
+pub struct FrequencyVariance(f64);
+
+impl FrequencyVariance {
+    pub fn new(ratio: f64) -> Result<Self, FrequencyVarianceError> {
+        if !ratio.is_finite() || !(0.0..1.0).contains(&ratio) {
+            return Err(FrequencyVarianceError);
+        }
+
+        Ok(Self(ratio))
+    }
+
+    pub const fn ratio(self) -> f64 {
+        self.0
+    }
+}
+
+// `FrequencyVariance::new` excludes NaN, so equality is reflexive.
+impl Eq for FrequencyVariance {}
+
+impl TryFrom<f64> for FrequencyVariance {
+    type Error = FrequencyVarianceError;
+
+    fn try_from(ratio: f64) -> Result<Self, Self::Error> {
+        Self::new(ratio)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrequencyVarianceError;
+
+impl fmt::Display for FrequencyVarianceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("frequency variance must be a decimal from 0 up to but not including 1")
+    }
+}
+
+impl Error for FrequencyVarianceError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub name: String,
     pub beat_length: u32,
     pub timing_variance: u32,
+    frequency_variance: FrequencyVariance,
     pub seed: Seed,
     pub description: String,
     tuning_system_id: Option<TuningSystemId>,
@@ -88,6 +129,7 @@ impl Project {
             name: name.into(),
             beat_length,
             timing_variance,
+            frequency_variance: FrequencyVariance::default(),
             seed,
             description: String::new(),
             tuning_system_id: Some(TuningSystemId::default_western()),
@@ -104,6 +146,19 @@ impl Project {
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
+    }
+
+    pub fn with_frequency_variance(mut self, variance: FrequencyVariance) -> Self {
+        self.frequency_variance = variance;
+        self
+    }
+
+    pub fn frequency_variance(&self) -> FrequencyVariance {
+        self.frequency_variance
+    }
+
+    pub fn set_frequency_variance(&mut self, variance: FrequencyVariance) {
+        self.frequency_variance = variance;
     }
 
     pub fn with_pitch_system(mut self, pitch_system: PitchSystem) -> Self {
@@ -281,11 +336,12 @@ impl Project {
 
     pub fn config_file_contents(&self) -> String {
         let mut contents = format!(
-            "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
+            "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nfrequency_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
             toml_string(&self.name),
             toml_string(&self.description),
             self.beat_length,
             self.timing_variance,
+            self.frequency_variance.ratio(),
             self.seed.value(),
             self.next_voice_id
         );
@@ -338,6 +394,16 @@ impl Project {
             contents.push_str("\nlength = ");
             contents.push_str(&part.length.to_string());
             contents.push('\n');
+            if let Some(pattern) = part.subdivision_pattern() {
+                contents.push_str("subdivision_pattern = [");
+                for (index, subdivision) in pattern.subdivisions().enumerate() {
+                    if index > 0 {
+                        contents.push_str(", ");
+                    }
+                    contents.push_str(&subdivision.to_string());
+                }
+                contents.push_str("]\n");
+            }
         }
 
         contents
@@ -1416,6 +1482,8 @@ struct ProjectConfig {
     description: String,
     beat_length: u32,
     timing_variance: u32,
+    #[serde(default)]
+    frequency_variance: FrequencyVariance,
     seed: u64,
     #[serde(default)]
     tuning_system_id: Option<TuningSystemId>,
@@ -1598,7 +1666,8 @@ impl ProjectConfig {
             self.timing_variance,
             Seed::new(self.seed),
         )
-        .with_description(self.description);
+        .with_description(self.description)
+        .with_frequency_variance(self.frequency_variance);
         project.tuning_system_id = selected_tuning.0;
         project.pitch_system = selected_tuning.1;
         project.voice_convolution = self.voice_convolution;
@@ -1642,7 +1711,7 @@ mod tests {
         add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_part_rows,
         edit_voice, edit_voice_at, list_projects, load_project, project_directory_name,
         save_project, save_project_with_voice_convolution, CreateProjectError,
-        DuplicateProjectError, LoadProjectError, Project, ProjectEntry, Voice,
+        DuplicateProjectError, FrequencyVariance, LoadProjectError, Project, ProjectEntry, Voice,
         VoiceConvolutionChange, VoiceType, PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY,
         TRANSACTION_COMMITTING_FILE, TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
@@ -1667,6 +1736,7 @@ mod tests {
         assert_eq!(project.name, "test");
         assert_eq!(project.beat_length, 4000);
         assert_eq!(project.timing_variance, 100);
+        assert_eq!(project.frequency_variance(), FrequencyVariance::default());
         assert_eq!(project.seed, Seed::new(19));
         assert_eq!(project.description, "sketch");
         assert!(project.voices.is_empty());
@@ -1739,12 +1809,13 @@ mod tests {
     #[test]
     fn config_file_contents_are_toml_compatible() {
         let project = Project::new("test \"score\"", 4000, 100, Seed::new(1234))
+            .with_frequency_variance(FrequencyVariance::new(0.017).unwrap())
             .with_description("line one\nline two");
 
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
+                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0.017\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
             )
         );
     }
@@ -1759,7 +1830,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
             )
         );
     }
@@ -1871,15 +1942,33 @@ mod tests {
 
     #[test]
     fn config_file_contents_store_part_metadata_without_redundant_filenames() {
-        let project = Project::new("test", 4000, 100, Seed::new(1234))
-            .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)]);
+        let project = Project::new("test", 4000, 100, Seed::new(1234)).with_parts(vec![
+            Part::new("intro", 8).with_subdivision_pattern(Some("4, 3, 3".parse().unwrap())),
+            Part::new("verse", 16),
+        ]);
 
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\nsubdivision_pattern = [4, 3, 3]\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
             )
         );
+    }
+
+    #[test]
+    fn subdivision_patterns_round_trip_through_project_config() {
+        let root = temp_root("subdivision-pattern-round-trip");
+        let mut project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 8);
+        project.parts[0] = project.parts[0]
+            .clone()
+            .with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()));
+        save_project(&project_directory, &project).unwrap();
+
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2215,12 +2304,34 @@ mod tests {
                 .abs()
                 < 1e-10
         );
+        assert_eq!(project.frequency_variance(), FrequencyVariance::default());
         save_project(&project_directory, &project).unwrap();
         assert!(
             fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
                 .unwrap()
                 .contains("tuning_system_id = \"western-twelve-tone\"")
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rejects_frequency_variance_outside_the_fractional_range() {
+        let root = temp_root("invalid-frequency-variance");
+        let project_directory = root.join("projects").join("test");
+        fs::create_dir_all(&project_directory).unwrap();
+        fs::write(
+            project_directory.join(PROJECT_CONFIG_FILE),
+            "name = \"test\"\ndescription = \"\"\nbeat_length = 800\ntiming_variance = 0\nfrequency_variance = 1.0\nseed = 1\n",
+        )
+        .unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+
+        assert!(matches!(error, LoadProjectError::InvalidConfig { .. }));
+        assert!(error
+            .to_string()
+            .contains("frequency variance must be a decimal from 0 up to but not including 1"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2628,7 +2739,9 @@ mod tests {
             .enumerate()
             .map(|(index, voice_type)| Voice::new(index as u64 + 1, voice_type.label(), voice_type))
             .collect();
-        let project = Project::new("voice types", 800, 0, Seed::new(1)).with_voices(voices);
+        let project = Project::new("voice types", 800, 0, Seed::new(1))
+            .with_frequency_variance(FrequencyVariance::new(0.023).unwrap())
+            .with_voices(voices);
         let project_directory = create_project(&root, &project).unwrap();
 
         assert_eq!(load_project(project_directory).unwrap().project, project);

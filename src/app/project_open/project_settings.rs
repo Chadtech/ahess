@@ -6,7 +6,7 @@ use crate::{
     app::room_form::RoomFields,
     convolution::{self, WavMetadata},
     pitch_system::PitchSystem,
-    project::{self, Project, VoiceConvolutionChange},
+    project::{self, FrequencyVariance, Project, VoiceConvolutionChange},
     seed::Seed,
     style as s,
     tuning_system::{self, TuningSystem},
@@ -318,7 +318,10 @@ impl ProjectSettingsDialog {
             ));
         }
 
-        let timing_variance = parse_u32_field("variance", &self.fields.variance.read(cx).value())?;
+        let timing_variance =
+            parse_u32_field("timing variance", &self.fields.variance.read(cx).value())?;
+        let frequency_variance =
+            parse_frequency_variance_field(&self.fields.frequency_variance.read(cx).value())?;
         let seed = parse_seed_field(&self.fields.seed.read(cx).value())?;
         let description = self.fields.description.read(cx).value();
 
@@ -326,6 +329,7 @@ impl ProjectSettingsDialog {
         project.name = name;
         project.beat_length = beat_length;
         project.timing_variance = timing_variance;
+        project.set_frequency_variance(frequency_variance);
         project.seed = seed;
         project.description = description;
         match self
@@ -359,6 +363,12 @@ impl ProjectSettingsDialog {
                 != self.original_project.beat_length.to_string()
             || self.fields.variance.read(cx).value()
                 != self.original_project.timing_variance.to_string()
+            || self.fields.frequency_variance.read(cx).value()
+                != self
+                    .original_project
+                    .frequency_variance()
+                    .ratio()
+                    .to_string()
             || self.fields.seed.read(cx).value() != self.original_project.seed.value().to_string()
             || self.fields.tuning.read(cx).selected_index() != self.original_tuning_index
             || self
@@ -452,6 +462,18 @@ fn parse_u32_field(label: &'static str, value: &str) -> Result<u32, ProjectSetti
     })
 }
 
+fn parse_frequency_variance_field(
+    value: &str,
+) -> Result<FrequencyVariance, ProjectSettingsFormError> {
+    let ratio = value.trim().parse::<f64>().map_err(|_| {
+        ProjectSettingsFormError::InvalidField(
+            "frequency variance must be a decimal from 0 up to but not including 1".to_string(),
+        )
+    })?;
+    FrequencyVariance::new(ratio)
+        .map_err(|error| ProjectSettingsFormError::InvalidField(error.to_string()))
+}
+
 fn parse_seed_field(value: &str) -> Result<Seed, ProjectSettingsFormError> {
     value.trim().parse::<u64>().map(Seed::new).map_err(|_| {
         ProjectSettingsFormError::InvalidField("seed must be a whole number".to_string())
@@ -531,6 +553,7 @@ struct ProjectSettingsFields {
     description: Entity<TextInput>,
     beat_length: Entity<TextInput>,
     variance: Entity<TextInput>,
+    frequency_variance: Entity<TextInput>,
     seed: Entity<TextInput>,
     tuning: Entity<Dropdown>,
     impulse_response: ImpulseResponseSelection,
@@ -550,6 +573,8 @@ impl ProjectSettingsFields {
             description: cx.new(|cx| TextInput::new(project.description.clone(), "", cx)),
             beat_length: cx.new(|cx| TextInput::new(project.beat_length.to_string(), "", cx)),
             variance: cx.new(|cx| TextInput::new(project.timing_variance.to_string(), "", cx)),
+            frequency_variance: cx
+                .new(|cx| TextInput::new(project.frequency_variance().ratio().to_string(), "", cx)),
             seed: cx.new(|cx| TextInput::new(project.seed.value().to_string(), "", cx)),
             tuning: cx.new(|cx| {
                 Dropdown::new(
@@ -595,7 +620,13 @@ fn project_settings_dialog(
         .child(section_label("generation settings"))
         .child(div().flex().gap_4().children([
             field_group("beat length (samples)", fields.beat_length.clone()),
-            field_group("variance", fields.variance.clone()),
+            field_group("timing variance (samples)", fields.variance.clone()),
+        ]))
+        .child(div().flex().gap_4().children([
+            field_group(
+                "frequency variance (decimal)",
+                fields.frequency_variance.clone(),
+            ),
             field_group("seed", fields.seed.clone()),
         ]))
         .debug_selector(|| "project-settings-project-column".to_string());
@@ -730,7 +761,8 @@ mod tests {
     use gpui::{px, size, TestAppContext};
 
     use super::{
-        parse_seed_field, parse_u32_field, validate_project_name_unique, ProjectSettingsDialog,
+        parse_frequency_variance_field, parse_seed_field, parse_u32_field,
+        validate_project_name_unique, ProjectSettingsDialog,
     };
     use crate::{
         acoustics::{Point3Meters, RectangularRoom},
@@ -745,6 +777,12 @@ mod tests {
     fn parses_project_setting_number_fields() {
         assert_eq!(parse_u32_field("beat length", " 4000 ").unwrap(), 4000);
         assert!(parse_u32_field("beat length", "4.0").is_err());
+        assert_eq!(
+            parse_frequency_variance_field(" 0.025 ").unwrap().ratio(),
+            0.025
+        );
+        assert!(parse_frequency_variance_field("1.0").is_err());
+        assert!(parse_frequency_variance_field("-0.1").is_err());
         assert_eq!(parse_seed_field(" 99 ").unwrap(), Seed::new(99));
         assert!(parse_seed_field("0x99").is_err());
     }
@@ -760,6 +798,28 @@ mod tests {
         assert!(validate_project_name_unique(&root, &current_directory, "current").is_ok());
         assert!(validate_project_name_unique(&root, &current_directory, "OTHER").is_err());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_settings_apply_frequency_variance_as_a_decimal(cx: &mut TestAppContext) {
+        let root = temp_root("frequency-variance");
+        let project = Project::new("test project", 800, 0, Seed::new(1));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let root_for_view = root.clone();
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+        });
+
+        let updated = cx.update(|_, cx| {
+            let frequency_variance = dialog.read(cx).fields.frequency_variance.clone();
+            frequency_variance.update(cx, |input, cx| input.sync_value("0.037", cx));
+            dialog
+                .update(cx, |dialog, cx| dialog.project_from_fields(cx))
+                .unwrap()
+        });
+
+        assert_eq!(updated.frequency_variance().ratio(), 0.037);
         fs::remove_dir_all(root).unwrap();
     }
 

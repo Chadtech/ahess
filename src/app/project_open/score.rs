@@ -6,7 +6,7 @@ use std::{
 
 use gpui::{
     div, prelude::*, AsyncApp, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ScrollHandle, SharedString, Task, WeakEntity, Window,
+    MouseMoveEvent, MouseUpEvent, SharedString, Task, WeakEntity, Window,
 };
 
 use crate::{
@@ -16,10 +16,12 @@ use crate::{
     project::Project,
     style as s,
     view::{
+        action_menu::{self, ActionMenu},
         button::{self, Button},
         data_grid,
-        dialog::{destructive_confirmation, title_bar},
+        dialog::{destructive_dialog, error_message, title_bar},
         dropdown::{self, Dropdown},
+        field_group::field_group,
         text_input::{Changed, TextInput},
     },
 };
@@ -42,6 +44,7 @@ pub struct ScoreDocument {
     project_directory: PathBuf,
     part: Part,
     score: PartScore,
+    parse_issue_cache: ParseIssueCache,
     dirty: bool,
     last_save_error: Option<String>,
     save_state: SaveState,
@@ -55,6 +58,50 @@ pub(super) struct ParseIssue {
     pub column: usize,
     pub voice: String,
     pub message: String,
+}
+
+struct ParseIssueCache {
+    issues: Vec<ParseIssue>,
+    invalid_cells: data_grid::InvalidCells,
+}
+
+impl ParseIssueCache {
+    fn collect(project: &Project, score: &PartScore) -> Self {
+        let issues = score
+            .rows()
+            .iter()
+            .enumerate()
+            .flat_map(|(row, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(column, value)| {
+                        project
+                            .pitch_system()
+                            .resolve_cell(value)
+                            .err()
+                            .map(|source| ParseIssue {
+                                row,
+                                column,
+                                voice: project
+                                    .voices()
+                                    .get(column)
+                                    .map(|voice| voice.name.as_str().to_string())
+                                    .unwrap_or_else(|| format!("column {}", column + 1)),
+                                message: source.to_string(),
+                            })
+                    })
+            })
+            .collect::<Vec<_>>();
+        let invalid_cells = issues
+            .iter()
+            .map(|issue| (issue.row, issue.column))
+            .collect();
+        Self {
+            issues,
+            invalid_cells,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -92,13 +139,26 @@ pub struct RowEditRequested {
     pub populated_cell_count: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartLoopRequested {
+    pub part_name: crate::part::PartName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportRowsRequested {
+    pub part_name: crate::part::PartName,
+    pub rows: ScoreRowRange,
+}
+
 impl ScoreDocument {
     pub fn new(project: Project, project_directory: PathBuf, part: Part, score: PartScore) -> Self {
+        let parse_issue_cache = ParseIssueCache::collect(&project, &score);
         Self {
             project,
             project_directory,
             part,
             score,
+            parse_issue_cache,
             dirty: false,
             last_save_error: None,
             save_state: SaveState::Idle,
@@ -138,34 +198,33 @@ impl ScoreDocument {
         cx.notify();
     }
 
-    pub fn parse_issues(&self) -> Vec<ParseIssue> {
-        self.score
-            .rows()
-            .iter()
-            .enumerate()
-            .flat_map(|(row, values)| {
-                values
-                    .iter()
-                    .enumerate()
-                    .filter_map(move |(column, value)| {
-                        self.project
-                            .pitch_system()
-                            .resolve_cell(value)
-                            .err()
-                            .map(|source| ParseIssue {
-                                row,
-                                column,
-                                voice: self
-                                    .project
-                                    .voices()
-                                    .get(column)
-                                    .map(|voice| voice.name.as_str().to_string())
-                                    .unwrap_or_else(|| format!("column {}", column + 1)),
-                                message: source.to_string(),
-                            })
-                    })
-            })
-            .collect()
+    pub fn parse_issues(&self) -> &[ParseIssue] {
+        &self.parse_issue_cache.issues
+    }
+
+    fn invalid_cells(&self) -> &data_grid::InvalidCells {
+        &self.parse_issue_cache.invalid_cells
+    }
+
+    fn refresh_parse_issues(&mut self) {
+        self.parse_issue_cache = ParseIssueCache::collect(&self.project, &self.score);
+    }
+
+    fn set_score(&mut self, score: PartScore) {
+        self.score = score;
+        self.refresh_parse_issues();
+    }
+
+    fn set_project(&mut self, project: Project) {
+        self.project = project;
+        self.refresh_parse_issues();
+    }
+
+    fn replace_content(&mut self, project: Project, part: Part, score: PartScore) {
+        self.project = project;
+        self.part = part;
+        self.score = score;
+        self.refresh_parse_issues();
     }
 
     pub fn update_cell(
@@ -185,7 +244,7 @@ impl ScoreDocument {
         }
 
         *cell = value.clone();
-        self.score = PartScore::from_rows(rows);
+        self.set_score(PartScore::from_rows(rows));
         self.dirty = true;
         self.last_save_error = None;
         self.schedule_autosave(cx);
@@ -210,7 +269,7 @@ impl ScoreDocument {
             return Ok(());
         }
 
-        self.score = score;
+        self.set_score(score);
         self.dirty = true;
         self.last_save_error = None;
         self.schedule_autosave(cx);
@@ -228,9 +287,7 @@ impl ScoreDocument {
         selected_rows: ScoreRowRange,
         cx: &mut Context<Self>,
     ) {
-        self.project = project;
-        self.part = part;
-        self.score = score;
+        self.replace_content(project, part, score);
         self.dirty = false;
         self.last_save_error = None;
         self.save_state = SaveState::Saved;
@@ -342,9 +399,7 @@ impl ScoreDocument {
         score: PartScore,
         cx: &mut Context<Self>,
     ) {
-        self.project = project;
-        self.part = part;
-        self.score = score;
+        self.replace_content(project, part, score);
         self.dirty = false;
         self.last_save_error = None;
         self.save_state = SaveState::Idle;
@@ -355,7 +410,7 @@ impl ScoreDocument {
     }
 
     pub fn project_settings_changed(&mut self, project: Project, cx: &mut Context<Self>) {
-        self.project = project;
+        self.set_project(project);
         self.last_save_error = None;
         cx.emit(DocumentEvent::ProjectChanged);
         cx.notify();
@@ -482,19 +537,173 @@ impl Render for RowEditConfirmation {
                     .debug_selector(|| "confirm-row-edit-control".to_string())
                     .child(self.confirm_button.clone()),
             );
+        destructive_dialog("confirm row change", None, self.message(), actions)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportRowsConfirmed {
+    pub part_name: crate::part::PartName,
+    pub rows: ScoreRowRange,
+    pub new_part_name: String,
+}
+
+pub enum ExportRowsDialogMsg {
+    Confirmed(ExportRowsConfirmed),
+    Cancelled,
+}
+
+pub struct ExportRowsDialog {
+    request: ExportRowsRequested,
+    name: Entity<TextInput>,
+    close_button: Entity<Button>,
+    cancel_button: Entity<Button>,
+    export_button: Entity<Button>,
+    error: Option<String>,
+}
+
+impl EventEmitter<ExportRowsDialogMsg> for ExportRowsDialog {}
+
+impl ExportRowsDialog {
+    pub fn new(request: ExportRowsRequested, cx: &mut Context<Self>) -> Self {
+        let placeholder = format!("{} excerpt", request.part_name.as_str());
+        let name = cx.new(|cx| TextInput::new("", placeholder, cx));
+        let close_button = cx.new(|_| Button::x("close-export-score-rows"));
+        let cancel_button = cx.new(|_| Button::new("cancel-export-score-rows", "cancel"));
+        let export_button = cx.new(|_| Button::new("confirm-export-score-rows", "export as part"));
+
+        cx.subscribe(&close_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&export_button, Self::on_export_clicked)
+            .detach();
+
+        Self {
+            request,
+            name,
+            close_button,
+            cancel_button,
+            export_button,
+            error: None,
+        }
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ExportRowsDialogMsg::Cancelled);
+    }
+
+    fn on_export_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ExportRowsDialogMsg::Confirmed(ExportRowsConfirmed {
+            part_name: self.request.part_name.clone(),
+            rows: self.request.rows,
+            new_part_name: self.name.read(cx).value(),
+        }));
+    }
+
+    pub fn export_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        cx.notify();
+    }
+
+    fn selection_description(&self) -> String {
+        if self.request.rows.len() == 1 {
+            format!(
+                "export beat {} from {:?} into a new part",
+                self.request.rows.first() + 1,
+                self.request.part_name.as_str()
+            )
+        } else {
+            format!(
+                "export beats {}–{} from {:?} into a new part",
+                self.request.rows.first() + 1,
+                self.request.rows.last() + 1,
+                self.request.part_name.as_str()
+            )
+        }
+    }
+}
+
+impl Render for ExportRowsDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let actions = div()
+            .flex()
+            .justify_end()
+            .gap(s::S3)
+            .child(self.cancel_button.clone())
+            .child(self.export_button.clone());
+        let content = div()
+            .flex()
+            .flex_col()
+            .gap(s::CONTENT_PADDING)
+            .p(s::CONTENT_PADDING)
+            .child(
+                div()
+                    .text_color(s::TEXT_DEFAULT)
+                    .child(self.selection_description()),
+            )
+            .child(field_group("new part name", self.name.clone()))
+            .children(self.error.clone().map(error_message))
+            .child(actions);
+
         s::raised(
             div()
                 .flex()
                 .flex_col()
                 .w(s::S10)
                 .bg(s::GRAY2)
-                .child(title_bar("confirm row change", None))
-                .child(
-                    div()
-                        .p(s::CONTENT_PADDING)
-                        .child(destructive_confirmation(self.message(), actions)),
-                ),
+                .child(title_bar(
+                    "export selected rows",
+                    Some(self.close_button.clone()),
+                ))
+                .child(content),
         )
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ScoreAction {
+    LoopPart,
+    ExportRows,
+    InsertBefore,
+    InsertAfter,
+    ClearRows,
+    DeleteRows,
+}
+
+impl ScoreAction {
+    const ALL: [Self; 6] = [
+        Self::LoopPart,
+        Self::ExportRows,
+        Self::InsertBefore,
+        Self::InsertAfter,
+        Self::ClearRows,
+        Self::DeleteRows,
+    ];
+
+    pub(super) fn index(self) -> usize {
+        self as usize
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::LoopPart => "loop part",
+            Self::ExportRows => "export selected rows as part",
+            Self::InsertBefore => "insert row above",
+            Self::InsertAfter => "insert row below",
+            Self::ClearRows => "clear selected rows",
+            Self::DeleteRows => "delete selected rows",
+        }
     }
 }
 
@@ -506,16 +715,15 @@ pub struct ScoreEditor {
     cells: Vec<Vec<Entity<TextInput>>>,
     row_selection: Option<AnchoredRowSelection>,
     drag_anchor: Option<usize>,
-    insert_before_button: Entity<Button>,
-    insert_after_button: Entity<Button>,
-    clear_rows_button: Entity<Button>,
-    delete_rows_button: Entity<Button>,
+    action_menu: Entity<ActionMenu>,
     playing_row: Option<usize>,
-    scroll_handle: ScrollHandle,
+    scroll_handle: data_grid::DataGridScrollHandle,
 }
 
 impl EventEmitter<PartSelected> for ScoreEditor {}
 impl EventEmitter<RowEditRequested> for ScoreEditor {}
+impl EventEmitter<PartLoopRequested> for ScoreEditor {}
+impl EventEmitter<ExportRowsRequested> for ScoreEditor {}
 
 impl ScoreEditor {
     pub fn new(
@@ -527,6 +735,7 @@ impl ScoreEditor {
         let editor_id = NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed);
         let document_state = document.read(cx);
         let score = document_state.score().clone();
+        let part = document_state.part().clone();
         let selected_part = document_state.part().name.clone();
         let selected_index = part_names
             .iter()
@@ -545,26 +754,27 @@ impl ScoreEditor {
                 cx,
             )
         });
-        let cells = Self::build_cells(editor_id, &score, cx);
-        let insert_before_button = cx
-            .new(move |_| Button::new(("insert-row-before", editor_id), "+ above").disabled(true));
-        let insert_after_button =
-            cx.new(move |_| Button::new(("insert-row-after", editor_id), "+ below").disabled(true));
-        let clear_rows_button =
-            cx.new(move |_| Button::new(("clear-score-rows", editor_id), "clear").disabled(true));
-        let delete_rows_button =
-            cx.new(move |_| Button::new(("delete-score-rows", editor_id), "delete").disabled(true));
+        let cells = Self::build_cells(editor_id, &score, &part, cx);
+        let action_labels = ScoreAction::ALL.map(ScoreAction::label);
+        let action_menu = cx.new(move |cx| {
+            let mut menu =
+                ActionMenu::new(("score-actions", editor_id), "actions", action_labels, cx);
+            for action in [
+                ScoreAction::ExportRows,
+                ScoreAction::InsertBefore,
+                ScoreAction::InsertAfter,
+                ScoreAction::ClearRows,
+                ScoreAction::DeleteRows,
+            ] {
+                menu.set_disabled(action.index(), true, cx);
+            }
+            menu
+        });
 
         cx.subscribe(&document, Self::on_document_event).detach();
         cx.subscribe(&part_dropdown, Self::on_part_selected)
             .detach();
-        cx.subscribe(&insert_before_button, Self::on_insert_before_clicked)
-            .detach();
-        cx.subscribe(&insert_after_button, Self::on_insert_after_clicked)
-            .detach();
-        cx.subscribe(&clear_rows_button, Self::on_clear_rows_clicked)
-            .detach();
-        cx.subscribe(&delete_rows_button, Self::on_delete_rows_clicked)
+        cx.subscribe(&action_menu, Self::on_action_selected)
             .detach();
 
         Self {
@@ -575,12 +785,9 @@ impl ScoreEditor {
             cells,
             row_selection: None,
             drag_anchor: None,
-            insert_before_button,
-            insert_after_button,
-            clear_rows_button,
-            delete_rows_button,
+            action_menu,
             playing_row: None,
-            scroll_handle: ScrollHandle::new(),
+            scroll_handle: data_grid::DataGridScrollHandle::compact(),
         }
     }
 
@@ -620,6 +827,7 @@ impl ScoreEditor {
     fn build_cells(
         editor_id: u64,
         score: &PartScore,
+        part: &Part,
         cx: &mut Context<Self>,
     ) -> Vec<Vec<Entity<TextInput>>> {
         score
@@ -630,7 +838,14 @@ impl ScoreEditor {
                 row.iter()
                     .enumerate()
                     .map(|(column_index, value)| {
-                        let input = cx.new(|cx| TextInput::new(value.clone(), "", cx));
+                        let background = if part.beat_is_highlighted(row_index) {
+                            s::GREEN4
+                        } else {
+                            s::GREEN3
+                        };
+                        let input = cx.new(|cx| {
+                            TextInput::new(value.clone(), "", cx).with_background(background)
+                        });
                         cx.subscribe(&input, move |editor, input, _: &Changed, cx| {
                             editor.on_cell_changed(editor_id, row_index, column_index, input, cx);
                         })
@@ -670,24 +885,52 @@ impl ScoreEditor {
             return;
         }
         self.row_selection = selection;
-        self.sync_row_action_buttons(cx);
+        self.sync_action_menu(cx);
         cx.notify();
     }
 
-    fn sync_row_action_buttons(&self, cx: &mut Context<Self>) {
+    fn sync_action_menu(&self, cx: &mut Context<Self>) {
         let selected = self.selected_rows();
         let no_selection = selected.is_none();
         let delete_disabled = selected.is_none_or(|rows| rows.len() == self.cells.len());
-        for button in [
-            &self.insert_before_button,
-            &self.insert_after_button,
-            &self.clear_rows_button,
-        ] {
-            button.update(cx, |button, cx| button.set_disabled(no_selection, cx));
-        }
-        self.delete_rows_button.update(cx, |button, cx| {
-            button.set_disabled(delete_disabled, cx);
+        self.action_menu.update(cx, |menu, cx| {
+            for action in [
+                ScoreAction::ExportRows,
+                ScoreAction::InsertBefore,
+                ScoreAction::InsertAfter,
+                ScoreAction::ClearRows,
+            ] {
+                menu.set_disabled(action.index(), no_selection, cx);
+            }
+            menu.set_disabled(ScoreAction::DeleteRows.index(), delete_disabled, cx);
         });
+    }
+
+    fn on_action_selected(
+        &mut self,
+        _: Entity<ActionMenu>,
+        selected: &action_menu::Selected,
+        cx: &mut Context<Self>,
+    ) {
+        match ScoreAction::ALL.get(selected.index).copied() {
+            Some(ScoreAction::LoopPart) => cx.emit(PartLoopRequested {
+                part_name: self.document.read(cx).part().name.clone(),
+            }),
+            Some(ScoreAction::ExportRows) => {
+                let Some(rows) = self.selected_rows() else {
+                    return;
+                };
+                cx.emit(ExportRowsRequested {
+                    part_name: self.document.read(cx).part().name.clone(),
+                    rows,
+                });
+            }
+            Some(ScoreAction::InsertBefore) => self.insert_before(cx),
+            Some(ScoreAction::InsertAfter) => self.insert_after(cx),
+            Some(ScoreAction::ClearRows) => self.clear_rows(cx),
+            Some(ScoreAction::DeleteRows) => self.delete_rows(cx),
+            None => {}
+        }
     }
 
     fn on_row_mouse_down(
@@ -735,12 +978,7 @@ impl ScoreEditor {
         self.drag_anchor = None;
     }
 
-    fn on_insert_before_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
+    fn insert_before(&mut self, cx: &mut Context<Self>) {
         let Some(rows) = self.selected_rows() else {
             return;
         };
@@ -750,12 +988,7 @@ impl ScoreEditor {
         self.request_row_edit(PartRowEdit::InsertBefore(row), 0, cx);
     }
 
-    fn on_insert_after_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
+    fn insert_after(&mut self, cx: &mut Context<Self>) {
         let Some(rows) = self.selected_rows() else {
             return;
         };
@@ -765,12 +998,7 @@ impl ScoreEditor {
         self.request_row_edit(PartRowEdit::InsertAfter(row), 0, cx);
     }
 
-    fn on_clear_rows_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
+    fn clear_rows(&mut self, cx: &mut Context<Self>) {
         let Some(rows) = self.selected_rows() else {
             return;
         };
@@ -778,12 +1006,7 @@ impl ScoreEditor {
         self.request_row_edit(PartRowEdit::Clear(rows), populated_cell_count, cx);
     }
 
-    fn on_delete_rows_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
+    fn delete_rows(&mut self, cx: &mut Context<Self>) {
         let Some(rows) = self.selected_rows() else {
             return;
         };
@@ -837,15 +1060,19 @@ impl ScoreEditor {
                 }
             }
             DocumentEvent::RowsCleared => {
-                let score = self.document.read(cx).score().clone();
-                self.cells = Self::build_cells(self.editor_id, &score, cx);
+                let document = self.document.read(cx);
+                let score = document.score().clone();
+                let part = document.part().clone();
+                self.cells = Self::build_cells(self.editor_id, &score, &part, cx);
             }
             DocumentEvent::StructureChanged {
                 source_editor,
                 selected_rows,
             } => {
-                let score = self.document.read(cx).score().clone();
-                self.cells = Self::build_cells(self.editor_id, &score, cx);
+                let document = self.document.read(cx);
+                let score = document.score().clone();
+                let part = document.part().clone();
+                self.cells = Self::build_cells(self.editor_id, &score, &part, cx);
                 self.drag_anchor = None;
                 self.row_selection = if *source_editor == self.editor_id {
                     AnchoredRowSelection::new(
@@ -856,14 +1083,16 @@ impl ScoreEditor {
                 } else {
                     None
                 };
-                self.sync_row_action_buttons(cx);
+                self.sync_action_menu(cx);
             }
             DocumentEvent::Reset => {
-                let score = self.document.read(cx).score().clone();
-                self.cells = Self::build_cells(self.editor_id, &score, cx);
+                let document = self.document.read(cx);
+                let score = document.score().clone();
+                let part = document.part().clone();
+                self.cells = Self::build_cells(self.editor_id, &score, &part, cx);
                 self.drag_anchor = None;
                 self.row_selection = None;
-                self.sync_row_action_buttons(cx);
+                self.sync_action_menu(cx);
             }
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
@@ -898,6 +1127,11 @@ impl ScoreEditor {
     pub(super) fn playing_row(&self) -> Option<usize> {
         self.playing_row
     }
+
+    #[cfg(test)]
+    pub(super) fn actions(&self) -> Entity<ActionMenu> {
+        self.action_menu.clone()
+    }
 }
 
 impl Render for ScoreEditor {
@@ -907,34 +1141,18 @@ impl Render for ScoreEditor {
             .project()
             .voices()
             .iter()
-            .map(|voice| format!("{} ({})", voice.name.as_str(), voice.voice_type.label()))
+            .map(|voice| voice.name.as_str().to_string())
             .collect::<Vec<_>>();
         let has_voices = !column_labels.is_empty();
-        let invalid_cells = document
-            .parse_issues()
-            .into_iter()
-            .map(|issue| (issue.row, issue.column))
+        let invalid_cells = document.invalid_cells().clone();
+        let row_labels = (0..self.cells.len())
+            .map(|row| document.part().beat_label(row))
             .collect::<Vec<_>>();
-        let row_actions = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_end()
-            .gap(s::S4)
-            .children([
-                div()
-                    .debug_selector(|| "insert-row-before-control".to_string())
-                    .child(self.insert_before_button.clone()),
-                div()
-                    .debug_selector(|| "insert-row-after-control".to_string())
-                    .child(self.insert_after_button.clone()),
-                div()
-                    .debug_selector(|| "clear-score-rows-control".to_string())
-                    .child(self.clear_rows_button.clone()),
-                div()
-                    .debug_selector(|| "delete-score-rows-control".to_string())
-                    .child(self.delete_rows_button.clone()),
-            ]);
+        let score_actions = div().flex().flex_none().items_center().justify_end().child(
+            div()
+                .debug_selector(|| "score-actions-control".to_string())
+                .child(self.action_menu.clone()),
+        );
         let header = div()
             .flex()
             .items_center()
@@ -948,8 +1166,9 @@ impl Render for ScoreEditor {
                     .overflow_hidden()
                     .child(self.part_dropdown.clone()),
             )
-            .child(row_actions);
+            .child(score_actions);
         let selected_rows = self.selected_rows();
+        let editor = cx.entity();
         let score_content = if !has_voices {
             div()
                 .flex()
@@ -964,23 +1183,37 @@ impl Render for ScoreEditor {
                 column_labels,
                 &self.cells,
                 &invalid_cells,
+                row_labels,
                 selected_rows,
                 self.playing_row,
                 &self.scroll_handle,
-                |row, header| {
+                move |row, header| {
+                    let mouse_down_editor = editor.clone();
+                    let mouse_move_editor = editor.clone();
+                    let mouse_up_editor = editor.clone();
+                    let mouse_up_out_editor = editor.clone();
                     header
                         .debug_selector(move || format!("score-row-header-{row}"))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |editor, event, window, cx| {
+                        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                            mouse_down_editor.update(cx, |editor, cx| {
                                 editor.on_row_mouse_down(row, event, window, cx);
-                            }),
-                        )
-                        .on_mouse_move(cx.listener(move |editor, event, window, cx| {
-                            editor.on_row_mouse_move(row, event, window, cx);
-                        }))
-                        .on_mouse_up(MouseButton::Left, cx.listener(Self::on_row_mouse_up))
-                        .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_row_mouse_up))
+                            });
+                        })
+                        .on_mouse_move(move |event, window, cx| {
+                            mouse_move_editor.update(cx, |editor, cx| {
+                                editor.on_row_mouse_move(row, event, window, cx);
+                            });
+                        })
+                        .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                            mouse_up_editor.update(cx, |editor, cx| {
+                                editor.on_row_mouse_up(event, window, cx);
+                            });
+                        })
+                        .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+                            mouse_up_out_editor.update(cx, |editor, cx| {
+                                editor.on_row_mouse_up(event, window, cx);
+                            });
+                        })
                 },
             )
         };
@@ -1012,15 +1245,28 @@ impl Render for ScoreEditor {
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
-    use gpui::{point, px, AppContext, Modifiers, TestAppContext};
+    use gpui::{
+        div, point, prelude::*, px, size, AppContext, Context, Entity, Modifiers, ScrollDelta,
+        ScrollWheelEvent, TestAppContext, Window,
+    };
 
-    use super::{ScoreDocument, ScoreEditor};
+    use super::{ScoreAction, ScoreDocument, ScoreEditor};
     use crate::{
-        part::{Part, PartScore},
+        part::{Part, PartScore, ScoreRowRange},
         pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
         project::{Project, Voice, VoiceType},
         seed::Seed,
     };
+
+    struct ScoreEditorHost {
+        editor: Entity<ScoreEditor>,
+    }
+
+    impl Render for ScoreEditorHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().flex().size_full().child(self.editor.clone())
+        }
+    }
 
     #[test]
     fn reports_every_invalid_score_cell() {
@@ -1069,7 +1315,130 @@ mod tests {
     }
 
     #[gpui::test]
-    fn row_actions_stay_visible_and_follow_the_row_selection(cx: &mut TestAppContext) {
+    fn score_cells_alternate_backgrounds_by_subdivision_group(cx: &mut TestAppContext) {
+        let part = Part::new("part-a", 6).with_subdivision_pattern(Some("2".parse().unwrap()));
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec![String::new()]; 6]);
+        let part_name = part.name.clone();
+        let (editor, cx) = cx.add_window_view(move |_, cx| {
+            let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
+            ScoreEditor::new(0, document, vec![part_name], cx)
+        });
+
+        let backgrounds = cx.update(|_, cx| {
+            editor
+                .read(cx)
+                .cells
+                .iter()
+                .map(|row| row[0].read(cx).background())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            backgrounds,
+            [
+                crate::style::GREEN3,
+                crate::style::GREEN3,
+                crate::style::GREEN4,
+                crate::style::GREEN4,
+                crate::style::GREEN3,
+                crate::style::GREEN3,
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn cached_parse_issues_follow_document_mutations(cx: &mut TestAppContext) {
+        let part = Part::new("part-a", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec!["H4".to_string()], vec![String::new()]]);
+        let part_for_document = part.clone();
+        let document =
+            cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part_for_document, score));
+
+        assert_eq!(cx.update(|cx| document.read(cx).parse_issues().len()), 1);
+        assert!(cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+        });
+        assert!(cx.update(|cx| document.read(cx).parse_issues().is_empty()));
+        assert!(!cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "H4".to_string(), cx);
+        });
+        assert_eq!(cx.update(|cx| document.read(cx).parse_issues().len()), 1);
+        assert!(cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+
+        document.update(cx, |document, cx| {
+            document
+                .clear_rows(ScoreRowRange::new(0, 0, 2).unwrap(), cx)
+                .unwrap();
+        });
+        assert!(cx.update(|cx| document.read(cx).parse_issues().is_empty()));
+        assert!(!cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "ember".to_string(), cx);
+        });
+        assert_eq!(cx.update(|cx| document.read(cx).parse_issues().len()), 1);
+        assert!(cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+
+        let pitch_system = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "embers",
+                BTreeMap::from([("ember".to_string(), FrequencyHz::new(197.3).unwrap())]),
+            )
+            .unwrap(),
+        );
+        let explicit_project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part]);
+        document.update(cx, |document, cx| {
+            document.project_settings_changed(explicit_project, cx);
+        });
+        assert!(cx.update(|cx| document.read(cx).parse_issues().is_empty()));
+        assert!(!cx.update(|cx| document.read(cx).invalid_cells().contains(0, 0)));
+    }
+
+    #[gpui::test]
+    fn score_grid_only_renders_visible_rows(cx: &mut TestAppContext) {
+        let row_count = 200;
+        let part = Part::new("part-a", row_count);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec![String::new()]; row_count as usize]);
+        let part_name = part.name.clone();
+        let (_, cx) = cx.add_window_view(move |_, cx| {
+            let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
+            let editor = cx.new(|cx| ScoreEditor::new(0, document, vec![part_name], cx));
+            ScoreEditorHost { editor }
+        });
+        cx.simulate_resize(size(px(600.0), px(300.0)));
+        cx.run_until_parked();
+
+        let first = cx.debug_bounds("score-row-header-0").unwrap();
+        assert!(cx.debug_bounds("score-row-header-199").is_none());
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: first.center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-10_000.0))),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("score-row-header-199").is_some());
+    }
+
+    #[gpui::test]
+    fn score_actions_stay_compact_and_follow_the_row_selection(cx: &mut TestAppContext) {
         let part = Part::new("part-a", 2);
         let project = Project::new("test project", 20_000, 32, Seed::new(12))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
@@ -1080,28 +1449,18 @@ mod tests {
             let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
             ScoreEditor::new(0, document, vec![part_name], cx)
         });
-        let (insert_before, insert_after, clear, delete) = cx.update(|_, cx| {
-            let editor = editor.read(cx);
-            (
-                editor.insert_before_button.clone(),
-                editor.insert_after_button.clone(),
-                editor.clear_rows_button.clone(),
-                editor.delete_rows_button.clone(),
-            )
-        });
+        let action_menu = cx.update(|_, cx| editor.read(cx).action_menu.clone());
 
-        for id in [
-            "insert-row-before-control",
-            "insert-row-after-control",
-            "clear-score-rows-control",
-            "delete-score-rows-control",
-        ] {
-            assert!(cx.debug_bounds(id).is_some(), "missing visible button {id}");
-        }
-        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.debug_bounds("score-actions-control").is_some());
+        assert!(cx.update(|_, cx| {
+            let menu = action_menu.read(cx);
+            menu.is_disabled(ScoreAction::ExportRows.index())
+                && menu.is_disabled(ScoreAction::InsertBefore.index())
+                && menu.is_disabled(ScoreAction::InsertAfter.index())
+                && menu.is_disabled(ScoreAction::ClearRows.index())
+                && menu.is_disabled(ScoreAction::DeleteRows.index())
+                && !menu.is_disabled(ScoreAction::LoopPart.index())
+        }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
 
         let first = cx.debug_bounds("score-row-header-0").unwrap();
@@ -1112,24 +1471,36 @@ mod tests {
             ),
             Modifiers::default(),
         );
-        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| {
+            let menu = action_menu.read(cx);
+            menu.is_disabled(ScoreAction::ExportRows.index())
+                && menu.is_disabled(ScoreAction::InsertBefore.index())
+                && menu.is_disabled(ScoreAction::InsertAfter.index())
+                && menu.is_disabled(ScoreAction::ClearRows.index())
+                && menu.is_disabled(ScoreAction::DeleteRows.index())
+        }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
 
         cx.simulate_click(first.center(), Modifiers::default());
-        assert!(!cx.update(|_, cx| insert_before.read(cx).is_disabled()));
-        assert!(!cx.update(|_, cx| insert_after.read(cx).is_disabled()));
-        assert!(!cx.update(|_, cx| clear.read(cx).is_disabled()));
-        assert!(!cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| {
+            let menu = action_menu.read(cx);
+            !menu.is_disabled(ScoreAction::ExportRows.index())
+                && !menu.is_disabled(ScoreAction::InsertBefore.index())
+                && !menu.is_disabled(ScoreAction::InsertAfter.index())
+                && !menu.is_disabled(ScoreAction::ClearRows.index())
+                && !menu.is_disabled(ScoreAction::DeleteRows.index())
+        }));
         assert!(cx.debug_bounds("score-selected-row-header-0").is_some());
 
         cx.simulate_click(first.center(), Modifiers::default());
-        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| clear.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| {
+            let menu = action_menu.read(cx);
+            menu.is_disabled(ScoreAction::ExportRows.index())
+                && menu.is_disabled(ScoreAction::InsertBefore.index())
+                && menu.is_disabled(ScoreAction::InsertAfter.index())
+                && menu.is_disabled(ScoreAction::ClearRows.index())
+                && menu.is_disabled(ScoreAction::DeleteRows.index())
+        }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
 
         cx.simulate_click(first.center(), Modifiers::default());
@@ -1141,8 +1512,12 @@ mod tests {
                 ..Modifiers::default()
             },
         );
-        assert!(!cx.update(|_, cx| clear.read(cx).is_disabled()));
-        assert!(cx.update(|_, cx| delete.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| {
+            let menu = action_menu.read(cx);
+            !menu.is_disabled(ScoreAction::ExportRows.index())
+                && !menu.is_disabled(ScoreAction::ClearRows.index())
+                && menu.is_disabled(ScoreAction::DeleteRows.index())
+        }));
         assert!(cx.debug_bounds("score-selected-row-header-0").is_some());
         assert!(cx.debug_bounds("score-selected-row-header-1").is_some());
     }

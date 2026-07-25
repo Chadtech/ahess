@@ -41,6 +41,32 @@ pub fn destructive_confirmation(
     )
 }
 
+pub fn destructive_dialog(
+    title: impl Into<SharedString>,
+    close_button: Option<Entity<Button>>,
+    message: impl Into<SharedString>,
+    actions: impl IntoElement,
+) -> gpui::Div {
+    s::raised(
+        div()
+            .flex()
+            .flex_col()
+            .w(s::S10)
+            .bg(s::RED1)
+            .text_color(s::WHITE)
+            .child(title_bar(title, close_button))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(s::S3)
+                    .p(s::CONTENT_PADDING)
+                    .child(div().child(message.into()))
+                    .child(actions),
+            ),
+    )
+}
+
 pub struct ListDetailArgs<Title, List, Details> {
     pub title: Title,
     pub close_button: Entity<Button>,

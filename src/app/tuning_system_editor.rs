@@ -89,7 +89,7 @@ enum DraftNotation {
 
 struct ExplicitDraft {
     pitches: Vec<Vec<Entity<TextInput>>>,
-    scroll_handle: ScrollHandle,
+    scroll_handle: data_grid::DataGridScrollHandle,
 }
 
 impl EventEmitter<Msg> for Model {}
@@ -932,7 +932,7 @@ impl ExplicitDraft {
     fn new(cx: &mut Context<Model>) -> Self {
         Self {
             pitches: vec![vec![new_input("", "ember", cx), new_input("", "197.3", cx)]],
-            scroll_handle: ScrollHandle::new(),
+            scroll_handle: data_grid::DataGridScrollHandle::new(),
         }
     }
 
@@ -948,7 +948,7 @@ impl ExplicitDraft {
                     ]
                 })
                 .collect(),
-            scroll_handle: ScrollHandle::new(),
+            scroll_handle: data_grid::DataGridScrollHandle::new(),
         }
     }
 
@@ -970,7 +970,7 @@ impl ExplicitDraft {
             .map_err(|error| error.to_string())
     }
 
-    fn invalid_cells(&self, cx: &Context<Model>) -> Vec<(usize, usize)> {
+    fn invalid_cells(&self, cx: &Context<Model>) -> data_grid::InvalidCells {
         let tokens = self
             .pitches
             .iter()

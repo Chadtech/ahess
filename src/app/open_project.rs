@@ -462,7 +462,14 @@ fn selected_project_details(project: &ProjectEntry) -> gpui::Div {
         ))
         .child(div().flex().gap_4().children([
             metric("beat length", project.project.beat_length.to_string()),
-            metric("variance", project.project.timing_variance.to_string()),
+            metric(
+                "timing variance (samples)",
+                project.project.timing_variance.to_string(),
+            ),
+            metric(
+                "frequency variance (decimal)",
+                project.project.frequency_variance().ratio().to_string(),
+            ),
             metric("seed", project.project.seed.value().to_string()),
         ]))
 }
