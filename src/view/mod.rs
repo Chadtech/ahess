@@ -10,4 +10,5 @@ pub mod range_selection_list;
 pub mod selection_list;
 pub mod status_bar;
 pub mod text_input;
+pub mod workspace;
 pub mod workspace_tile;

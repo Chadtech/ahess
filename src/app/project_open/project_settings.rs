@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use gpui::{div, prelude::*, Context, Entity, EventEmitter, PathPromptOptions, Window};
+use gpui::{
+    div, prelude::*, AnyElement, App, Context, Entity, EventEmitter, PathPromptOptions, Window,
+};
 
 use crate::{
     app::room_form::RoomFields,
@@ -12,20 +14,96 @@ use crate::{
     tuning_system::{self, TuningSystem},
     view::{
         button::{self, Button},
-        dialog::{error_message, title_bar},
+        dialog::{destructive_dialog, error_message},
         dropdown::{self, Dropdown},
         field_group::{control_group, field_group},
         file_import::file_import,
         text_input::TextInput,
+        workspace,
     },
 };
 
 pub enum ProjectSettingsMsg {
     Saved(Box<Project>),
-    Closed,
+    ResetRequested,
+    ResetConfirmationRequested,
 }
 
-pub struct ProjectSettingsDialog {
+pub(super) enum Overlay {
+    ConfirmReset(Entity<ResetDialog>),
+}
+
+impl Overlay {
+    pub(super) fn element(&self) -> AnyElement {
+        match self {
+            Self::ConfirmReset(dialog) => dialog.clone().into_any_element(),
+        }
+    }
+}
+
+pub(super) enum ResetDialogMsg {
+    Cancelled,
+    Confirmed,
+}
+
+pub(super) struct ResetDialog {
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+}
+
+impl EventEmitter<ResetDialogMsg> for ResetDialog {}
+
+impl ResetDialog {
+    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+        let cancel_button =
+            cx.new(|_| Button::new("keep-editing-project-settings", "keep editing"));
+        let confirm_button = cx.new(|_| Button::new("discard-project-settings", "discard"));
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
+            .detach();
+        Self {
+            cancel_button,
+            confirm_button,
+        }
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ResetDialogMsg::Cancelled);
+    }
+
+    fn on_confirm_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ResetDialogMsg::Confirmed);
+    }
+}
+
+impl Render for ResetDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        destructive_dialog(
+            "reset project settings",
+            None,
+            "discard unsaved project settings?",
+            div()
+                .flex()
+                .justify_end()
+                .gap(s::S3)
+                .child(self.cancel_button.clone())
+                .child(self.confirm_button.clone()),
+        )
+    }
+}
+
+pub struct ProjectSettingsWorkspace {
     original_project: Project,
     project_directory: PathBuf,
     workspace_root: PathBuf,
@@ -34,18 +112,14 @@ pub struct ProjectSettingsDialog {
     original_tuning_index: usize,
     choose_impulse_response_button: Entity<Button>,
     remove_impulse_response_button: Entity<Button>,
-    close_button: Entity<Button>,
     cancel_button: Entity<Button>,
     save_button: Entity<Button>,
-    keep_editing_button: Entity<Button>,
-    discard_button: Entity<Button>,
     save_error: Option<String>,
-    confirming_discard: bool,
 }
 
-impl EventEmitter<ProjectSettingsMsg> for ProjectSettingsDialog {}
+impl EventEmitter<ProjectSettingsMsg> for ProjectSettingsWorkspace {}
 
-impl ProjectSettingsDialog {
+impl ProjectSettingsWorkspace {
     pub fn new(
         project: Project,
         project_directory: PathBuf,
@@ -76,21 +150,12 @@ impl ProjectSettingsDialog {
         let remove_impulse_response_button = cx.new(|_| {
             Button::new("remove-project-impulse-response", "remove").disabled(!has_impulse_response)
         });
-        let close_button = cx.new(|_| Button::x("close-project-settings"));
-        let cancel_button = cx.new(|_| Button::new("cancel-project-settings", "cancel"));
+        let cancel_button = cx.new(|_| Button::new("reset-project-settings", "reset"));
         let save_button = cx.new(|_| Button::new("save-project-settings", "save changes"));
-        let keep_editing_button =
-            cx.new(|_| Button::new("keep-editing-project-settings", "keep editing"));
-        let discard_button = cx.new(|_| Button::new("discard-project-settings", "discard"));
 
-        cx.subscribe(&close_button, Self::on_close_clicked).detach();
-        cx.subscribe(&cancel_button, Self::on_close_clicked)
+        cx.subscribe(&cancel_button, Self::on_reset_clicked)
             .detach();
         cx.subscribe(&save_button, Self::on_save_clicked).detach();
-        cx.subscribe(&keep_editing_button, Self::on_keep_editing_clicked)
-            .detach();
-        cx.subscribe(&discard_button, Self::on_discard_clicked)
-            .detach();
         cx.subscribe(&room_kind, Self::on_room_kind_selected)
             .detach();
         cx.subscribe(
@@ -113,23 +178,18 @@ impl ProjectSettingsDialog {
             original_tuning_index,
             choose_impulse_response_button,
             remove_impulse_response_button,
-            close_button,
             cancel_button,
             save_button,
-            keep_editing_button,
-            discard_button,
             save_error: tuning_error,
-            confirming_discard: false,
         }
     }
 
-    fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+    fn on_reset_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         if self.is_dirty(cx) {
-            self.confirming_discard = true;
             self.save_error = None;
-            cx.notify();
+            cx.emit(ProjectSettingsMsg::ResetConfirmationRequested);
         } else {
-            cx.emit(ProjectSettingsMsg::Closed);
+            cx.emit(ProjectSettingsMsg::ResetRequested);
         }
     }
 
@@ -160,7 +220,6 @@ impl ProjectSettingsDialog {
             }
             Err(error) => {
                 self.save_error = Some(error.to_string());
-                self.confirming_discard = false;
                 cx.notify();
             }
         }
@@ -172,7 +231,6 @@ impl ProjectSettingsDialog {
         _: &dropdown::Selected,
         cx: &mut Context<Self>,
     ) {
-        self.confirming_discard = false;
         cx.notify();
     }
 
@@ -197,7 +255,6 @@ impl ProjectSettingsDialog {
                         .update(cx, |dialog, cx| {
                             dialog.save_error =
                                 Some(format!("failed to open the file chooser: {error}"));
-                            dialog.confirming_discard = false;
                             cx.notify();
                         })
                         .ok();
@@ -229,7 +286,6 @@ impl ProjectSettingsDialog {
     ) {
         self.fields.impulse_response = ImpulseResponseSelection::None;
         self.save_error = None;
-        self.confirming_discard = false;
         self.sync_impulse_response_buttons(cx);
         cx.notify();
     }
@@ -257,7 +313,6 @@ impl ProjectSettingsDialog {
             }
             Err(error) => self.save_error = Some(error.to_string()),
         }
-        self.confirming_discard = false;
         cx.notify();
     }
 
@@ -278,25 +333,6 @@ impl ProjectSettingsDialog {
             .update(cx, |button, cx| {
                 button.set_disabled(!has_impulse_response, cx);
             });
-    }
-
-    fn on_keep_editing_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        self.confirming_discard = false;
-        cx.notify();
-    }
-
-    fn on_discard_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(ProjectSettingsMsg::Closed);
     }
 
     fn project_from_fields(
@@ -356,7 +392,7 @@ impl ProjectSettingsDialog {
         Ok(project)
     }
 
-    fn is_dirty(&self, cx: &mut Context<Self>) -> bool {
+    pub fn is_dirty(&self, cx: &App) -> bool {
         self.fields.project_name.read(cx).value() != self.original_project.name
             || self.fields.description.read(cx).value() != self.original_project.description
             || self.fields.beat_length.read(cx).value()
@@ -380,9 +416,14 @@ impl ProjectSettingsDialog {
                 .impulse_response
                 .is_dirty(self.original_project.voice_convolution().is_some())
     }
+
+    pub fn sync_project(&mut self, project: Project, cx: &mut Context<Self>) {
+        self.original_project = project;
+        cx.notify();
+    }
 }
 
-impl Render for ProjectSettingsDialog {
+impl Render for ProjectSettingsWorkspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let room_form = self.fields.room.view(self.fields.room.is_enabled(cx));
         let impulse_response = file_import(
@@ -391,17 +432,13 @@ impl Render for ProjectSettingsDialog {
             self.remove_impulse_response_button.clone(),
         )
         .debug_selector(|| "project-settings-impulse-response".to_string());
-        project_settings_dialog(
+        project_settings_workspace(
             &self.fields,
             room_form,
             impulse_response,
-            self.close_button.clone(),
             self.cancel_button.clone(),
             self.save_button.clone(),
-            self.keep_editing_button.clone(),
-            self.discard_button.clone(),
             self.save_error.clone(),
-            self.confirming_discard,
         )
     }
 }
@@ -507,7 +544,10 @@ impl ImpulseResponseSelection {
     }
 
     fn is_some(&self) -> bool {
-        !matches!(self, Self::None)
+        match self {
+            Self::None => false,
+            Self::Existing { .. } | Self::Imported { .. } => true,
+        }
     }
 
     fn is_dirty(&self, original_has_impulse_response: bool) -> bool {
@@ -566,7 +606,7 @@ impl ProjectSettingsFields {
         project_directory: &Path,
         tuning_options: impl IntoIterator<Item = impl Into<gpui::SharedString>>,
         selected_tuning: usize,
-        cx: &mut Context<ProjectSettingsDialog>,
+        cx: &mut Context<ProjectSettingsWorkspace>,
     ) -> Self {
         Self {
             project_name: cx.new(|cx| TextInput::new(project.name.clone(), "", cx)),
@@ -595,18 +635,13 @@ impl ProjectSettingsFields {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn project_settings_dialog(
+fn project_settings_workspace(
     fields: &ProjectSettingsFields,
     room_form: gpui::Div,
     impulse_response: gpui::Div,
-    close_button: Entity<Button>,
     cancel_button: Entity<Button>,
     save_button: Entity<Button>,
-    keep_editing_button: Entity<Button>,
-    discard_button: Entity<Button>,
     save_error: Option<String>,
-    confirming_discard: bool,
 ) -> impl IntoElement {
     let project_column = div()
         .flex()
@@ -651,47 +686,32 @@ fn project_settings_dialog(
 
     let feedback = save_error.map(error_message);
 
-    let actions = if confirming_discard {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child("discard unsaved changes?")
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(keep_editing_button)
-                    .child(discard_button),
-            )
-    } else {
-        div()
-            .flex()
-            .justify_end()
-            .gap_3()
-            .child(cancel_button)
-            .child(save_button)
-    };
+    let actions = div()
+        .flex()
+        .justify_end()
+        .gap_3()
+        .child(cancel_button)
+        .child(save_button);
 
-    s::raised(
+    let settings = div()
+        .flex()
+        .flex_col()
+        .gap(s::CONTENT_PADDING)
+        .child(form)
+        .children(feedback);
+
+    workspace::tile(
         div()
             .flex()
             .flex_col()
-            .w(s::S11)
-            .bg(s::GRAY2)
-            .debug_selector(|| "project-settings-dialog".to_string())
-            .child(title_bar("project settings", Some(close_button)))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(s::CONTENT_PADDING)
-                    .p(s::CONTENT_PADDING)
-                    .child(form)
-                    .children(feedback)
-                    .child(actions),
-            ),
+            .flex_1()
+            .min_h(s::S0)
+            .justify_between()
+            .gap(s::CONTENT_PADDING)
+            .p(s::CONTENT_PADDING)
+            .debug_selector(|| "project-settings-workspace".to_string())
+            .child(settings)
+            .child(actions),
     )
 }
 
@@ -725,8 +745,9 @@ fn project_tuning_options(
                 .map(ProjectTuningOption::Library)
                 .collect::<Vec<_>>();
             let selected = project.tuning_system_id().and_then(|selected_id| {
-                options.iter().position(|option| {
-                    matches!(option, ProjectTuningOption::Library(system) if system.id() == selected_id)
+                options.iter().position(|option| match option {
+                    ProjectTuningOption::Library(system) => system.id() == selected_id,
+                    ProjectTuningOption::Embedded(_) => false,
                 })
             });
             match selected {
@@ -762,7 +783,7 @@ mod tests {
 
     use super::{
         parse_frequency_variance_field, parse_seed_field, parse_u32_field,
-        validate_project_name_unique, ProjectSettingsDialog,
+        validate_project_name_unique, ProjectSettingsWorkspace,
     };
     use crate::{
         acoustics::{Point3Meters, RectangularRoom},
@@ -808,7 +829,7 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let root_for_view = root.clone();
         let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
         });
 
         let updated = cx.update(|_, cx| {
@@ -830,7 +851,7 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let root_for_view = root.clone();
         let (_, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
         });
         cx.simulate_resize(size(px(800.0), px(800.0)));
         cx.run_until_parked();
@@ -842,7 +863,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn configured_room_uses_a_compact_two_column_project_settings_layout(cx: &mut TestAppContext) {
+    fn configured_room_uses_the_full_two_column_project_workspace(cx: &mut TestAppContext) {
         let root = temp_root("configured-room-visible");
         let mut project = Project::new("test project", 800, 0, Seed::new(1));
         project
@@ -851,19 +872,19 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let root_for_view = root.clone();
         let (_, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
         });
         cx.simulate_resize(size(px(1400.0), px(900.0)));
         cx.run_until_parked();
 
-        let dialog = cx.debug_bounds("project-settings-dialog").unwrap();
+        let workspace = cx.debug_bounds("project-settings-workspace").unwrap();
         let project_column = cx.debug_bounds("project-settings-project-column").unwrap();
         let acoustics_column = cx
             .debug_bounds("project-settings-acoustics-column")
             .unwrap();
 
-        assert_eq!(dialog.size.width, s::S11);
-        assert!(dialog.size.height < px(800.0));
+        assert!(workspace.size.width > s::S11);
+        assert!(workspace.size.height > px(800.0));
         assert_eq!(project_column.origin.y, acoustics_column.origin.y);
         assert_eq!(project_column.size.width, acoustics_column.size.width);
         assert!(project_column.origin.x + project_column.size.width < acoustics_column.origin.x);
@@ -884,7 +905,7 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let root_for_view = root.clone();
         let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
         });
 
         let updated = cx.update(|_, cx| {
@@ -918,7 +939,7 @@ mod tests {
         let project_directory = project::create_project(&root, &project).unwrap();
         let root_for_view = root.clone();
         let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
         });
         let metadata = convolution::inspect_wav_file(&source_path).unwrap();
 
@@ -960,7 +981,7 @@ mod tests {
         let project_directory_for_view = project_directory.clone();
         let root_for_view = root.clone();
         let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            ProjectSettingsDialog::new(project, project_directory_for_view, root_for_view, cx)
+            ProjectSettingsWorkspace::new(project, project_directory_for_view, root_for_view, cx)
         });
         let metadata = convolution::inspect_wav_file(&source_path).unwrap();
         dialog.update(cx, |dialog, cx| {

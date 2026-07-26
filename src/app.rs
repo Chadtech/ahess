@@ -464,7 +464,7 @@ impl Render for AhessApp {
                 let project_model = model.read(cx);
                 AppFrame::new(model.clone(), project_model.project().name.clone())
                     .with_actions(project_model.bar_actions())
-                    .with_dialog(project_model.active_dialog())
+                    .with_overlay(project_model.active_overlay())
             }
             AppMode::TuningSystems(model) => AppFrame::new(model.clone(), "tuning systems")
                 .with_actions(model.read(cx).bar_actions()),
@@ -477,7 +477,7 @@ impl Render for AhessApp {
             content,
             project_title,
             actions,
-            dialog,
+            overlay,
         } = frame;
 
         let content = div()
@@ -504,8 +504,8 @@ impl Render for AhessApp {
                     .child(content),
             );
 
-        if let Some(dialog) = dialog {
-            app_frame.child(modal_overlay(dialog))
+        if let Some(overlay) = overlay {
+            app_frame.child(modal_overlay(overlay))
         } else {
             app_frame
         }
@@ -538,7 +538,7 @@ struct AppFrame {
     content: Vec<AnyElement>,
     project_title: SharedString,
     actions: Vec<AnyElement>,
-    dialog: Option<AnyElement>,
+    overlay: Option<AnyElement>,
 }
 
 impl AppFrame {
@@ -547,7 +547,7 @@ impl AppFrame {
             content: vec![content.into_any_element()],
             project_title: project_title.into(),
             actions: Vec::new(),
-            dialog: None,
+            overlay: None,
         }
     }
 
@@ -556,8 +556,8 @@ impl AppFrame {
         self
     }
 
-    fn with_dialog(mut self, dialog: Option<AnyElement>) -> Self {
-        self.dialog = dialog;
+    fn with_overlay(mut self, overlay: Option<AnyElement>) -> Self {
+        self.overlay = overlay;
         self
     }
 }
@@ -567,6 +567,7 @@ fn project_bar(project_title: SharedString, actions: Vec<AnyElement>) -> impl In
         .flex()
         .items_center()
         .justify_between()
+        .gap(s::S5)
         .border_b_2()
         .border_color(s::GRAY1)
         .bg(s::GRAY2)
@@ -575,16 +576,31 @@ fn project_bar(project_title: SharedString, actions: Vec<AnyElement>) -> impl In
         .child(
             div()
                 .flex()
+                .flex_1()
+                .min_w(s::S0)
                 .items_center()
                 .gap_3()
-                .child(div().text_color(s::TEXT_HEADER).child("ahess"))
-                .child(div().text_color(s::TEXT_DEFAULT).child(project_title)),
+                .child(div().flex_none().text_color(s::TEXT_HEADER).child("ahess"))
+                .child(
+                    div()
+                        .min_w(s::S0)
+                        .truncate()
+                        .text_color(s::TEXT_DEFAULT)
+                        .child(project_title),
+                ),
         );
 
     if actions.is_empty() {
         bar
     } else {
-        bar.child(div().flex().gap_3().my(-s::S3).children(actions))
+        bar.child(
+            div()
+                .flex()
+                .flex_none()
+                .gap(s::S5)
+                .my(-s::S3)
+                .children(actions),
+        )
     }
 }
 

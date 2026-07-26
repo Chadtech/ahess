@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
+use gpui::{div, prelude::*, App, Context, Entity, EventEmitter, Window};
 
 use crate::{
     playback::BeatRange,
@@ -6,24 +6,29 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
-        dialog::{column_with_actions, error_message, title_bar},
+        dialog::error_message,
         dropdown::{self, Dropdown},
         field_group::{compact_control_group, field_group},
         range_selection_list::{self, RangeSelectionList, Row, SelectedRange},
         text_input::{Changed as TextChanged, TextInput},
+        workspace,
     },
 };
 
 pub enum Msg {
     Applied(BeatRange),
-    Closed,
+    ResetRequested,
 }
 
+// Remember to add any new modes to ALL_SELECTION_MODES below
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectionMode {
     ArrangementParts,
     ExactBeats,
 }
+
+const ALL_SELECTION_MODES: &[SelectionMode] =
+    &[SelectionMode::ArrangementParts, SelectionMode::ExactBeats];
 
 impl SelectionMode {
     fn dropdown_index(self) -> usize {
@@ -33,33 +38,32 @@ impl SelectionMode {
         }
     }
 
-    fn from_dropdown_index(index: usize) -> Self {
-        match index {
-            0 => Self::ArrangementParts,
-            1 => Self::ExactBeats,
-            _ => unreachable!("the loop selection dropdown has exactly two options"),
-        }
+    fn from_dropdown_index(index: usize) -> Option<Self> {
+        ALL_SELECTION_MODES
+            .iter()
+            .find(|&&mode| mode.dropdown_index() == index)
+            .copied()
     }
 }
 
-pub struct LoopRangeDialog {
+pub struct LoopWorkspace {
     occurrences: Vec<ArrangementOccurrence>,
     arrangement_beat_count: u64,
+    applied_range: Option<BeatRange>,
     selection_mode: SelectionMode,
     selection_mode_dropdown: Entity<Dropdown>,
     arrangement_range: Entity<RangeSelectionList>,
     entire_arrangement_button: Entity<Button>,
     from_beat: Entity<TextInput>,
     to_beat: Entity<TextInput>,
-    close_button: Entity<Button>,
     cancel_button: Entity<Button>,
     apply_button: Entity<Button>,
     error: Option<String>,
 }
 
-impl EventEmitter<Msg> for LoopRangeDialog {}
+impl EventEmitter<Msg> for LoopWorkspace {}
 
-impl LoopRangeDialog {
+impl LoopWorkspace {
     pub fn new(
         occurrences: Vec<ArrangementOccurrence>,
         range: Option<BeatRange>,
@@ -129,8 +133,7 @@ impl LoopRangeDialog {
             .unwrap_or(arrangement_beat_count.max(1));
         let from_beat = cx.new(|cx| TextInput::new(first.to_string(), "", cx));
         let to_beat = cx.new(|cx| TextInput::new(last.to_string(), "", cx));
-        let close_button = cx.new(|_| Button::x("close-loop-range"));
-        let cancel_button = cx.new(|_| Button::new("cancel-loop-range", "cancel"));
+        let cancel_button = cx.new(|_| Button::new("reset-loop-range", "reset"));
         let apply_button =
             cx.new(|_| Button::new("apply-loop-range", "apply").disabled(occurrences.is_empty()));
 
@@ -146,25 +149,37 @@ impl LoopRangeDialog {
         cx.subscribe(&from_beat, Self::on_exact_beat_changed)
             .detach();
         cx.subscribe(&to_beat, Self::on_exact_beat_changed).detach();
-        cx.subscribe(&close_button, Self::on_close_clicked).detach();
-        cx.subscribe(&cancel_button, Self::on_close_clicked)
+        cx.subscribe(&cancel_button, Self::on_reset_clicked)
             .detach();
         cx.subscribe(&apply_button, Self::on_apply_clicked).detach();
 
         Self {
             occurrences,
             arrangement_beat_count,
+            applied_range: range,
             selection_mode,
             selection_mode_dropdown,
             arrangement_range,
             entire_arrangement_button,
             from_beat,
             to_beat,
-            close_button,
             cancel_button,
             apply_button,
             error: None,
         }
+    }
+
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        match self.selected_beat_range(cx) {
+            Ok(range) => Some(range) != self.applied_range,
+            Err(_) => self.applied_range.is_some() || self.arrangement_beat_count > 0,
+        }
+    }
+
+    pub fn applied(&mut self, range: BeatRange, cx: &mut Context<Self>) {
+        self.applied_range = Some(range);
+        self.error = None;
+        cx.notify();
     }
 
     fn on_selection_mode_changed(
@@ -173,7 +188,9 @@ impl LoopRangeDialog {
         selected: &dropdown::Selected,
         cx: &mut Context<Self>,
     ) {
-        let selection_mode = SelectionMode::from_dropdown_index(selected.index);
+        let Some(selection_mode) = SelectionMode::from_dropdown_index(selected.index) else {
+            return;
+        };
         if selection_mode == SelectionMode::ExactBeats {
             if let Some(range) = self.selected_arrangement_beat_range(cx) {
                 self.from_beat.update(cx, |input, cx| {
@@ -225,8 +242,8 @@ impl LoopRangeDialog {
         cx.notify();
     }
 
-    fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Msg::Closed);
+    fn on_reset_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        cx.emit(Msg::ResetRequested);
     }
 
     fn on_apply_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -239,7 +256,7 @@ impl LoopRangeDialog {
         }
     }
 
-    fn selected_beat_range(&self, cx: &Context<Self>) -> Result<BeatRange, String> {
+    fn selected_beat_range(&self, cx: &App) -> Result<BeatRange, String> {
         match self.selection_mode {
             SelectionMode::ArrangementParts => {
                 self.selected_arrangement_beat_range(cx).ok_or_else(|| {
@@ -257,7 +274,7 @@ impl LoopRangeDialog {
         }
     }
 
-    fn selected_arrangement_beat_range(&self, cx: &Context<Self>) -> Option<BeatRange> {
+    fn selected_arrangement_beat_range(&self, cx: &App) -> Option<BeatRange> {
         let selected = self.arrangement_range.read(cx).selected_range()?;
         beat_range_for_occurrences(&self.occurrences, selected)
     }
@@ -377,7 +394,7 @@ impl LoopRangeDialog {
     }
 }
 
-impl Render for LoopRangeDialog {
+impl Render for LoopWorkspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mode_controls = match self.selection_mode {
             SelectionMode::ArrangementParts => self.arrangement_controls(cx),
@@ -407,32 +424,23 @@ impl Render for LoopRangeDialog {
             .debug_selector(|| "loop-range-actions".to_string())
             .child(self.cancel_button.clone())
             .child(self.apply_button.clone());
-        let controls_column = column_with_actions(controls, actions)
+        let controls_column = workspace::column_with_actions(controls, actions)
             .flex_none()
             .flex_basis(s::S9)
             .w(s::S9)
             .min_w(s::S9)
             .debug_selector(|| "loop-controls-column".to_string());
 
-        s::raised(
+        workspace::tile(
             div()
                 .flex()
-                .flex_col()
-                .w(s::S11)
-                .h(s::S10)
-                .bg(s::GRAY2)
-                .debug_selector(|| "loop-range-dialog".to_string())
-                .child(title_bar("set loop", Some(self.close_button.clone())))
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_h(s::S0)
-                        .gap(s::CONTENT_PADDING)
-                        .p(s::CONTENT_PADDING)
-                        .child(controls_column)
-                        .child(self.arrangement_panel()),
-                ),
+                .flex_1()
+                .min_h(s::S0)
+                .gap(s::CONTENT_PADDING)
+                .p(s::CONTENT_PADDING)
+                .debug_selector(|| "loop-workspace".to_string())
+                .child(controls_column)
+                .child(self.arrangement_panel()),
         )
     }
 }
@@ -497,7 +505,7 @@ where
 mod tests {
     use gpui::{px, size, TestAppContext};
 
-    use super::{LoopRangeDialog, SelectionMode};
+    use super::{LoopWorkspace, SelectionMode};
     use crate::{
         part::Part, playback::BeatRange, project::Project, seed::Seed,
         view::range_selection_list::SelectedRange,
@@ -524,26 +532,27 @@ mod tests {
     }
 
     #[gpui::test]
-    fn loop_range_dialog_fits_its_arrangement_picker_and_actions(cx: &mut TestAppContext) {
+    fn loop_workspace_fits_its_arrangement_picker_and_actions(cx: &mut TestAppContext) {
         let range = BeatRange::new(1, 448, 448).unwrap();
         let (_dialog, cx) =
-            cx.add_window_view(|_, cx| LoopRangeDialog::new(many_occurrences(), Some(range), cx));
+            cx.add_window_view(|_, cx| LoopWorkspace::new(many_occurrences(), Some(range), cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
-        let dialog = cx.debug_bounds("loop-range-dialog").unwrap();
+        let workspace = cx.debug_bounds("loop-workspace").unwrap();
         let controls = cx.debug_bounds("loop-controls-column").unwrap();
         let arrangement = cx.debug_bounds("loop-arrangement-column").unwrap();
         let list = cx.debug_bounds("loop-arrangement-list").unwrap();
         let actions = cx.debug_bounds("loop-range-actions").unwrap();
 
-        assert_eq!(dialog.size, size(crate::style::S11, crate::style::S10));
-        assert!(dialog.origin.x >= px(0.0));
-        assert!(dialog.origin.y >= px(0.0));
-        assert!(dialog.origin.x + dialog.size.width <= px(1_200.0));
+        assert!(workspace.size.width > crate::style::S11);
+        assert!(workspace.size.height > crate::style::S10);
+        assert!(workspace.origin.x >= px(0.0));
+        assert!(workspace.origin.y >= px(0.0));
+        assert!(workspace.origin.x + workspace.size.width <= px(1_200.0));
         assert!(
-            dialog.origin.y + dialog.size.height <= px(700.0),
-            "dialog bounds: {dialog:?}"
+            workspace.origin.y + workspace.size.height <= px(700.0),
+            "workspace bounds: {workspace:?}"
         );
         assert!(controls.origin.x < arrangement.origin.x);
         assert!(
@@ -551,16 +560,18 @@ mod tests {
             "controls: {controls:?}, arrangement: {arrangement:?}, list: {list:?}"
         );
         assert!(list.size.height > crate::style::S9);
-        assert!(list.origin.x + list.size.width <= dialog.origin.x + dialog.size.width);
+        assert!(list.origin.x + list.size.width <= workspace.origin.x + workspace.size.width);
         assert!(actions.origin.x + actions.size.width <= controls.origin.x + controls.size.width);
-        assert!(actions.origin.y + actions.size.height <= dialog.origin.y + dialog.size.height);
+        assert!(
+            actions.origin.y + actions.size.height <= workspace.origin.y + workspace.size.height
+        );
     }
 
     #[gpui::test]
     fn part_aligned_ranges_open_in_arrangement_mode(cx: &mut TestAppContext) {
         let range = BeatRange::new(9, 32, 32).unwrap();
         let (dialog, cx) =
-            cx.add_window_view(|_, cx| LoopRangeDialog::new(occurrences(), Some(range), cx));
+            cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
 
         let (mode, selected) = cx.update(|_, cx| {
             let dialog = dialog.read(cx);
@@ -577,7 +588,7 @@ mod tests {
     fn partial_part_ranges_open_in_exact_mode(cx: &mut TestAppContext) {
         let range = BeatRange::new(10, 30, 32).unwrap();
         let (dialog, cx) =
-            cx.add_window_view(|_, cx| LoopRangeDialog::new(occurrences(), Some(range), cx));
+            cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
 
         let (mode, selected_range) = dialog.update(cx, |dialog, cx| {
             (
@@ -593,17 +604,18 @@ mod tests {
     fn exact_mode_keeps_the_same_wide_two_column_layout(cx: &mut TestAppContext) {
         let range = BeatRange::new(2, 447, 448).unwrap();
         let (_dialog, cx) =
-            cx.add_window_view(|_, cx| LoopRangeDialog::new(many_occurrences(), Some(range), cx));
+            cx.add_window_view(|_, cx| LoopWorkspace::new(many_occurrences(), Some(range), cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
-        let dialog = cx.debug_bounds("loop-range-dialog").unwrap();
+        let workspace = cx.debug_bounds("loop-workspace").unwrap();
         let controls = cx.debug_bounds("loop-controls-column").unwrap();
         let arrangement = cx.debug_bounds("loop-arrangement-column").unwrap();
         let list = cx.debug_bounds("loop-arrangement-list").unwrap();
         let fields = cx.debug_bounds("loop-range-fields").unwrap();
 
-        assert_eq!(dialog.size, size(crate::style::S11, crate::style::S10));
+        assert!(workspace.size.width > crate::style::S11);
+        assert!(workspace.size.height > crate::style::S10);
         assert_eq!(controls.size.width, crate::style::S9);
         assert!(controls.origin.x < arrangement.origin.x);
         assert!(list.size.height > crate::style::S9);
@@ -614,7 +626,7 @@ mod tests {
     fn selected_parts_resolve_to_their_inclusive_beat_range(cx: &mut TestAppContext) {
         let range = BeatRange::new(9, 32, 32).unwrap();
         let (dialog, cx) =
-            cx.add_window_view(|_, cx| LoopRangeDialog::new(occurrences(), Some(range), cx));
+            cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
 
         assert_eq!(
             dialog.update(cx, |dialog, cx| dialog.selected_beat_range(cx).unwrap()),

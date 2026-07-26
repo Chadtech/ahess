@@ -25,7 +25,8 @@ or when it defines how a shared component is used.
 
 ## spacing
 
-- use `CONTENT_PADDING` (`S5`) for padding around dialog content and actions.
+- use `CONTENT_PADDING` (`S5`) for padding around workspace and dialog content
+  and actions.
 - use the spacing scale in `src/style.rs`; do not introduce an arbitrary value
   when an existing spacing token expresses the intended spacing.
 
@@ -168,6 +169,43 @@ or when it defines how a shared component is used.
   message with a local error highlight and make navigation available when
   helpful.
 
+## project workspaces
+
+- use one persistent workspace section for each primary project activity.
+  Switching sections replaces the main content instead of opening a modal over
+  another section.
+- keep the workspace selector in the single-row project bar. Use fixed,
+  concise labels and the shared depressed-button treatment to identify the
+  selected section. Compose its buttons with `view::workspace::selector`.
+- group workspace selectors, workspace controls, transport controls, and
+  project-level actions by purpose. Use `S3` within a group and `S5` between
+  groups.
+- keep inactive workspace models alive so selection, scrolling, forms,
+  validation feedback, and other unfinished state survive navigation.
+- switching workspace sections must not save, apply, reset, or discard
+  unfinished work. Block section switching only while a truly modal overlay is
+  active.
+- own a modal overlay in the narrowest workspace section that can invoke it.
+  Keep its overlay type with that workspace module, and reserve project-level
+  overlays for actions that apply across workspace sections.
+- when closing a project would discard unfinished workspace forms or settings,
+  use a project-level confirmation overlay rather than silently resetting those
+  sections.
+- use `view::workspace::tile` for a full-page project workspace with one raised
+  gray surface on the green application background. Do not add a title bar or
+  close button: the selected workspace control already identifies the content.
+- use `view::workspace::list_detail` for resource management sections and
+  `view::workspace::management_form` for their add, edit, duplicate, or combine
+  forms.
+- use `view::workspace::column_with_actions` to place controls that act on one
+  column in a single toolbar directly beneath that column. Keep controls for
+  the same operation adjacent and use a larger spacing token to distinguish
+  separate control groups.
+- a list/detail workspace may use an auxiliary third column for an ordered
+  workflow that directly consumes the selected resource. Keep all three
+  columns visible together and give them fixed equal widths so changing one
+  column does not resize the others.
+
 ## workspace resource editors
 
 - use a full-page workspace for reusable resources that need creation,
@@ -208,17 +246,5 @@ or when it defines how a shared component is used.
 - when an irreversible confirmation is the only content in a standalone dialog,
   use `view::dialog::destructive_dialog`. Its dark-red body directly contains
   the warning and actions without an additional sunken panel.
-- use `view::dialog::list_detail_dialog` and
-  `view::dialog::management_form_dialog` for management dialogs that pair a
-  selectable resource list and detail view with an add form.
-- use `view::dialog::column_with_actions` to place controls that act on one
-  column in a single horizontal toolbar directly beneath that column's content.
-  Keep controls for the same operation adjacent and use a larger spacing token
-  to distinguish separate control groups within the toolbar.
-- a list/detail management dialog may use its auxiliary third column for an
-  ordered workflow that directly consumes the selected resource. Keep the
-  resource list, details, and workflow visible together instead of opening a
-  second management dialog. When present, all three columns have fixed equal
-  widths; changing content in one column must not resize the others.
 - use `view::dialog::modal_overlay` for a modal dialog displayed over an active
   screen. Modal overlays block interaction with the screen beneath them.

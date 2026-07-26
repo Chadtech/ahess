@@ -5,8 +5,8 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, AsyncApp, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, SharedString, Task, WeakEntity, Window,
+    div, prelude::*, AnyElement, AsyncApp, Context, Entity, EventEmitter, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Task, WeakEntity, Window,
 };
 
 use crate::{
@@ -29,6 +29,20 @@ use crate::{
 static NEXT_EDITOR_ID: AtomicU64 = AtomicU64::new(1);
 const AUTOSAVE_DEBOUNCE: Duration = Duration::from_millis(750);
 const AUTOSAVE_MAX_DELAY: Duration = Duration::from_secs(5);
+
+pub(super) enum Overlay {
+    ExportRows(Entity<ExportRowsDialog>),
+    RowEdit(Entity<RowEditConfirmation>),
+}
+
+impl Overlay {
+    pub(super) fn element(&self) -> AnyElement {
+        match self {
+            Self::ExportRows(dialog) => dialog.clone().into_any_element(),
+            Self::RowEdit(dialog) => dialog.clone().into_any_element(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SaveState {

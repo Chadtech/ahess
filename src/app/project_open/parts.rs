@@ -1,5 +1,6 @@
 use gpui::{
-    div, prelude::*, px, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Window,
+    div, prelude::*, px, AnyElement, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
+    Window,
 };
 
 use crate::{
@@ -7,27 +8,25 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
-        dialog::{
-            self, destructive_confirmation, error_message, list_detail_dialog,
-            management_form_dialog,
-        },
+        dialog::{destructive_dialog, error_message},
         field_group::field_group,
         selection_list,
         text_input::TextInput,
+        workspace,
     },
 };
 
 pub enum Msg {
-    AddRequested {
+    Add {
         name: String,
         length: u32,
         subdivision_pattern: Option<SubdivisionPattern>,
     },
-    DuplicateRequested {
+    Duplicate {
         source: PartName,
         name: String,
     },
-    UpdateRequested {
+    Update {
         source: PartName,
         name: String,
         subdivision_pattern: Option<SubdivisionPattern>,
@@ -35,15 +34,109 @@ pub enum Msg {
     DeleteRequested {
         name: PartName,
     },
-    CombineRequested {
+    Combine {
         sources: Vec<PartName>,
         name: String,
     },
-    SequenceChangeRequested {
+    SequenceChange {
         sequence: Vec<PartName>,
         selected_occurrence: Option<usize>,
     },
-    Closed,
+}
+
+pub(super) enum Overlay {
+    ConfirmDelete(Entity<DeleteDialog>),
+}
+
+impl Overlay {
+    pub(super) fn element(&self) -> AnyElement {
+        match self {
+            Self::ConfirmDelete(dialog) => dialog.clone().into_any_element(),
+        }
+    }
+}
+
+pub(super) enum DeleteDialogMsg {
+    Cancelled,
+    Confirmed { name: PartName },
+}
+
+pub(super) struct DeleteDialog {
+    name: PartName,
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+    error: Option<String>,
+}
+
+impl EventEmitter<DeleteDialogMsg> for DeleteDialog {}
+
+impl DeleteDialog {
+    pub(super) fn new(name: PartName, cx: &mut Context<Self>) -> Self {
+        let cancel_button = cx.new(|_| Button::new("cancel-delete-part", "keep part"));
+        let confirm_button = cx.new(|_| Button::new("confirm-delete-part", "delete part"));
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
+            .detach();
+        Self {
+            name,
+            cancel_button,
+            confirm_button,
+            error: None,
+        }
+    }
+
+    pub(super) fn failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        cx.notify();
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DeleteDialogMsg::Cancelled);
+    }
+
+    fn on_confirm_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DeleteDialogMsg::Confirmed {
+            name: self.name.clone(),
+        });
+    }
+}
+
+impl Render for DeleteDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let actions = div()
+            .flex()
+            .flex_col()
+            .gap(s::S3)
+            .children(self.error.clone().map(error_message))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(s::S3)
+                    .child(self.cancel_button.clone())
+                    .child(self.confirm_button.clone()),
+            );
+        destructive_dialog(
+            "delete part",
+            None,
+            format!(
+                "delete {:?}? its csv file will be moved to the deleted folder.",
+                self.name.as_str()
+            ),
+            actions,
+        )
+    }
 }
 
 struct ListView {
@@ -52,23 +145,15 @@ struct ListView {
     edit_button: Entity<Button>,
     duplicate_button: Entity<Button>,
     delete_button: Entity<Button>,
-    delete_confirmation: Option<DeleteConfirmation>,
     add_to_arrangement_button: Entity<Button>,
     move_earlier_button: Entity<Button>,
     move_later_button: Entity<Button>,
     repeat_button: Entity<Button>,
     remove_occurrence_button: Entity<Button>,
-    delete_error: Option<String>,
     arrangement_error: Option<String>,
 }
 
-#[derive(Clone)]
-struct DeleteConfirmation {
-    cancel_button: Entity<Button>,
-    confirm_button: Entity<Button>,
-}
-
-enum DialogView {
+enum View {
     List(Box<ListView>),
     Add {
         name: Entity<TextInput>,
@@ -108,38 +193,49 @@ enum DialogView {
     },
 }
 
-pub struct PartsDialog {
+pub struct PartsWorkspace {
     parts: Vec<Part>,
     sequence: Vec<PartName>,
     selected_part: Option<PartName>,
     selected_occurrence: Option<usize>,
-    view: DialogView,
-    close_button: Entity<Button>,
+    view: View,
 }
 
-impl EventEmitter<Msg> for PartsDialog {}
+impl EventEmitter<Msg> for PartsWorkspace {}
 
-impl PartsDialog {
+impl PartsWorkspace {
     pub fn new(parts: Vec<Part>, sequence: Vec<PartName>, cx: &mut Context<Self>) -> Self {
         let selected_part = parts.first().map(|part| part.name.clone());
         let selected_occurrence = (!sequence.is_empty()).then_some(0);
-        let close_button = cx.new(|_| Button::x("close-parts"));
 
-        cx.subscribe(&close_button, Self::on_close_clicked).detach();
-
-        let dialog = Self {
+        let workspace = Self {
             parts,
             sequence,
             selected_part,
             selected_occurrence,
             view: Self::list_view(cx),
-            close_button,
         };
-        dialog.sync_button_states(cx);
-        dialog
+        workspace.sync_button_states(cx);
+        workspace
     }
 
-    fn list_view(cx: &mut Context<Self>) -> DialogView {
+    pub fn has_draft(&self) -> bool {
+        match &self.view {
+            View::List(_) => false,
+            View::Add { .. }
+            | View::Duplicate { .. }
+            | View::Edit { .. }
+            | View::Combine { .. } => true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_add_for_test(&mut self, cx: &mut Context<Self>) {
+        self.view = Self::add_view(cx);
+        cx.notify();
+    }
+
+    fn list_view(cx: &mut Context<Self>) -> View {
         let add_new_button = cx.new(|_| Button::new("add-new-part", "add new part"));
         let combine_button = cx.new(|_| Button::new("combine-parts", "combine"));
         let edit_button = cx.new(|_| Button::new("edit-part", "edit"));
@@ -180,38 +276,22 @@ impl PartsDialog {
         )
         .detach();
 
-        DialogView::List(Box::new(ListView {
+        View::List(Box::new(ListView {
             add_new_button,
             combine_button,
             edit_button,
             duplicate_button,
             delete_button,
-            delete_confirmation: None,
             add_to_arrangement_button,
             move_earlier_button,
             move_later_button,
             repeat_button,
             remove_occurrence_button,
-            delete_error: None,
             arrangement_error: None,
         }))
     }
 
-    fn delete_confirmation(cx: &mut Context<Self>) -> DeleteConfirmation {
-        let cancel_button = cx.new(|_| Button::new("cancel-delete-part", "keep part"));
-        let confirm_button = cx.new(|_| Button::new("confirm-delete-part", "delete part"));
-        cx.subscribe(&cancel_button, Self::on_cancel_delete_clicked)
-            .detach();
-        cx.subscribe(&confirm_button, Self::on_confirm_delete_clicked)
-            .detach();
-
-        DeleteConfirmation {
-            cancel_button,
-            confirm_button,
-        }
-    }
-
-    fn duplicate_view(source: PartName, cx: &mut Context<Self>) -> DialogView {
+    fn duplicate_view(source: PartName, cx: &mut Context<Self>) -> View {
         let placeholder = format!("{} copy", source.as_str());
         let name = cx.new(|cx| TextInput::new("", placeholder, cx));
         let cancel_button = cx.new(|_| Button::new("cancel-duplicate-part", "cancel"));
@@ -222,7 +302,7 @@ impl PartsDialog {
         cx.subscribe(&duplicate_button, Self::on_duplicate_confirmed)
             .detach();
 
-        DialogView::Duplicate {
+        View::Duplicate {
             source,
             name,
             cancel_button,
@@ -231,7 +311,7 @@ impl PartsDialog {
         }
     }
 
-    fn edit_view(part: Part, cx: &mut Context<Self>) -> DialogView {
+    fn edit_view(part: Part, cx: &mut Context<Self>) -> View {
         let source = part.name.clone();
         let name = cx.new(|cx| TextInput::new(source.as_str().to_owned(), "part name", cx));
         let subdivision_pattern = part
@@ -247,7 +327,7 @@ impl PartsDialog {
             .detach();
         cx.subscribe(&save_button, Self::on_edit_confirmed).detach();
 
-        DialogView::Edit {
+        View::Edit {
             source,
             name,
             subdivision_pattern,
@@ -257,7 +337,7 @@ impl PartsDialog {
         }
     }
 
-    fn add_view(cx: &mut Context<Self>) -> DialogView {
+    fn add_view(cx: &mut Context<Self>) -> View {
         let name = cx.new(|cx| TextInput::new("", "intro", cx));
         let length = cx.new(|cx| TextInput::new("16", "16", cx));
         let subdivision_pattern = cx.new(|cx| TextInput::new("", "4 or 4, 3, 3", cx));
@@ -268,7 +348,7 @@ impl PartsDialog {
             .detach();
         cx.subscribe(&add_button, Self::on_add_clicked).detach();
 
-        DialogView::Add {
+        View::Add {
             name,
             length,
             subdivision_pattern,
@@ -278,7 +358,7 @@ impl PartsDialog {
         }
     }
 
-    fn combine_view(parts: &[Part], cx: &mut Context<Self>) -> DialogView {
+    fn combine_view(parts: &[Part], cx: &mut Context<Self>) -> View {
         let available_part = parts.first().map(|part| part.name.clone());
         let name = cx.new(|cx| TextInput::new("", "combined part", cx));
         let add_source_button = cx.new(|_| {
@@ -313,7 +393,7 @@ impl PartsDialog {
         cx.subscribe(&combine_button, Self::on_combine_confirmed)
             .detach();
 
-        DialogView::Combine {
+        View::Combine {
             available_part,
             sources: Vec::new(),
             selected_source: None,
@@ -326,10 +406,6 @@ impl PartsDialog {
             combine_button,
             form_error: None,
         }
-    }
-
-    fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Msg::Closed);
     }
 
     fn on_add_new_clicked(
@@ -391,7 +467,7 @@ impl PartsDialog {
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let DialogView::Add {
+        let View::Add {
             name,
             length,
             subdivision_pattern,
@@ -407,13 +483,13 @@ impl PartsDialog {
             parse_part_length(&length),
             parse_subdivision_pattern(&subdivision_pattern),
         ) {
-            (Ok(length), Ok(subdivision_pattern)) => cx.emit(Msg::AddRequested {
+            (Ok(length), Ok(subdivision_pattern)) => cx.emit(Msg::Add {
                 name,
                 length,
                 subdivision_pattern,
             }),
             (Err(error), _) | (_, Err(error)) => {
-                if let DialogView::Add { form_error, .. } = &mut self.view {
+                if let View::Add { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
                 }
@@ -427,7 +503,7 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Edit {
+        let View::Edit {
             source,
             name,
             subdivision_pattern,
@@ -438,13 +514,13 @@ impl PartsDialog {
         };
         let subdivision_pattern = subdivision_pattern.read(cx).value();
         match parse_subdivision_pattern(&subdivision_pattern) {
-            Ok(subdivision_pattern) => cx.emit(Msg::UpdateRequested {
+            Ok(subdivision_pattern) => cx.emit(Msg::Update {
                 source: source.clone(),
                 name: name.read(cx).value(),
                 subdivision_pattern,
             }),
             Err(error) => {
-                if let DialogView::Edit { form_error, .. } = &mut self.view {
+                if let View::Edit { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
                 }
@@ -458,10 +534,10 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Duplicate { source, name, .. } = &self.view else {
+        let View::Duplicate { source, name, .. } = &self.view else {
             return;
         };
-        cx.emit(Msg::DuplicateRequested {
+        cx.emit(Msg::Duplicate {
             source: source.clone(),
             name: name.read(cx).value(),
         });
@@ -473,13 +549,13 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Combine { sources, name, .. } = &self.view else {
+        let View::Combine { sources, name, .. } = &self.view else {
             return;
         };
         if sources.len() < 2 {
             return;
         }
-        cx.emit(Msg::CombineRequested {
+        cx.emit(Msg::Combine {
             sources: sources.clone(),
             name: name.read(cx).value(),
         });
@@ -491,7 +567,7 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Combine {
+        let View::Combine {
             available_part,
             sources,
             selected_source,
@@ -517,7 +593,7 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Combine {
+        let View::Combine {
             sources,
             selected_source,
             form_error,
@@ -543,7 +619,7 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Combine {
+        let View::Combine {
             sources,
             selected_source,
             form_error,
@@ -568,7 +644,7 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let DialogView::Combine {
+        let View::Combine {
             sources,
             selected_source,
             form_error,
@@ -594,60 +670,6 @@ impl PartsDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let should_start = matches!(
-            &self.view,
-            DialogView::List(view) if view.delete_confirmation.is_none()
-        );
-        if !should_start {
-            return;
-        }
-        let confirmation = Self::delete_confirmation(cx);
-        if let DialogView::List(view) = &mut self.view {
-            view.delete_confirmation = Some(confirmation);
-            view.delete_error = None;
-            cx.notify();
-        }
-    }
-
-    fn on_cancel_delete_clicked(
-        &mut self,
-        button: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        let is_current = matches!(
-            &self.view,
-            DialogView::List(view)
-                if view.delete_confirmation.as_ref().is_some_and(|confirmation| {
-                    confirmation.cancel_button == button
-                })
-        );
-        if !is_current {
-            return;
-        }
-        if let DialogView::List(view) = &mut self.view {
-            view.delete_confirmation = None;
-            view.delete_error = None;
-            cx.notify();
-        }
-    }
-
-    fn on_confirm_delete_clicked(
-        &mut self,
-        button: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        let is_current = matches!(
-            &self.view,
-            DialogView::List(view)
-                if view.delete_confirmation.as_ref().is_some_and(|confirmation| {
-                    confirmation.confirm_button == button
-                })
-        );
-        if !is_current {
-            return;
-        }
         let Some(name) = self.selected_part.clone() else {
             return;
         };
@@ -666,7 +688,7 @@ impl PartsDialog {
         };
         let (sequence, selected_occurrence) =
             sequence_with_inserted_part(&self.sequence, part_name, self.selected_occurrence);
-        cx.emit(Msg::SequenceChangeRequested {
+        cx.emit(Msg::SequenceChange {
             sequence,
             selected_occurrence: Some(selected_occurrence),
         });
@@ -686,7 +708,7 @@ impl PartsDialog {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChangeRequested {
+        cx.emit(Msg::SequenceChange {
             sequence,
             selected_occurrence: Some(selected_occurrence),
         });
@@ -706,7 +728,7 @@ impl PartsDialog {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChangeRequested {
+        cx.emit(Msg::SequenceChange {
             sequence,
             selected_occurrence: Some(selected_occurrence),
         });
@@ -726,7 +748,7 @@ impl PartsDialog {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChangeRequested {
+        cx.emit(Msg::SequenceChange {
             sequence,
             selected_occurrence: Some(selected_occurrence),
         });
@@ -746,7 +768,7 @@ impl PartsDialog {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChangeRequested {
+        cx.emit(Msg::SequenceChange {
             sequence,
             selected_occurrence,
         });
@@ -756,7 +778,7 @@ impl PartsDialog {
         if find_part(&self.parts, name).is_none() {
             return;
         }
-        let DialogView::Combine {
+        let View::Combine {
             available_part,
             form_error,
             ..
@@ -774,7 +796,7 @@ impl PartsDialog {
     }
 
     fn select_combination_source(&mut self, index: usize, cx: &mut Context<Self>) {
-        let DialogView::Combine {
+        let View::Combine {
             sources,
             selected_source,
             form_error,
@@ -801,9 +823,7 @@ impl PartsDialog {
         }
 
         self.selected_part = Some(part.name.clone());
-        if let DialogView::List(view) = &mut self.view {
-            view.delete_confirmation = None;
-            view.delete_error = None;
+        if let View::List(view) = &mut self.view {
             view.arrangement_error = None;
         }
         self.sync_button_states(cx);
@@ -816,7 +836,7 @@ impl PartsDialog {
         }
 
         self.selected_occurrence = Some(index);
-        if let DialogView::List(view) = &mut self.view {
+        if let View::List(view) = &mut self.view {
             view.arrangement_error = None;
         }
         self.sync_button_states(cx);
@@ -824,7 +844,7 @@ impl PartsDialog {
     }
 
     fn sync_button_states(&self, cx: &mut Context<Self>) {
-        let DialogView::List(view) = &self.view else {
+        let View::List(view) = &self.view else {
             return;
         };
         let can_move_earlier = self.selected_occurrence.is_some_and(|index| index > 0);
@@ -849,7 +869,7 @@ impl PartsDialog {
     }
 
     fn sync_combine_button_states(&self, cx: &mut Context<Self>) {
-        let DialogView::Combine {
+        let View::Combine {
             available_part,
             sources,
             selected_source,
@@ -885,7 +905,7 @@ impl PartsDialog {
     }
 
     fn suppress_add_new_hover(&self, cx: &mut Context<Self>) {
-        if let DialogView::List(view) = &self.view {
+        if let View::List(view) = &self.view {
             view.add_new_button.update(cx, |button, cx| {
                 button.suppress_hover_until_pointer_exit(cx);
             });
@@ -902,14 +922,14 @@ impl PartsDialog {
     }
 
     pub fn add_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Add { form_error, .. } = &mut self.view {
+        if let View::Add { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
     }
 
     pub fn duplicate_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Duplicate { form_error, .. } = &mut self.view {
+        if let View::Duplicate { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -931,7 +951,7 @@ impl PartsDialog {
     }
 
     pub fn update_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Edit { form_error, .. } = &mut self.view {
+        if let View::Edit { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -954,14 +974,6 @@ impl PartsDialog {
         cx.notify();
     }
 
-    pub fn delete_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::List(view) = &mut self.view {
-            view.delete_confirmation = None;
-            view.delete_error = Some(error);
-            cx.notify();
-        }
-    }
-
     pub fn sequence_changed(
         &mut self,
         sequence: Vec<PartName>,
@@ -971,34 +983,54 @@ impl PartsDialog {
         self.sequence = sequence;
         self.selected_occurrence = selected_occurrence.filter(|index| *index < self.sequence.len());
         self.sync_button_states(cx);
-        if let DialogView::List(view) = &mut self.view {
+        if let View::List(view) = &mut self.view {
             view.arrangement_error = None;
         }
         cx.notify();
     }
 
     pub fn combine_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Combine { form_error, .. } = &mut self.view {
+        if let View::Combine { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
     }
 
     pub fn sequence_change_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::List(view) = &mut self.view {
+        if let View::List(view) = &mut self.view {
             view.arrangement_error = Some(error);
             cx.notify();
         }
     }
+
+    pub fn sync_project(
+        &mut self,
+        parts: Vec<Part>,
+        sequence: Vec<PartName>,
+        cx: &mut Context<Self>,
+    ) {
+        self.parts = parts;
+        self.sequence = sequence;
+        if self
+            .selected_part
+            .as_ref()
+            .is_none_or(|selected| find_part(&self.parts, selected).is_none())
+        {
+            self.selected_part = self.parts.first().map(|part| part.name.clone());
+        }
+        self.selected_occurrence = self
+            .selected_occurrence
+            .and_then(|index| (index < self.sequence.len()).then_some(index));
+        self.sync_button_states(cx);
+        cx.notify();
+    }
 }
 
-impl Render for PartsDialog {
+impl Render for PartsWorkspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.view {
-            DialogView::List(view) => list_detail_dialog(dialog::ListDetailArgs {
-                title: "parts",
-                close_button: self.close_button.clone(),
-                list: dialog::column_with_actions(
+            View::List(view) => workspace::list_detail(workspace::ListDetailArgs {
+                list: workspace::column_with_actions(
                     part_list(&self.parts, self.selected_part.as_ref(), cx),
                     div()
                         .flex()
@@ -1015,10 +1047,8 @@ impl Render for PartsDialog {
                         edit: view.edit_button.clone(),
                         duplicate: view.duplicate_button.clone(),
                         delete: view.delete_button.clone(),
-                        delete_confirmation: view.delete_confirmation.clone(),
                         add_to_arrangement: view.add_to_arrangement_button.clone(),
                     },
-                    view.delete_error.clone(),
                     &self.sequence,
                 ),
                 auxiliary: Some(
@@ -1037,7 +1067,7 @@ impl Render for PartsDialog {
                 ),
                 footer: None,
             }),
-            DialogView::Add {
+            View::Add {
                 name,
                 length,
                 subdivision_pattern,
@@ -1061,9 +1091,7 @@ impl Render for PartsDialog {
                     form
                 };
 
-                management_form_dialog(
-                    "add part",
-                    self.close_button.clone(),
+                workspace::management_form(
                     form,
                     div()
                         .flex()
@@ -1073,7 +1101,7 @@ impl Render for PartsDialog {
                         .child(add_button.clone()),
                 )
             }
-            DialogView::Duplicate {
+            View::Duplicate {
                 source,
                 name,
                 cancel_button,
@@ -1096,9 +1124,7 @@ impl Render for PartsDialog {
                     form
                 };
 
-                management_form_dialog(
-                    "duplicate part",
-                    self.close_button.clone(),
+                workspace::management_form(
                     form,
                     div()
                         .flex()
@@ -1108,7 +1134,7 @@ impl Render for PartsDialog {
                         .child(duplicate_button.clone()),
                 )
             }
-            DialogView::Edit {
+            View::Edit {
                 source,
                 name,
                 subdivision_pattern,
@@ -1136,9 +1162,7 @@ impl Render for PartsDialog {
                     form
                 };
 
-                management_form_dialog(
-                    "edit part",
-                    self.close_button.clone(),
+                workspace::management_form(
                     form,
                     div()
                         .flex()
@@ -1148,7 +1172,7 @@ impl Render for PartsDialog {
                         .child(save_button.clone()),
                 )
             }
-            DialogView::Combine {
+            View::Combine {
                 available_part,
                 sources,
                 selected_source,
@@ -1189,14 +1213,14 @@ impl Render for PartsDialog {
                     .gap(s::CONTENT_PADDING)
                     .debug_selector(|| "combine-columns".to_string())
                     .child(
-                        dialog::column_with_actions(available, source_actions)
+                        workspace::column_with_actions(available, source_actions)
                             .flex_1()
                             .w(s::S0)
                             .min_w(s::S0)
                             .debug_selector(|| "combine-available-column".to_string()),
                     )
                     .child(
-                        dialog::column_with_actions(selected, selected_actions)
+                        workspace::column_with_actions(selected, selected_actions)
                             .flex_1()
                             .w(s::S0)
                             .min_w(s::S0)
@@ -1217,15 +1241,13 @@ impl Render for PartsDialog {
                     form
                 };
 
-                management_form_dialog(
-                    "combine parts",
-                    self.close_button.clone(),
+                workspace::management_form(
                     form,
                     div()
                         .flex()
                         .justify_end()
                         .gap_3()
-                        .debug_selector(|| "combine-dialog-actions".to_string())
+                        .debug_selector(|| "combine-workspace-actions".to_string())
                         .child(cancel_button.clone())
                         .child(combine_button.clone()),
                 )
@@ -1237,7 +1259,7 @@ impl Render for PartsDialog {
 fn combine_available_parts(
     parts: &[Part],
     selected_part: Option<&PartName>,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     let rows = parts
         .iter()
@@ -1282,7 +1304,7 @@ fn combination_sources(
     parts: &[Part],
     sources: &[PartName],
     selected_source: Option<usize>,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     let rows = sources
         .iter()
@@ -1371,7 +1393,7 @@ fn combination_sources(
 fn part_list(
     parts: &[Part],
     selected_part: Option<&PartName>,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     let rows = parts
         .iter()
@@ -1388,7 +1410,7 @@ fn part_list_row(
     index: usize,
     part: &Part,
     selected: bool,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     let part_name = part.name.clone();
     selection_list::row(index, selected, part.name.as_str().to_owned())
@@ -1405,21 +1427,18 @@ struct PartDetailsButtons {
     edit: Entity<Button>,
     duplicate: Entity<Button>,
     delete: Entity<Button>,
-    delete_confirmation: Option<DeleteConfirmation>,
     add_to_arrangement: Entity<Button>,
 }
 
 fn part_details(
     part: Option<&Part>,
     buttons: PartDetailsButtons,
-    delete_error: Option<String>,
     sequence: &[PartName],
 ) -> gpui::Div {
     let PartDetailsButtons {
         edit,
         duplicate,
         delete,
-        delete_confirmation,
         add_to_arrangement,
     } = buttons;
     let details = match part {
@@ -1428,63 +1447,37 @@ fn part_details(
                 .iter()
                 .filter(|name| name.eq_ignore_ascii_case(&part.name))
                 .count();
-            let actions =
-                if let Some(confirmation) = delete_confirmation.filter(|_| occurrence_count == 0) {
-                    destructive_confirmation(
-                        format!(
-                            "delete {:?}? its csv file will be moved to the deleted folder.",
-                            part.name.as_str()
-                        ),
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(confirmation.cancel_button)
-                            .child(confirmation.confirm_button),
-                    )
-                    .debug_selector(|| "part-details-actions".to_string())
-                } else {
+            let actions = div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap_3()
+                .debug_selector(|| "part-details-actions".to_string())
+                .child(
+                    div()
+                        .debug_selector(|| "add-to-arrangement-control".to_string())
+                        .child(add_to_arrangement),
+                )
+                .child(
                     div()
                         .flex()
-                        .flex_col()
-                        .items_start()
                         .gap_3()
-                        .debug_selector(|| "part-details-actions".to_string())
                         .child(
                             div()
-                                .debug_selector(|| "add-to-arrangement-control".to_string())
-                                .child(add_to_arrangement),
+                                .debug_selector(|| "edit-part-control".to_string())
+                                .child(edit),
                         )
                         .child(
                             div()
-                                .flex()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .debug_selector(|| "edit-part-control".to_string())
-                                        .child(edit),
-                                )
-                                .child(
-                                    div()
-                                        .debug_selector(|| "duplicate-part-control".to_string())
-                                        .child(duplicate),
-                                )
-                                .child(
-                                    div()
-                                        .debug_selector(|| "delete-part-control".to_string())
-                                        .child(delete),
-                                ),
+                                .debug_selector(|| "duplicate-part-control".to_string())
+                                .child(duplicate),
                         )
-                };
-            let actions = if let Some(error) = delete_error {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(actions)
-                    .child(error_message(error))
-            } else {
-                actions
-            };
+                        .child(
+                            div()
+                                .debug_selector(|| "delete-part-control".to_string())
+                                .child(delete),
+                        ),
+                );
             let beat_label = if part.length == 1 { "beat" } else { "beats" };
 
             div()
@@ -1580,7 +1573,7 @@ fn arrangement_panel(
     repeat_button: Entity<Button>,
     remove_occurrence_button: Entity<Button>,
     arrangement_error: Option<String>,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     let rows = sequence
         .iter()
@@ -1657,7 +1650,7 @@ fn arrangement_row(
     index: usize,
     part_name: &PartName,
     selected: bool,
-    cx: &mut Context<PartsDialog>,
+    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
     selection_list::row(
         index,
@@ -1772,7 +1765,7 @@ mod tests {
     use super::{
         combined_subdivision_pattern, parse_part_length, parse_subdivision_pattern,
         sequence_with_inserted_part, sequence_with_moved_part, sequence_with_removed_part,
-        sequence_with_repeated_part, DialogView, PartsDialog,
+        sequence_with_repeated_part, DeleteDialog, PartsWorkspace, View,
     };
     use crate::{
         part::{Part, PartName, SubdivisionPattern},
@@ -1865,14 +1858,14 @@ mod tests {
     }
 
     #[gpui::test]
-    fn parts_dialog_renders_part_list_details_and_arrangement_columns(cx: &mut TestAppContext) {
+    fn parts_workspace_renders_part_list_details_and_arrangement_columns(cx: &mut TestAppContext) {
         let parts = vec![
             Part::new("part-a", 16),
             Part::new("part-b", 8),
             Part::new("bridge", 12),
         ];
         let sequence = names(["part-a", "part-b", "part-b"]);
-        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, sequence, cx));
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, sequence, cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
@@ -1962,8 +1955,8 @@ mod tests {
         );
 
         let (delete_part, move_earlier, move_later) = cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
+            let View::List(view) = &dialog.read(cx).view else {
+                panic!("parts workspace should show its list view");
             };
             (
                 view.delete_button.clone(),
@@ -2006,7 +1999,7 @@ mod tests {
             .map(|index| Part::new(format!("part-{index}"), 16))
             .collect::<Vec<_>>();
         let sequence = parts.iter().map(|part| part.name.clone()).collect();
-        let (_, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, sequence, cx));
+        let (_, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, sequence, cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
@@ -2046,7 +2039,7 @@ mod tests {
     #[gpui::test]
     fn duplicate_part_action_opens_a_new_name_form(cx: &mut TestAppContext) {
         let (dialog, cx) = cx.add_window_view(|_, cx| {
-            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
+            PartsWorkspace::new(vec![Part::new("intro", 16)], Vec::new(), cx)
         });
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
@@ -2055,7 +2048,7 @@ mod tests {
         cx.simulate_click(duplicate.center(), Default::default());
 
         cx.update(|_, cx| {
-            let DialogView::Duplicate { source, name, .. } = &dialog.read(cx).view else {
+            let View::Duplicate { source, name, .. } = &dialog.read(cx).view else {
                 panic!("duplicate action should open its form");
             };
             assert_eq!(source.as_str(), "intro");
@@ -2067,13 +2060,13 @@ mod tests {
     fn combine_opens_an_empty_ordered_source_list(cx: &mut TestAppContext) {
         let parts = vec![Part::new("intro", 8), Part::new("verse", 16)];
         let sequence = names(["intro", "verse"]);
-        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, sequence, cx));
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, sequence, cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
         let combine = cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
+            let View::List(view) = &dialog.read(cx).view else {
+                panic!("parts workspace should show its list view");
             };
             view.combine_button.clone()
         });
@@ -2081,7 +2074,7 @@ mod tests {
         cx.run_until_parked();
 
         let name = cx.update(|_, cx| {
-            let DialogView::Combine {
+            let View::Combine {
                 available_part,
                 sources,
                 selected_source,
@@ -2111,7 +2104,7 @@ mod tests {
             "combine-available-actions",
             "combine-selected-list",
             "combine-selected-actions",
-            "combine-dialog-actions",
+            "combine-workspace-actions",
         ] {
             let bounds = cx.debug_bounds(selector).unwrap();
             assert!(
@@ -2146,20 +2139,20 @@ mod tests {
     #[gpui::test]
     fn combination_sources_can_be_added_reordered_and_removed(cx: &mut TestAppContext) {
         let parts = vec![Part::new("intro", 8), Part::new("verse", 16)];
-        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, Vec::new(), cx));
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, Vec::new(), cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
         let open_combine = cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
+            let View::List(view) = &dialog.read(cx).view else {
+                panic!("parts workspace should show its list view");
             };
             view.combine_button.clone()
         });
         open_combine.update(cx, |_, cx| cx.emit(button::Clicked));
 
         let add_source = cx.update(|_, cx| {
-            let DialogView::Combine {
+            let View::Combine {
                 add_source_button, ..
             } = &dialog.read(cx).view
             else {
@@ -2175,7 +2168,7 @@ mod tests {
         cx.run_until_parked();
 
         let (move_earlier, remove_source) = cx.update(|_, cx| {
-            let DialogView::Combine {
+            let View::Combine {
                 sources,
                 selected_source,
                 move_source_earlier_button,
@@ -2198,7 +2191,7 @@ mod tests {
         move_earlier.update(cx, |_, cx| cx.emit(button::Clicked));
         cx.run_until_parked();
         cx.update(|_, cx| {
-            let DialogView::Combine {
+            let View::Combine {
                 sources,
                 selected_source,
                 ..
@@ -2213,7 +2206,7 @@ mod tests {
         remove_source.update(cx, |_, cx| cx.emit(button::Clicked));
         cx.run_until_parked();
         cx.update(|_, cx| {
-            let DialogView::Combine {
+            let View::Combine {
                 sources,
                 selected_source,
                 combine_button,
@@ -2229,17 +2222,17 @@ mod tests {
     }
 
     #[gpui::test]
-    fn long_combination_lists_stay_inside_the_dialog(cx: &mut TestAppContext) {
+    fn long_combination_lists_stay_inside_the_workspace(cx: &mut TestAppContext) {
         let parts = (0..24)
             .map(|index| Part::new(format!("part-{index}"), 16))
             .collect::<Vec<_>>();
-        let (dialog, cx) = cx.add_window_view(|_, cx| PartsDialog::new(parts, Vec::new(), cx));
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, Vec::new(), cx));
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
         let open_combine = cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
+            let View::List(view) = &dialog.read(cx).view else {
+                panic!("parts workspace should show its list view");
             };
             view.combine_button.clone()
         });
@@ -2247,7 +2240,7 @@ mod tests {
         cx.run_until_parked();
 
         let available_list = cx.debug_bounds("combine-available-list").unwrap();
-        let actions = cx.debug_bounds("combine-dialog-actions").unwrap();
+        let actions = cx.debug_bounds("combine-workspace-actions").unwrap();
         for selector in [
             "combine-form",
             "combine-columns",
@@ -2255,12 +2248,12 @@ mod tests {
             "combine-available-list",
             "combine-selected-column",
             "combine-selected-list",
-            "combine-dialog-actions",
+            "combine-workspace-actions",
         ] {
             let bounds = cx.debug_bounds(selector).unwrap();
             assert!(
-                bounds.origin.y + bounds.size.height <= s::S10,
-                "{selector} should stay inside the dialog: {bounds:?}"
+                bounds.origin.y + bounds.size.height <= px(700.0),
+                "{selector} should stay inside the workspace: {bounds:?}"
             );
         }
 
@@ -2276,14 +2269,17 @@ mod tests {
             cx.debug_bounds("combine-available-list").unwrap(),
             available_list
         );
-        assert_eq!(cx.debug_bounds("combine-dialog-actions").unwrap(), actions);
+        assert_eq!(
+            cx.debug_bounds("combine-workspace-actions").unwrap(),
+            actions
+        );
     }
 
     #[gpui::test]
     fn edit_part_action_opens_a_form_with_the_current_configuration(cx: &mut TestAppContext) {
         let pattern = "4, 3, 3".parse().unwrap();
         let (dialog, cx) = cx.add_window_view(|_, cx| {
-            PartsDialog::new(
+            PartsWorkspace::new(
                 vec![Part::new("intro", 16).with_subdivision_pattern(Some(pattern))],
                 Vec::new(),
                 cx,
@@ -2296,7 +2292,7 @@ mod tests {
         cx.simulate_click(edit.center(), Default::default());
 
         cx.update(|_, cx| {
-            let DialogView::Edit {
+            let View::Edit {
                 source,
                 name,
                 subdivision_pattern,
@@ -2312,40 +2308,28 @@ mod tests {
     }
 
     #[gpui::test]
-    fn delete_confirmation_owns_its_controls_only_while_active(cx: &mut TestAppContext) {
-        let (dialog, cx) = cx.add_window_view(|_, cx| {
-            PartsDialog::new(vec![Part::new("intro", 16)], Vec::new(), cx)
-        });
-        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+    fn delete_dialog_owns_confirmation_controls_and_failure(cx: &mut TestAppContext) {
+        let (dialog, cx) =
+            cx.add_window_view(|_, cx| DeleteDialog::new(PartName::from("intro"), cx));
+        cx.simulate_resize(size(px(800.0), px(700.0)));
         cx.run_until_parked();
 
         cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
-            };
-            assert!(view.delete_confirmation.is_none());
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.name.as_str(), "intro");
+            assert_ne!(dialog.cancel_button, dialog.confirm_button);
+            assert!(dialog.error.is_none());
         });
-        let delete = cx.debug_bounds("delete-part-control").unwrap();
-        cx.simulate_click(delete.center(), Default::default());
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.failed("couldn't delete part".to_string(), cx);
+        });
         cx.run_until_parked();
 
-        let cancel_button = cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
-            };
-            let confirmation = view.delete_confirmation.as_ref().unwrap();
-            confirmation.cancel_button.clone()
-        });
-
-        cancel_button.update(cx, |_, cx| cx.emit(button::Clicked));
-        cx.run_until_parked();
-
-        cx.update(|_, cx| {
-            let DialogView::List(view) = &dialog.read(cx).view else {
-                panic!("parts dialog should show its list view");
-            };
-            assert!(view.delete_confirmation.is_none());
-        });
+        assert_eq!(
+            cx.update(|_, cx| dialog.read(cx).error.clone()),
+            Some("couldn't delete part".to_string())
+        );
     }
 
     fn names<const N: usize>(names: [&str; N]) -> Vec<PartName> {

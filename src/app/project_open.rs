@@ -22,21 +22,23 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
+        dialog::destructive_dialog,
         dropdown::{self, Dropdown},
         status_bar,
     },
+    voice_name::VoiceName,
 };
 
 use self::{
-    loop_range::{LoopRangeDialog, Msg as LoopRangeMsg},
-    parts::PartsDialog,
-    project_settings::{ProjectSettingsDialog, ProjectSettingsMsg},
+    loop_range::{LoopWorkspace, Msg as LoopWorkspaceMsg},
+    parts::PartsWorkspace,
+    project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
     score::{
         DocumentEvent, ExportRowsConfirmed, ExportRowsDialog, ExportRowsDialogMsg,
         ExportRowsRequested, PartLoopRequested, PartSelected, RowEditConfirmation,
         RowEditConfirmationMsg, RowEditRequested, SaveState, ScoreDocument, ScoreEditor,
     },
-    voices::VoicesDialog,
+    voices::VoicesWorkspace,
 };
 
 const PLAYHEAD_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
@@ -49,15 +51,17 @@ pub struct Model {
     project: Project,
     project_directory: PathBuf,
     workspace_root: PathBuf,
+    workspace: Workspace,
+    score_button: Entity<Button>,
     settings_button: Entity<Button>,
     parts_button: Entity<Button>,
     voices_button: Entity<Button>,
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
-    loop_range_button: Entity<Button>,
+    loop_button: Entity<Button>,
     play_button: Entity<Button>,
     stop_button: Entity<Button>,
-    dialog: Option<Dialog>,
+    project_overlay: Option<ProjectOverlay>,
     score_documents: Vec<ScoreDocumentEntry>,
     score_views: Vec<ScoreViewEntry>,
     active_score_view: usize,
@@ -101,13 +105,156 @@ enum StatusAction {
 
 type ProjectStatus = status_bar::Status<StatusAction>;
 
-enum Dialog {
-    ExportRows(Entity<ExportRowsDialog>),
-    LoopRange(Entity<LoopRangeDialog>),
-    Parts(Entity<PartsDialog>),
-    ProjectSettings(Entity<ProjectSettingsDialog>),
-    RowEdit(Entity<RowEditConfirmation>),
-    Voices(Entity<VoicesDialog>),
+struct Workspace {
+    section: WorkspaceSection,
+    parts: Entity<PartsWorkspace>,
+    voices: Entity<VoicesWorkspace>,
+    loop_editor: Entity<LoopWorkspace>,
+    project_settings: Entity<ProjectSettingsWorkspace>,
+}
+
+impl Workspace {
+    fn has_draft(&self, cx: &App) -> bool {
+        self.parts.read(cx).has_draft()
+            || self.voices.read(cx).has_draft()
+            || self.loop_editor.read(cx).is_dirty(cx)
+            || self.project_settings.read(cx).is_dirty(cx)
+    }
+}
+
+enum WorkspaceSection {
+    Score {
+        overlay: Option<score::Overlay>,
+    },
+    Parts {
+        overlay: Option<parts::Overlay>,
+    },
+    Voices {
+        overlay: Option<voices::Overlay>,
+    },
+    Loop,
+    Project {
+        overlay: Option<project_settings::Overlay>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceSectionKind {
+    Score,
+    Parts,
+    Voices,
+    Loop,
+    Project,
+}
+
+impl WorkspaceSection {
+    fn kind(&self) -> WorkspaceSectionKind {
+        match self {
+            Self::Score { .. } => WorkspaceSectionKind::Score,
+            Self::Parts { .. } => WorkspaceSectionKind::Parts,
+            Self::Voices { .. } => WorkspaceSectionKind::Voices,
+            Self::Loop => WorkspaceSectionKind::Loop,
+            Self::Project { .. } => WorkspaceSectionKind::Project,
+        }
+    }
+
+    fn has_overlay(&self) -> bool {
+        match self {
+            Self::Score { overlay } => overlay.is_some(),
+            Self::Parts { overlay } => overlay.is_some(),
+            Self::Voices { overlay } => overlay.is_some(),
+            Self::Loop => false,
+            Self::Project { overlay } => overlay.is_some(),
+        }
+    }
+
+    fn overlay_element(&self) -> Option<AnyElement> {
+        match self {
+            Self::Score {
+                overlay: Some(overlay),
+            } => Some(overlay.element()),
+            Self::Parts {
+                overlay: Some(overlay),
+            } => Some(overlay.element()),
+            Self::Voices {
+                overlay: Some(overlay),
+            } => Some(overlay.element()),
+            Self::Project {
+                overlay: Some(overlay),
+            } => Some(overlay.element()),
+            Self::Score { overlay: None }
+            | Self::Parts { overlay: None }
+            | Self::Voices { overlay: None }
+            | Self::Loop
+            | Self::Project { overlay: None } => None,
+        }
+    }
+}
+
+enum ProjectOverlay {
+    ConfirmClose(Entity<CloseProjectDialog>),
+}
+
+enum CloseProjectMsg {
+    Cancelled,
+    Confirmed,
+}
+
+struct CloseProjectDialog {
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+}
+
+impl EventEmitter<CloseProjectMsg> for CloseProjectDialog {}
+
+impl CloseProjectDialog {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let cancel_button = cx.new(|_| Button::new("keep-project-open", "keep project open"));
+        let confirm_button =
+            cx.new(|_| Button::new("confirm-close-project", "discard drafts and close"));
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
+            .detach();
+        Self {
+            cancel_button,
+            confirm_button,
+        }
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(CloseProjectMsg::Cancelled);
+    }
+
+    fn on_confirm_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(CloseProjectMsg::Confirmed);
+    }
+}
+
+impl Render for CloseProjectDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        destructive_dialog(
+            "close project",
+            None,
+            "discard unfinished workspace changes and close this project?",
+            div()
+                .flex()
+                .justify_end()
+                .gap(s::S3)
+                .child(self.cancel_button.clone())
+                .child(self.confirm_button.clone()),
+        )
+    }
 }
 
 impl EventEmitter<Msg> for Model {}
@@ -119,7 +266,8 @@ impl Model {
         workspace_root: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings_button = cx.new(|_| Button::new("project-settings", "project settings"));
+        let score_button = cx.new(|_| Button::new("score-workspace", "score").depressed(true));
+        let settings_button = cx.new(|_| Button::new("project-settings", "project"));
         let parts_button = cx.new(|_| Button::new("parts", "parts"));
         let voices_button = cx.new(|_| Button::new("voices", "voices"));
         let close_button = cx.new(|_| Button::new("close-project", "close project"));
@@ -127,11 +275,11 @@ impl Model {
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
         let arrangement_beat_count = project.arrangement_beat_count();
         let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
-        let loop_range_button =
-            cx.new(|_| Button::new("loop-range", loop_range_button_label(&project, loop_range)));
+        let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
         let play_button = cx.new(|_| Button::new("play-score", "play"));
         let stop_button = cx.new(|_| Button::new("stop-score", "stop"));
 
+        cx.subscribe(&score_button, Self::on_score_clicked).detach();
         cx.subscribe(&settings_button, Self::on_settings_clicked)
             .detach();
         cx.subscribe(&parts_button, Self::on_parts_clicked).detach();
@@ -140,25 +288,62 @@ impl Model {
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
             .detach();
-        cx.subscribe(&loop_range_button, Self::on_loop_range_clicked)
-            .detach();
+        cx.subscribe(&loop_button, Self::on_loop_clicked).detach();
         cx.subscribe(&play_button, Self::on_play_clicked).detach();
         cx.subscribe(&stop_button, Self::on_stop_clicked).detach();
+
+        let parts = project.parts.clone();
+        let sequence = project.sequence().to_vec();
+        let parts_workspace = cx.new(move |cx| PartsWorkspace::new(parts, sequence, cx));
+        cx.subscribe(&parts_workspace, Self::on_parts_msg).detach();
+
+        let voices = project.voices().to_vec();
+        let acoustic_scene = project.acoustic_scene().clone();
+        let voices_workspace = cx.new(move |cx| VoicesWorkspace::new(voices, acoustic_scene, cx));
+        cx.subscribe(&voices_workspace, Self::on_voices_msg)
+            .detach();
+
+        let occurrences = project.arrangement_occurrences();
+        let loop_workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, loop_range, cx));
+        cx.subscribe(&loop_workspace, Self::on_loop_range_msg)
+            .detach();
+
+        let settings_project = project.clone();
+        let settings_project_directory = project_directory.clone();
+        let settings_workspace_root = workspace_root.clone();
+        let project_settings = cx.new(move |cx| {
+            ProjectSettingsWorkspace::new(
+                settings_project,
+                settings_project_directory,
+                settings_workspace_root,
+                cx,
+            )
+        });
+        cx.subscribe(&project_settings, Self::on_settings_msg)
+            .detach();
 
         let initial_part = project.parts.first().map(|part| part.name.clone());
         let mut model = Self {
             project,
             project_directory,
             workspace_root,
+            workspace: Workspace {
+                section: WorkspaceSection::Score { overlay: None },
+                parts: parts_workspace,
+                voices: voices_workspace,
+                loop_editor: loop_workspace,
+                project_settings,
+            },
+            score_button,
             settings_button,
             parts_button,
             voices_button,
             close_button,
             pane_count_dropdown,
-            loop_range_button,
+            loop_button,
             play_button,
             stop_button,
-            dialog: None,
+            project_overlay: None,
             score_documents: Vec::new(),
             score_views: vec![ScoreViewEntry {
                 part_name: None,
@@ -199,26 +384,125 @@ impl Model {
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
         vec![
-            self.pane_count_dropdown.clone().into_any_element(),
-            self.loop_range_button.clone().into_any_element(),
-            self.play_button.clone().into_any_element(),
-            self.stop_button.clone().into_any_element(),
-            self.parts_button.clone().into_any_element(),
-            self.voices_button.clone().into_any_element(),
-            self.settings_button.clone().into_any_element(),
+            crate::view::workspace::selector([
+                self.score_button.clone(),
+                self.parts_button.clone(),
+                self.voices_button.clone(),
+                self.loop_button.clone(),
+                self.settings_button.clone(),
+            ])
+            .into_any_element(),
+            div()
+                .flex()
+                .gap(s::S3)
+                .child(self.pane_count_dropdown.clone())
+                .into_any_element(),
+            div()
+                .flex()
+                .items_center()
+                .gap(s::S3)
+                .child(
+                    div()
+                        .max_w(s::S8)
+                        .truncate()
+                        .text_color(s::TEXT_DEFAULT)
+                        .child(loop_range_summary(&self.project, self.loop_range)),
+                )
+                .child(self.play_button.clone())
+                .child(self.stop_button.clone())
+                .into_any_element(),
             self.close_button.clone().into_any_element(),
         ]
     }
 
-    pub fn active_dialog(&self) -> Option<AnyElement> {
-        self.dialog.as_ref().map(|dialog| match dialog {
-            Dialog::ExportRows(dialog) => dialog.clone().into_any_element(),
-            Dialog::LoopRange(dialog) => dialog.clone().into_any_element(),
-            Dialog::Parts(dialog) => dialog.clone().into_any_element(),
-            Dialog::ProjectSettings(dialog) => dialog.clone().into_any_element(),
-            Dialog::RowEdit(dialog) => dialog.clone().into_any_element(),
-            Dialog::Voices(dialog) => dialog.clone().into_any_element(),
-        })
+    pub fn active_overlay(&self) -> Option<AnyElement> {
+        if let Some(ProjectOverlay::ConfirmClose(overlay)) = &self.project_overlay {
+            return Some(overlay.clone().into_any_element());
+        }
+        self.workspace.section.overlay_element()
+    }
+
+    fn has_active_overlay(&self) -> bool {
+        self.project_overlay.is_some() || self.workspace.section.has_overlay()
+    }
+
+    fn set_score_overlay(&mut self, overlay: Option<score::Overlay>, cx: &mut Context<Self>) {
+        let WorkspaceSection::Score {
+            overlay: active_overlay,
+        } = &mut self.workspace.section
+        else {
+            return;
+        };
+        *active_overlay = overlay;
+        cx.notify();
+    }
+
+    fn set_parts_overlay(&mut self, overlay: Option<parts::Overlay>, cx: &mut Context<Self>) {
+        let WorkspaceSection::Parts {
+            overlay: active_overlay,
+        } = &mut self.workspace.section
+        else {
+            return;
+        };
+        *active_overlay = overlay;
+        cx.notify();
+    }
+
+    fn set_voices_overlay(&mut self, overlay: Option<voices::Overlay>, cx: &mut Context<Self>) {
+        let WorkspaceSection::Voices {
+            overlay: active_overlay,
+        } = &mut self.workspace.section
+        else {
+            return;
+        };
+        *active_overlay = overlay;
+        cx.notify();
+    }
+
+    fn set_project_settings_overlay(
+        &mut self,
+        overlay: Option<project_settings::Overlay>,
+        cx: &mut Context<Self>,
+    ) {
+        let WorkspaceSection::Project {
+            overlay: active_overlay,
+        } = &mut self.workspace.section
+        else {
+            return;
+        };
+        *active_overlay = overlay;
+        cx.notify();
+    }
+
+    fn set_workspace_section(&mut self, section: WorkspaceSection, cx: &mut Context<Self>) {
+        if self.has_active_overlay() || self.workspace.section.kind() == section.kind() {
+            return;
+        }
+        self.workspace.section = section;
+        self.sync_workspace_buttons(cx);
+        cx.notify();
+    }
+
+    fn sync_workspace_buttons(&self, cx: &mut Context<Self>) {
+        let selected = self.workspace.section.kind();
+        let sections = [
+            (&self.score_button, selected == WorkspaceSectionKind::Score),
+            (&self.parts_button, selected == WorkspaceSectionKind::Parts),
+            (
+                &self.voices_button,
+                selected == WorkspaceSectionKind::Voices,
+            ),
+            (&self.loop_button, selected == WorkspaceSectionKind::Loop),
+            (
+                &self.settings_button,
+                selected == WorkspaceSectionKind::Project,
+            ),
+        ];
+        for (button, depressed) in sections {
+            button.update(cx, |button, cx| {
+                button.set_depressed(depressed, cx);
+            });
+        }
     }
 
     fn has_unsaved_score(&self, cx: &Context<Self>) -> bool {
@@ -476,28 +760,35 @@ impl Model {
         event: &DocumentEvent,
         cx: &mut Context<Self>,
     ) {
-        if matches!(
-            event,
+        let clears_workspace_error = match event {
             DocumentEvent::CellChanged { .. }
-                | DocumentEvent::RowsCleared
-                | DocumentEvent::StructureChanged { .. }
-                | DocumentEvent::SaveFailed
-        ) {
+            | DocumentEvent::RowsCleared
+            | DocumentEvent::StructureChanged { .. }
+            | DocumentEvent::SaveFailed => true,
+            DocumentEvent::Saved
+            | DocumentEvent::RecoverySaved
+            | DocumentEvent::Reset
+            | DocumentEvent::ProjectChanged => false,
+        };
+        if clears_workspace_error {
             self.workspace_error = None;
         }
-        if matches!(event, DocumentEvent::Saved) && !self.has_unsaved_score(cx) {
-            self.workspace_error = None;
+        if let DocumentEvent::Saved = event {
+            if !self.has_unsaved_score(cx) {
+                self.workspace_error = None;
+            }
         }
-        if self.playback.is_some()
-            && matches!(
-                event,
-                DocumentEvent::CellChanged { .. }
-                    | DocumentEvent::RowsCleared
-                    | DocumentEvent::StructureChanged { .. }
-                    | DocumentEvent::Reset
-                    | DocumentEvent::ProjectChanged
-            )
-        {
+        let changes_playback = match event {
+            DocumentEvent::CellChanged { .. }
+            | DocumentEvent::RowsCleared
+            | DocumentEvent::StructureChanged { .. }
+            | DocumentEvent::Reset
+            | DocumentEvent::ProjectChanged => true,
+            DocumentEvent::Saved | DocumentEvent::RecoverySaved | DocumentEvent::SaveFailed => {
+                false
+            }
+        };
+        if self.playback.is_some() && changes_playback {
             self.update_live_playback(cx);
         }
         cx.notify();
@@ -773,7 +1064,7 @@ impl Model {
         request: &ExportRowsRequested,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
+        if self.has_active_overlay() {
             return;
         }
         if let Some(view_index) = self
@@ -788,8 +1079,7 @@ impl Model {
         let dialog = cx.new(move |cx| ExportRowsDialog::new(request, cx));
         cx.subscribe(&dialog, Self::on_export_rows_dialog_msg)
             .detach();
-        self.dialog = Some(Dialog::ExportRows(dialog));
-        cx.notify();
+        self.set_score_overlay(Some(score::Overlay::ExportRows(dialog)), cx);
     }
 
     fn on_export_rows_dialog_msg(
@@ -800,7 +1090,7 @@ impl Model {
     ) {
         match msg {
             ExportRowsDialogMsg::Cancelled => {
-                self.dialog = None;
+                self.set_score_overlay(None, cx);
             }
             ExportRowsDialogMsg::Confirmed(request) => {
                 self.export_selected_rows(dialog, request, cx);
@@ -841,10 +1131,11 @@ impl Model {
         ) {
             Ok(part) => {
                 let part_name = part.name.clone();
-                self.dialog = None;
+                self.set_score_overlay(None, cx);
                 self.update_score_documents_for_project_settings(cx);
                 self.select_part(part_name, cx);
                 self.sync_score_editor_parts(cx);
+                self.sync_workspace_project(cx);
                 self.workspace_error = None;
             }
             Err(error) => {
@@ -861,21 +1152,20 @@ impl Model {
         request: &RowEditRequested,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
+        if self.has_active_overlay() {
             return;
         }
-        let needs_confirmation = request.populated_cell_count > 0
-            && matches!(
-                request.edit,
-                part::PartRowEdit::Clear(_) | part::PartRowEdit::Delete(_)
-            );
+        let destructive_edit = match &request.edit {
+            part::PartRowEdit::Clear(_) | part::PartRowEdit::Delete(_) => true,
+            part::PartRowEdit::InsertBefore(_) | part::PartRowEdit::InsertAfter(_) => false,
+        };
+        let needs_confirmation = request.populated_cell_count > 0 && destructive_edit;
         if needs_confirmation {
             let request = request.clone();
             let dialog = cx.new(move |cx| RowEditConfirmation::new(request, cx));
             cx.subscribe(&dialog, Self::on_row_edit_confirmation_msg)
                 .detach();
-            self.dialog = Some(Dialog::RowEdit(dialog));
-            cx.notify();
+            self.set_score_overlay(Some(score::Overlay::RowEdit(dialog)), cx);
         } else {
             self.apply_row_edit(request.clone(), cx);
         }
@@ -887,7 +1177,7 @@ impl Model {
         msg: &RowEditConfirmationMsg,
         cx: &mut Context<Self>,
     ) {
-        self.dialog = None;
+        self.set_score_overlay(None, cx);
         if let RowEditConfirmationMsg::Confirmed(request) = msg {
             self.apply_row_edit(request.clone(), cx);
         }
@@ -956,6 +1246,7 @@ impl Model {
                     }
                 }
                 self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                self.sync_workspace_project(cx);
                 self.workspace_error = None;
             }
             Err(error) => self.workspace_error = Some(error.to_string()),
@@ -1036,6 +1327,25 @@ impl Model {
         }
     }
 
+    fn sync_workspace_project(&self, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let parts = project.parts().to_vec();
+        let sequence = project.sequence().to_vec();
+        self.workspace.parts.update(cx, |workspace, cx| {
+            workspace.sync_project(parts, sequence, cx);
+        });
+
+        let voices = project.voices().to_vec();
+        let acoustic_scene = project.acoustic_scene().clone();
+        self.workspace.voices.update(cx, |workspace, cx| {
+            workspace.sync_project(voices, acoustic_scene, cx);
+        });
+
+        self.workspace.project_settings.update(cx, |workspace, cx| {
+            workspace.sync_project(project, cx);
+        });
+    }
+
     fn refresh_score_documents_after_voice_change(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let project_directory = self.project_directory.clone();
@@ -1065,51 +1375,39 @@ impl Model {
         }
     }
 
-    fn on_loop_range_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        match self.dialog {
-            Some(Dialog::LoopRange(_)) => {
-                self.dialog = None;
-                self.set_loop_range_button_depressed(false, cx);
-                cx.notify();
-                return;
-            }
-            Some(_) => return,
-            None => {}
-        }
-
-        let occurrences = self.project.arrangement_occurrences();
-        let range = self.loop_range;
-        let dialog = cx.new(move |cx| LoopRangeDialog::new(occurrences, range, cx));
-        cx.subscribe(&dialog, Self::on_loop_range_msg).detach();
-        self.dialog = Some(Dialog::LoopRange(dialog));
-        self.set_loop_range_button_depressed(true, cx);
-        cx.notify();
+    fn on_loop_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        self.set_workspace_section(WorkspaceSection::Loop, cx);
     }
 
     fn on_loop_range_msg(
         &mut self,
-        _: Entity<LoopRangeDialog>,
-        msg: &LoopRangeMsg,
+        workspace: Entity<LoopWorkspace>,
+        msg: &LoopWorkspaceMsg,
         cx: &mut Context<Self>,
     ) {
-        if let LoopRangeMsg::Applied(range) = msg {
-            self.loop_range = Some(*range);
-            self.sync_loop_range_button(cx);
-            if self.playback.is_some() {
-                self.update_live_playback(cx);
-            } else {
-                self.transport_error = None;
+        match msg {
+            LoopWorkspaceMsg::Applied(range) => {
+                self.loop_range = Some(*range);
+                workspace.update(cx, |workspace, cx| {
+                    workspace.applied(*range, cx);
+                });
+                if self.playback.is_some() {
+                    self.update_live_playback(cx);
+                } else {
+                    self.transport_error = None;
+                }
             }
+            LoopWorkspaceMsg::ResetRequested => self.reset_loop_workspace(cx),
         }
-
-        self.dialog = None;
-        self.set_loop_range_button_depressed(false, cx);
         cx.notify();
+    }
+
+    fn reset_loop_workspace(&mut self, cx: &mut Context<Self>) {
+        let occurrences = self.project.arrangement_occurrences();
+        let range = self.loop_range;
+        let workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, range, cx));
+        cx.subscribe(&workspace, Self::on_loop_range_msg).detach();
+        self.workspace.loop_editor = workspace;
     }
 
     fn reconcile_loop_range(
@@ -1133,22 +1431,14 @@ impl Model {
                 BeatRange::new(first, last, arrangement_beat_count).ok()
             })
         };
-        self.sync_loop_range_button(cx);
+        self.reset_loop_workspace(cx);
         if self.playback.is_some() {
             self.update_live_playback(cx);
         }
     }
 
-    fn sync_loop_range_button(&self, cx: &mut Context<Self>) {
-        self.loop_range_button.update(cx, |button, cx| {
-            button.set_label(loop_range_button_label(&self.project, self.loop_range), cx);
-        });
-    }
-
-    fn set_loop_range_button_depressed(&self, depressed: bool, cx: &mut Context<Self>) {
-        self.loop_range_button.update(cx, |button, cx| {
-            button.set_depressed(depressed, cx);
-        });
+    fn on_score_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        self.set_workspace_section(WorkspaceSection::Score { overlay: None }, cx);
     }
 
     fn on_settings_clicked(
@@ -1157,20 +1447,7 @@ impl Model {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
-            return;
-        }
-
-        let project = self.project.clone();
-        let project_directory = self.project_directory.clone();
-        let workspace_root = self.workspace_root.clone();
-        let dialog = cx.new(move |cx| {
-            ProjectSettingsDialog::new(project, project_directory, workspace_root, cx)
-        });
-
-        cx.subscribe(&dialog, Self::on_settings_msg).detach();
-        self.dialog = Some(Dialog::ProjectSettings(dialog));
-        cx.notify();
+        self.set_workspace_section(WorkspaceSection::Project { overlay: None }, cx);
     }
 
     fn on_voices_clicked(
@@ -1179,101 +1456,100 @@ impl Model {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        match self.dialog {
-            Some(Dialog::Voices(_)) => {
-                self.dialog = None;
-                self.set_voices_button_depressed(false, cx);
-                cx.notify();
-                return;
-            }
-            Some(Dialog::ExportRows(_))
-            | Some(Dialog::LoopRange(_))
-            | Some(Dialog::Parts(_))
-            | Some(Dialog::ProjectSettings(_))
-            | Some(Dialog::RowEdit(_)) => return,
-            None => {}
-        }
-
-        if self.flush_all_score_changes(cx).is_err() {
-            return;
-        }
-
-        let voices = self.project.voices().to_vec();
-        let acoustic_scene = self.project.acoustic_scene().clone();
-        let dialog = cx.new(move |cx| VoicesDialog::new(voices, acoustic_scene, cx));
-
-        cx.subscribe(&dialog, Self::on_voices_msg).detach();
-        self.dialog = Some(Dialog::Voices(dialog));
-        self.set_voices_button_depressed(true, cx);
-        cx.notify();
+        self.set_workspace_section(WorkspaceSection::Voices { overlay: None }, cx);
     }
 
     fn on_parts_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        match self.dialog {
-            Some(Dialog::Parts(_)) => {
-                self.dialog = None;
-                self.set_parts_button_depressed(false, cx);
-                cx.notify();
-                return;
-            }
-            Some(Dialog::ExportRows(_))
-            | Some(Dialog::LoopRange(_))
-            | Some(Dialog::ProjectSettings(_))
-            | Some(Dialog::RowEdit(_))
-            | Some(Dialog::Voices(_)) => return,
-            None => {}
-        }
-
-        let parts = self.project.parts.clone();
-        let sequence = self.project.sequence().to_vec();
-        let dialog = cx.new(move |cx| PartsDialog::new(parts, sequence, cx));
-
-        cx.subscribe(&dialog, Self::on_parts_msg).detach();
-        self.dialog = Some(Dialog::Parts(dialog));
-        self.set_parts_button_depressed(true, cx);
-        cx.notify();
+        self.set_workspace_section(WorkspaceSection::Parts { overlay: None }, cx);
     }
 
     fn on_settings_msg(
         &mut self,
-        _: Entity<ProjectSettingsDialog>,
+        _: Entity<ProjectSettingsWorkspace>,
         msg: &ProjectSettingsMsg,
         cx: &mut Context<Self>,
     ) {
-        if let ProjectSettingsMsg::Saved(updated_project) = msg {
-            self.project = updated_project.as_ref().clone();
-            self.update_score_documents_for_project_settings(cx);
-            if self.playback.is_some() {
-                self.update_live_playback(cx);
+        match msg {
+            ProjectSettingsMsg::Saved(updated_project) => {
+                self.project = updated_project.as_ref().clone();
+                self.update_score_documents_for_project_settings(cx);
+                self.sync_workspace_project(cx);
+                if self.playback.is_some() {
+                    self.update_live_playback(cx);
+                }
+            }
+            ProjectSettingsMsg::ResetRequested => self.reset_project_settings_workspace(cx),
+            ProjectSettingsMsg::ResetConfirmationRequested => {
+                let overlay = cx.new(project_settings::ResetDialog::new);
+                cx.subscribe(&overlay, Self::on_project_settings_reset_dialog_msg)
+                    .detach();
+                self.set_project_settings_overlay(
+                    Some(project_settings::Overlay::ConfirmReset(overlay)),
+                    cx,
+                );
             }
         }
-
-        self.dialog = None;
         cx.notify();
+    }
+
+    fn on_project_settings_reset_dialog_msg(
+        &mut self,
+        _: Entity<project_settings::ResetDialog>,
+        msg: &project_settings::ResetDialogMsg,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_project_settings_overlay(None, cx);
+        match msg {
+            project_settings::ResetDialogMsg::Cancelled => {}
+            project_settings::ResetDialogMsg::Confirmed => {
+                self.reset_project_settings_workspace(cx);
+            }
+        }
+    }
+
+    fn reset_project_settings_workspace(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let project_directory = self.project_directory.clone();
+        let workspace_root = self.workspace_root.clone();
+        let workspace = cx.new(move |cx| {
+            ProjectSettingsWorkspace::new(project, project_directory, workspace_root, cx)
+        });
+        cx.subscribe(&workspace, Self::on_settings_msg).detach();
+        self.workspace.project_settings = workspace;
     }
 
     fn on_voices_msg(
         &mut self,
-        dialog: Entity<VoicesDialog>,
+        workspace: Entity<VoicesWorkspace>,
         msg: &voices::Msg,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(msg, voices::Msg::Closed) {
-            if let Err(error) = self.flush_all_score_changes(cx) {
-                let message = format!("couldn't save score changes: {error}");
-                dialog.update(cx, |dialog, cx| match msg {
-                    voices::Msg::AddRequested { .. } => dialog.add_failed(message, cx),
-                    voices::Msg::EditRequested { .. } => dialog.edit_failed(message, cx),
-                    voices::Msg::DeleteRequested { .. } => dialog.delete_failed(message, cx),
-                    voices::Msg::Closed => {}
-                });
-                cx.notify();
-                return;
+        match msg {
+            voices::Msg::Change(change) => self.apply_voice_change(workspace, change, cx),
+            voices::Msg::DeleteRequested { name } => {
+                self.open_voice_delete_dialog(name.clone(), cx);
             }
         }
+    }
 
-        match msg {
-            voices::Msg::AddRequested {
+    fn apply_voice_change(
+        &mut self,
+        workspace: Entity<VoicesWorkspace>,
+        change: &voices::Change,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.flush_all_score_changes(cx) {
+            let message = format!("couldn't save score changes: {error}");
+            workspace.update(cx, |workspace, cx| match change {
+                voices::Change::Add { .. } => workspace.add_failed(message, cx),
+                voices::Change::Edit { .. } => workspace.edit_failed(message, cx),
+            });
+            cx.notify();
+            return;
+        }
+
+        match change {
+            voices::Change::Add {
                 name,
                 voice_type,
                 position,
@@ -1294,19 +1570,20 @@ impl Model {
                             .clone();
                         self.project = updated_project;
                         let voices = self.project.voices().to_vec();
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.voice_added(voices, added, cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.voice_added(voices, added, cx);
                         });
                         self.refresh_score_documents_after_voice_change(cx);
+                        self.sync_workspace_project(cx);
                     }
                     Err(error) => {
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.add_failed(error.to_string(), cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.add_failed(error.to_string(), cx);
                         });
                     }
                 }
             }
-            voices::Msg::EditRequested {
+            voices::Change::Edit {
                 original_name,
                 name,
                 voice_type,
@@ -1334,52 +1611,89 @@ impl Model {
                             .clone();
                         self.project = updated_project;
                         let voices = self.project.voices().to_vec();
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.voice_edited(voices, edited, cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.voice_edited(voices, edited, cx);
                         });
                         self.refresh_score_documents_after_voice_change(cx);
+                        self.sync_workspace_project(cx);
                     }
                     Err(error) => {
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.edit_failed(error.to_string(), cx);
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.edit_failed(error.to_string(), cx);
                         });
                     }
                 }
-            }
-            voices::Msg::DeleteRequested { name } => {
-                match project::delete_voice(&self.project_directory, &self.project, name) {
-                    Ok(updated_project) => {
-                        self.project = updated_project;
-                        let voices = self.project.voices().to_vec();
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.voice_deleted(voices, name, cx);
-                        });
-                        self.refresh_score_documents_after_voice_change(cx);
-                    }
-                    Err(error) => {
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.delete_failed(error.to_string(), cx);
-                        });
-                    }
-                }
-            }
-            voices::Msg::Closed => {
-                self.dialog = None;
-                self.set_voices_button_depressed(false, cx);
             }
         }
 
         cx.notify();
     }
 
+    fn open_voice_delete_dialog(&mut self, name: VoiceName, cx: &mut Context<Self>) {
+        if self.has_active_overlay() {
+            return;
+        }
+        let dialog = cx.new(|cx| voices::DeleteDialog::new(name, cx));
+        cx.subscribe(&dialog, Self::on_voice_delete_dialog_msg)
+            .detach();
+        self.set_voices_overlay(Some(voices::Overlay::ConfirmDelete(dialog)), cx);
+    }
+
+    fn on_voice_delete_dialog_msg(
+        &mut self,
+        dialog: Entity<voices::DeleteDialog>,
+        msg: &voices::DeleteDialogMsg,
+        cx: &mut Context<Self>,
+    ) {
+        match msg {
+            voices::DeleteDialogMsg::Cancelled => self.set_voices_overlay(None, cx),
+            voices::DeleteDialogMsg::Confirmed { name } => {
+                self.delete_voice_from_dialog(dialog, name, cx)
+            }
+        }
+    }
+
+    fn delete_voice_from_dialog(
+        &mut self,
+        confirmation: Entity<voices::DeleteDialog>,
+        name: &VoiceName,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.flush_all_score_changes(cx) {
+            confirmation.update(cx, |dialog, cx| {
+                dialog.failed(format!("couldn't save score changes: {error}"), cx);
+            });
+            return;
+        }
+
+        match project::delete_voice(&self.project_directory, &self.project, name) {
+            Ok(updated_project) => {
+                self.project = updated_project;
+                let voices = self.project.voices().to_vec();
+                self.workspace.voices.update(cx, |workspace, cx| {
+                    workspace.voice_deleted(voices, name, cx);
+                });
+                self.refresh_score_documents_after_voice_change(cx);
+                self.sync_workspace_project(cx);
+                self.set_voices_overlay(None, cx);
+            }
+            Err(error) => {
+                confirmation.update(cx, |dialog, cx| {
+                    dialog.failed(error.to_string(), cx);
+                });
+            }
+        }
+        cx.notify();
+    }
+
     fn on_parts_msg(
         &mut self,
-        dialog: Entity<PartsDialog>,
+        dialog: Entity<PartsWorkspace>,
         msg: &parts::Msg,
         cx: &mut Context<Self>,
     ) {
         match msg {
-            parts::Msg::AddRequested {
+            parts::Msg::Add {
                 name,
                 length,
                 subdivision_pattern,
@@ -1399,6 +1713,7 @@ impl Model {
                         });
                         self.select_part(added_name, cx);
                         self.sync_score_editor_parts(cx);
+                        self.sync_workspace_project(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -1407,7 +1722,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::DuplicateRequested { source, name } => {
+            parts::Msg::Duplicate { source, name } => {
                 if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
                         dialog
@@ -1429,6 +1744,7 @@ impl Model {
                         });
                         self.select_part(duplicated_name, cx);
                         self.sync_score_editor_parts(cx);
+                        self.sync_workspace_project(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -1437,7 +1753,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::UpdateRequested {
+            parts::Msg::Update {
                 source,
                 name,
                 subdivision_pattern,
@@ -1489,6 +1805,7 @@ impl Model {
                             dialog.part_updated(parts, sequence, updated_name, cx);
                         });
                         self.sync_score_editor_parts(cx);
+                        self.sync_workspace_project(cx);
                         self.workspace_error = None;
                         if self.playback.is_some() {
                             self.update_live_playback(cx);
@@ -1502,50 +1819,9 @@ impl Model {
                 }
             }
             parts::Msg::DeleteRequested { name } => {
-                if let Err(error) = self.flush_part_score_changes(name, cx) {
-                    dialog.update(cx, |dialog, cx| {
-                        dialog.delete_failed(format!("couldn't save score changes: {error}"), cx);
-                    });
-                    return;
-                }
-                match delete_project_part(&self.project_directory, &mut self.project, name) {
-                    Ok(part) => {
-                        let parts = self.project.parts.clone();
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.part_deleted(parts, &part.name, cx);
-                        });
-                        let affected_views = self
-                            .score_views
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, view)| {
-                                view.part_name
-                                    .as_ref()
-                                    .is_some_and(|name| name.eq_ignore_ascii_case(&part.name))
-                                    .then_some(index)
-                            })
-                            .collect::<Vec<_>>();
-                        let fallback = self.project.parts.first().map(|part| part.name.clone());
-                        self.remove_score_document(&part.name, cx);
-                        for view_index in affected_views {
-                            if let Some(view) = self.score_views.get_mut(view_index) {
-                                view.part_name = None;
-                                view.editor = None;
-                            }
-                            if let Some(part_name) = fallback.clone() {
-                                self.assign_part_to_view(view_index, part_name, cx);
-                            }
-                        }
-                        self.sync_score_editor_parts(cx);
-                    }
-                    Err(error) => {
-                        dialog.update(cx, |dialog, cx| {
-                            dialog.delete_failed(error.to_string(), cx);
-                        });
-                    }
-                }
+                self.open_part_delete_dialog(name.clone(), cx);
             }
-            parts::Msg::CombineRequested { sources, name } => {
+            parts::Msg::Combine { sources, name } => {
                 if let Err(error) = self.flush_part_score_changes_for(sources, cx) {
                     dialog.update(cx, |dialog, cx| {
                         dialog.combine_failed(
@@ -1570,6 +1846,7 @@ impl Model {
                         self.update_score_documents_for_project_settings(cx);
                         self.select_part(combined_name, cx);
                         self.sync_score_editor_parts(cx);
+                        self.sync_workspace_project(cx);
                         self.workspace_error = None;
                     }
                     Err(error) => {
@@ -1579,7 +1856,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::SequenceChangeRequested {
+            parts::Msg::SequenceChange {
                 sequence,
                 selected_occurrence,
             } => {
@@ -1595,6 +1872,7 @@ impl Model {
                         });
                         self.reconcile_loop_range(previous_arrangement_beat_count, cx);
                         self.update_score_documents_for_project_settings(cx);
+                        self.sync_workspace_project(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -1603,25 +1881,87 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::Closed => {
-                self.dialog = None;
-                self.set_parts_button_depressed(false, cx);
-            }
         }
 
         cx.notify();
     }
 
-    fn set_voices_button_depressed(&self, depressed: bool, cx: &mut Context<Self>) {
-        self.voices_button.update(cx, |button, cx| {
-            button.set_depressed(depressed, cx);
-        });
+    fn open_part_delete_dialog(&mut self, name: PartName, cx: &mut Context<Self>) {
+        if self.has_active_overlay() {
+            return;
+        }
+        let dialog = cx.new(|cx| parts::DeleteDialog::new(name, cx));
+        cx.subscribe(&dialog, Self::on_part_delete_dialog_msg)
+            .detach();
+        self.set_parts_overlay(Some(parts::Overlay::ConfirmDelete(dialog)), cx);
     }
 
-    fn set_parts_button_depressed(&self, depressed: bool, cx: &mut Context<Self>) {
-        self.parts_button.update(cx, |button, cx| {
-            button.set_depressed(depressed, cx);
-        });
+    fn on_part_delete_dialog_msg(
+        &mut self,
+        dialog: Entity<parts::DeleteDialog>,
+        msg: &parts::DeleteDialogMsg,
+        cx: &mut Context<Self>,
+    ) {
+        match msg {
+            parts::DeleteDialogMsg::Cancelled => self.set_parts_overlay(None, cx),
+            parts::DeleteDialogMsg::Confirmed { name } => {
+                self.delete_part_from_dialog(dialog, name, cx)
+            }
+        }
+    }
+
+    fn delete_part_from_dialog(
+        &mut self,
+        confirmation: Entity<parts::DeleteDialog>,
+        name: &PartName,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.flush_part_score_changes(name, cx) {
+            confirmation.update(cx, |dialog, cx| {
+                dialog.failed(format!("couldn't save score changes: {error}"), cx);
+            });
+            return;
+        }
+
+        match delete_project_part(&self.project_directory, &mut self.project, name) {
+            Ok(part) => {
+                let parts = self.project.parts.clone();
+                self.workspace.parts.update(cx, |workspace, cx| {
+                    workspace.part_deleted(parts, &part.name, cx);
+                });
+                let affected_views = self
+                    .score_views
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, view)| {
+                        view.part_name
+                            .as_ref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&part.name))
+                            .then_some(index)
+                    })
+                    .collect::<Vec<_>>();
+                let fallback = self.project.parts.first().map(|part| part.name.clone());
+                self.remove_score_document(&part.name, cx);
+                for view_index in affected_views {
+                    if let Some(view) = self.score_views.get_mut(view_index) {
+                        view.part_name = None;
+                        view.editor = None;
+                    }
+                    if let Some(part_name) = fallback.clone() {
+                        self.assign_part_to_view(view_index, part_name, cx);
+                    }
+                }
+                self.sync_score_editor_parts(cx);
+                self.sync_workspace_project(cx);
+                self.set_parts_overlay(None, cx);
+            }
+            Err(error) => {
+                confirmation.update(cx, |dialog, cx| {
+                    dialog.failed(error.to_string(), cx);
+                });
+            }
+        }
+        cx.notify();
     }
 
     fn on_status_bar_clicked(
@@ -1694,11 +2034,37 @@ impl Model {
     }
 
     fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.has_active_overlay() {
             return;
         }
 
+        if self.workspace.has_draft(cx) {
+            let overlay = cx.new(CloseProjectDialog::new);
+            cx.subscribe(&overlay, Self::on_close_project_msg).detach();
+            self.project_overlay = Some(ProjectOverlay::ConfirmClose(overlay));
+            cx.notify();
+            return;
+        }
+
+        self.finish_close(cx);
+    }
+
+    fn on_close_project_msg(
+        &mut self,
+        _: Entity<CloseProjectDialog>,
+        msg: &CloseProjectMsg,
+        cx: &mut Context<Self>,
+    ) {
+        self.project_overlay = None;
+        match msg {
+            CloseProjectMsg::Cancelled => cx.notify(),
+            CloseProjectMsg::Confirmed => self.finish_close(cx),
+        }
+    }
+
+    fn finish_close(&mut self, cx: &mut Context<Self>) {
         if self.flush_all_score_changes(cx).is_err() {
+            cx.notify();
             return;
         }
 
@@ -1708,12 +2074,22 @@ impl Model {
 
 impl Render for Model {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let project_status = self.project_status(cx);
-        workspace(&self.score_views, project_status, cx)
+        match &self.workspace.section {
+            WorkspaceSection::Score { .. } => {
+                let project_status = self.project_status(cx);
+                score_workspace(&self.score_views, project_status, cx).into_any_element()
+            }
+            WorkspaceSection::Parts { .. } => self.workspace.parts.clone().into_any_element(),
+            WorkspaceSection::Voices { .. } => self.workspace.voices.clone().into_any_element(),
+            WorkspaceSection::Loop => self.workspace.loop_editor.clone().into_any_element(),
+            WorkspaceSection::Project { .. } => {
+                self.workspace.project_settings.clone().into_any_element()
+            }
+        }
     }
 }
 
-fn loop_range_button_label(project: &Project, range: Option<BeatRange>) -> String {
+fn loop_range_summary(project: &Project, range: Option<BeatRange>) -> String {
     let Some(range) = range else {
         return "set loop".to_string();
     };
@@ -1754,7 +2130,7 @@ fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartNa
     None
 }
 
-fn workspace(
+fn score_workspace(
     score_views: &[ScoreViewEntry],
     project_status: ProjectStatus,
     cx: &mut Context<Model>,
@@ -2349,13 +2725,14 @@ mod tests {
 
     use gpui::{px, size, AppContext, TestAppContext};
 
-    use super::score::ScoreAction;
+    use super::score::{self, ScoreAction};
     use super::{
         combine_project_parts, create_configured_project_part, create_project_part,
-        delete_project_part, duplicate_project_part, export_project_part_rows,
-        loop_range_button_label, parts, playing_score_row, rename_project_part,
-        update_project_sequence, Dialog, ExportRowsConfirmed, ExportRowsDialogMsg, Model,
-        PartChangeError, PartsDialog, RowEditConfirmationMsg, RowEditRequested, StatusAction,
+        delete_project_part, duplicate_project_part, export_project_part_rows, loop_range_summary,
+        parts, playing_score_row, project_settings, rename_project_part, update_project_sequence,
+        voices, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError, PartsWorkspace,
+        ProjectOverlay, RowEditConfirmationMsg, RowEditRequested, StatusAction, WorkspaceSection,
+        WorkspaceSectionKind,
     };
     use crate::{
         part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
@@ -2391,28 +2768,28 @@ mod tests {
     }
 
     #[test]
-    fn loop_button_labels_part_aligned_and_exact_ranges_semantically() {
+    fn loop_summaries_describe_part_aligned_and_exact_ranges() {
         let project = Project::new("test project", 800, 0, Seed::new(12))
             .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)])
             .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
 
         assert_eq!(
-            loop_range_button_label(&project, BeatRange::new(1, 40, 40).ok()),
+            loop_range_summary(&project, BeatRange::new(1, 40, 40).ok()),
             "loop all"
         );
         assert_eq!(
-            loop_range_button_label(&project, BeatRange::new(9, 24, 40).ok()),
+            loop_range_summary(&project, BeatRange::new(9, 24, 40).ok()),
             "loop 2. verse"
         );
         assert_eq!(
-            loop_range_button_label(&project, BeatRange::new(9, 40, 40).ok()),
+            loop_range_summary(&project, BeatRange::new(9, 40, 40).ok()),
             "loop parts 2–3"
         );
         assert_eq!(
-            loop_range_button_label(&project, BeatRange::new(10, 23, 40).ok()),
+            loop_range_summary(&project, BeatRange::new(10, 23, 40).ok()),
             "loop beats 10–23"
         );
-        assert_eq!(loop_range_button_label(&project, None), "set loop");
+        assert_eq!(loop_range_summary(&project, None), "set loop");
     }
 
     #[test]
@@ -2438,13 +2815,13 @@ mod tests {
             project.sequence()
         );
         let error = delete_project_part(&project_directory, &mut project, &part.name).unwrap_err();
-        assert!(matches!(
-            error,
-            PartChangeError::PartInSequence {
-                occurrence_count: 2,
-                ..
-            }
-        ));
+        let PartChangeError::PartInSequence {
+            occurrence_count, ..
+        } = error
+        else {
+            panic!("deleting an arranged part should report its occurrences");
+        };
+        assert_eq!(occurrence_count, 2);
         assert!(project_directory.join("part-a.csv").is_file());
 
         update_project_sequence(&project_directory, &mut project, Vec::new()).unwrap();
@@ -2595,7 +2972,9 @@ mod tests {
         .err()
         .unwrap();
 
-        assert!(matches!(error, PartChangeError::CombineNeedsTwoParts));
+        let PartChangeError::CombineNeedsTwoParts = error else {
+            panic!("combining one part should require another source");
+        };
         assert!(project.part(&"not combined".into()).is_none());
         assert!(!project_directory.join("not-combined.csv").exists());
 
@@ -2670,7 +3049,9 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, PartChangeError::ExportScore { .. }));
+        let PartChangeError::ExportScore { .. } = error else {
+            panic!("a failed score export should preserve its error kind");
+        };
         assert_eq!(project.parts().len(), 1);
         assert!(!project_directory.join("broken-excerpt.csv").exists());
 
@@ -2723,7 +3104,9 @@ mod tests {
 
         let error = rename_project_part(&project_directory, &mut project, &renamed.name, "verse")
             .unwrap_err();
-        assert!(matches!(error, PartChangeError::RenameFile(_)));
+        let PartChangeError::RenameFile(_) = error else {
+            panic!("a conflicting part name should fail while renaming its file");
+        };
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2742,12 +3125,12 @@ mod tests {
         let (model, cx) = cx.add_window_view(|_, cx| {
             Model::new(project, project_directory.clone(), root.clone(), cx)
         });
-        let dialog = cx.new(|cx| PartsDialog::new(dialog_parts, dialog_sequence, cx));
+        let dialog = cx.new(|cx| PartsWorkspace::new(dialog_parts, dialog_sequence, cx));
 
         model.update(cx, |model, cx| {
             model.on_parts_msg(
                 dialog,
-                &parts::Msg::UpdateRequested {
+                &parts::Msg::Update {
                     source: intro.name,
                     name: "opening theme".to_string(),
                     subdivision_pattern: Some(SubdivisionPattern::new([4, 3, 3]).unwrap()),
@@ -2897,8 +3280,10 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let dialog = cx.update(|_, cx| match &model.read(cx).dialog {
-            Some(Dialog::ExportRows(dialog)) => dialog.clone(),
+        let dialog = cx.update(|_, cx| match &model.read(cx).workspace.section {
+            WorkspaceSection::Score {
+                overlay: Some(score::Overlay::ExportRows(dialog)),
+            } => dialog.clone(),
             _ => panic!("expected an export rows dialog"),
         });
         model.update(cx, |model, cx| {
@@ -2915,7 +3300,7 @@ mod tests {
 
         cx.update(|_, cx| {
             let model = model.read(cx);
-            assert!(model.dialog.is_none());
+            assert!(!model.has_active_overlay());
             assert_eq!(model.project.parts().len(), 2);
             assert_eq!(
                 model.score_views[0].part_name.as_ref().unwrap().as_str(),
@@ -2961,14 +3346,28 @@ mod tests {
         cx.run_until_parked();
 
         let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
-        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_some()));
+        assert!(cx.update(|_, cx| model.read(cx).active_overlay().is_some()));
         assert_eq!(
             cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
             "C4"
         );
+        let parts_button = cx.update(|_, cx| model.read(cx).parts_button.clone());
+        model.update(cx, |model, cx| {
+            model.on_parts_clicked(parts_button, &button::Clicked, cx);
+        });
+        cx.update(|_, cx| {
+            let WorkspaceSection::Score {
+                overlay: Some(score::Overlay::RowEdit(_)),
+            } = &model.read(cx).workspace.section
+            else {
+                panic!("row editing should keep the score workspace active");
+            };
+        });
 
-        let dialog = cx.update(|_, cx| match &model.read(cx).dialog {
-            Some(Dialog::RowEdit(dialog)) => dialog.clone(),
+        let dialog = cx.update(|_, cx| match &model.read(cx).workspace.section {
+            WorkspaceSection::Score {
+                overlay: Some(score::Overlay::RowEdit(dialog)),
+            } => dialog.clone(),
             _ => panic!("expected a row edit confirmation"),
         });
         model.update(cx, |model, cx| {
@@ -2984,7 +3383,7 @@ mod tests {
             );
         });
 
-        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_none()));
+        assert!(cx.update(|_, cx| model.read(cx).active_overlay().is_none()));
         assert_eq!(
             cx.update(|_, cx| model.read(cx).project.parts()[0].length),
             2
@@ -3012,7 +3411,9 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, super::ArrangementChangeError::Save(_)));
+        let super::ArrangementChangeError::Save(_) = error else {
+            panic!("saving to a missing directory should report a save error");
+        };
         assert_eq!(project.sequence(), original_sequence);
     }
 
@@ -3189,17 +3590,16 @@ mod tests {
         cx.run_until_parked();
 
         let error_status = cx.update(|_, cx| model.read(cx).project_status(cx));
-        assert!(matches!(
-            error_status,
-            status_bar::Status::Error {
-                target: Some(StatusAction::RevealIssue {
-                    row: 0,
-                    column: 0,
-                    ..
+        let status_bar::Status::Error {
+            target:
+                Some(StatusAction::RevealIssue {
+                    row: 0, column: 0, ..
                 }),
-                ..
-            }
-        ));
+            ..
+        } = error_status
+        else {
+            panic!("an invalid score cell should produce a targeted error");
+        };
         assert_eq!(cx.debug_bounds("score-view-0").unwrap(), pane_before);
         assert_eq!(
             cx.debug_bounds("project-status-bar").unwrap(),
@@ -3215,7 +3615,9 @@ mod tests {
         cx.run_until_parked();
 
         let warning_status = cx.update(|_, cx| model.read(cx).project_status(cx));
-        assert!(matches!(warning_status, status_bar::Status::Warning(_)));
+        let status_bar::Status::Warning(_) = warning_status else {
+            panic!("a corrected but unsaved score should produce a warning");
+        };
         assert_eq!(cx.debug_bounds("score-view-0").unwrap(), pane_before);
         assert_eq!(
             cx.debug_bounds("project-status-bar").unwrap(),
@@ -3240,7 +3642,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn guarded_actions_flush_valid_score_changes_immediately(cx: &mut TestAppContext) {
+    fn workspace_navigation_does_not_force_valid_score_changes_to_save(cx: &mut TestAppContext) {
         let root = temp_root("guarded-score-flush");
         let project_directory = root.join("project");
         fs::create_dir_all(&project_directory).unwrap();
@@ -3276,18 +3678,198 @@ mod tests {
             model.on_voices_clicked(voices_button, &button::Clicked, cx);
         });
 
-        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
         assert_eq!(
             fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
-            "lead\nC4\n"
+            "lead\n\"\"\n"
         );
-        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_some()));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).workspace.section.kind()),
+            WorkspaceSectionKind::Voices
+        );
+        assert!(cx.update(|_, cx| model.read(cx).active_overlay().is_none()));
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[gpui::test]
-    fn guarded_actions_stay_blocked_by_invalid_score_changes(cx: &mut TestAppContext) {
+    fn workspace_navigation_reuses_persistent_section_models(cx: &mut TestAppContext) {
+        let root = temp_root("persistent-workspace-sections");
+        let project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        let (parts_workspace, parts_button, score_button) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.workspace.parts.clone(),
+                model.parts_button.clone(),
+                model.score_button.clone(),
+            )
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_parts_clicked(parts_button.clone(), &button::Clicked, cx);
+        });
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.workspace.section.kind(), WorkspaceSectionKind::Parts);
+            assert_eq!(model.workspace.parts, parts_workspace);
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_score_clicked(score_button, &button::Clicked, cx);
+            model.on_parts_clicked(parts_button, &button::Clicked, cx);
+        });
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.workspace.section.kind(), WorkspaceSectionKind::Parts);
+            assert_eq!(model.workspace.parts, parts_workspace);
+        });
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn workspace_overlays_are_owned_by_their_active_sections(cx: &mut TestAppContext) {
+        let root = temp_root("workspace-owned-overlays");
+        let part = Part::new("intro", 4);
+        let voice = Voice::new(1, "lead", VoiceType::Saw);
+        let part_name = part.name.clone();
+        let voice_name = voice.name.clone();
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_parts(vec![part])
+            .with_voices(vec![voice]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        let (
+            parts_workspace,
+            voices_workspace,
+            settings_workspace,
+            parts_button,
+            voices_button,
+            settings_button,
+        ) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.workspace.parts.clone(),
+                model.workspace.voices.clone(),
+                model.workspace.project_settings.clone(),
+                model.parts_button.clone(),
+                model.voices_button.clone(),
+                model.settings_button.clone(),
+            )
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_parts_clicked(parts_button, &button::Clicked, cx);
+            model.on_parts_msg(
+                parts_workspace,
+                &parts::Msg::DeleteRequested {
+                    name: part_name.clone(),
+                },
+                cx,
+            );
+        });
+        let part_dialog = cx.update(|_, cx| {
+            let WorkspaceSection::Parts {
+                overlay: Some(parts::Overlay::ConfirmDelete(dialog)),
+            } = &model.read(cx).workspace.section
+            else {
+                panic!("part deletion should open a parts overlay");
+            };
+            dialog.clone()
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_voices_clicked(voices_button.clone(), &button::Clicked, cx);
+        });
+        cx.update(|_, cx| {
+            let WorkspaceSection::Parts {
+                overlay: Some(parts::Overlay::ConfirmDelete(_)),
+            } = &model.read(cx).workspace.section
+            else {
+                panic!("the parts overlay should block workspace navigation");
+            };
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_part_delete_dialog_msg(part_dialog, &parts::DeleteDialogMsg::Cancelled, cx);
+            model.on_voices_clicked(voices_button, &button::Clicked, cx);
+            model.on_voices_msg(
+                voices_workspace,
+                &voices::Msg::DeleteRequested {
+                    name: voice_name.clone(),
+                },
+                cx,
+            );
+        });
+        let voice_dialog = cx.update(|_, cx| {
+            let WorkspaceSection::Voices {
+                overlay: Some(voices::Overlay::ConfirmDelete(dialog)),
+            } = &model.read(cx).workspace.section
+            else {
+                panic!("voice deletion should open a voices overlay");
+            };
+            dialog.clone()
+        });
+
+        model.update(cx, |model, cx| {
+            model.on_voice_delete_dialog_msg(voice_dialog, &voices::DeleteDialogMsg::Cancelled, cx);
+            model.on_settings_clicked(settings_button, &button::Clicked, cx);
+            model.on_settings_msg(
+                settings_workspace,
+                &project_settings::ProjectSettingsMsg::ResetConfirmationRequested,
+                cx,
+            );
+        });
+        cx.update(|_, cx| {
+            let WorkspaceSection::Project {
+                overlay: Some(project_settings::Overlay::ConfirmReset(_)),
+            } = &model.read(cx).workspace.section
+            else {
+                panic!("project reset should open a project settings overlay");
+            };
+        });
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn closing_with_an_unfinished_workspace_opens_a_project_overlay(cx: &mut TestAppContext) {
+        let root = temp_root("close-with-workspace-draft");
+        let project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        let (parts_button, close_button) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (model.parts_button.clone(), model.close_button.clone())
+        });
+        model.update(cx, |model, cx| {
+            model.on_parts_clicked(parts_button, &button::Clicked, cx);
+        });
+        let parts = cx.update(|_, cx| model.read(cx).workspace.parts.clone());
+        parts.update(cx, |parts, cx| parts.start_add_for_test(cx));
+        assert!(cx.update(|_, cx| model.read(cx).workspace.parts.read(cx).has_draft()));
+
+        model.update(cx, |model, cx| {
+            model.on_close_clicked(close_button, &button::Clicked, cx);
+        });
+
+        cx.update(|_, cx| {
+            let Some(ProjectOverlay::ConfirmClose(_)) = &model.read(cx).project_overlay else {
+                panic!("closing with a draft should open a project overlay");
+            };
+        });
+        assert!(cx.update(|_, cx| model.read(cx).active_overlay().is_some()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn workspace_navigation_preserves_invalid_score_changes(cx: &mut TestAppContext) {
         let root = temp_root("guarded-invalid-score");
         let project_directory = root.join("project");
         fs::create_dir_all(&project_directory).unwrap();
@@ -3318,20 +3900,24 @@ mod tests {
             model.on_voices_clicked(voices_button, &button::Clicked, cx);
         });
 
-        assert!(cx.update(|_, cx| model.read(cx).active_dialog().is_none()));
+        assert!(cx.update(|_, cx| model.read(cx).active_overlay().is_none()));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).workspace.section.kind()),
+            WorkspaceSectionKind::Voices
+        );
         assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
         assert_eq!(
             fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
             "lead\n\"\"\n"
         );
-        assert!(project_directory.join(".part-a.csv.recovery").is_file());
-        assert!(matches!(
-            cx.update(|_, cx| model.read(cx).project_status(cx)),
-            status_bar::Status::Error {
-                target: Some(StatusAction::RevealIssue { .. }),
-                ..
-            }
-        ));
+        let status = cx.update(|_, cx| model.read(cx).project_status(cx));
+        let status_bar::Status::Error {
+            target: Some(StatusAction::RevealIssue { .. }),
+            ..
+        } = status
+        else {
+            panic!("invalid score changes should remain visible after navigation");
+        };
 
         fs::remove_dir_all(root).unwrap();
     }

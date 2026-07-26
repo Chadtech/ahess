@@ -1,5 +1,6 @@
 use gpui::{
-    div, prelude::*, px, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, Window,
+    div, prelude::*, px, AnyElement, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
+    Window,
 };
 
 use crate::{
@@ -8,37 +9,128 @@ use crate::{
     style as s,
     view::{
         button::{self, Button},
-        dialog::{
-            self, destructive_confirmation, error_message, list_detail_dialog,
-            management_form_dialog,
-        },
+        dialog::{destructive_dialog, error_message},
         field_group::field_group,
         selection_list,
         text_input::TextInput,
+        workspace,
     },
     voice::{Voice, VoiceType},
     voice_name::VoiceName,
 };
 
 pub enum Msg {
-    AddRequested {
+    Change(Change),
+    DeleteRequested { name: VoiceName },
+}
+
+pub enum Change {
+    Add {
         name: String,
         voice_type: VoiceType,
         position: Point3Meters,
     },
-    EditRequested {
+    Edit {
         original_name: VoiceName,
         name: String,
         voice_type: VoiceType,
         position: Point3Meters,
     },
-    DeleteRequested {
-        name: VoiceName,
-    },
-    Closed,
 }
 
-enum DialogView {
+pub(super) enum Overlay {
+    ConfirmDelete(Entity<DeleteDialog>),
+}
+
+impl Overlay {
+    pub(super) fn element(&self) -> AnyElement {
+        match self {
+            Self::ConfirmDelete(dialog) => dialog.clone().into_any_element(),
+        }
+    }
+}
+
+pub(super) enum DeleteDialogMsg {
+    Cancelled,
+    Confirmed { name: VoiceName },
+}
+
+pub(super) struct DeleteDialog {
+    name: VoiceName,
+    cancel_button: Entity<Button>,
+    confirm_button: Entity<Button>,
+    error: Option<String>,
+}
+
+impl EventEmitter<DeleteDialogMsg> for DeleteDialog {}
+
+impl DeleteDialog {
+    pub(super) fn new(name: VoiceName, cx: &mut Context<Self>) -> Self {
+        let cancel_button = cx.new(|_| Button::new("cancel-delete-voice", "keep voice"));
+        let confirm_button = cx.new(|_| Button::new("confirm-delete-voice", "delete voice"));
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
+            .detach();
+        Self {
+            name,
+            cancel_button,
+            confirm_button,
+            error: None,
+        }
+    }
+
+    pub(super) fn failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        cx.notify();
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DeleteDialogMsg::Cancelled);
+    }
+
+    fn on_confirm_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DeleteDialogMsg::Confirmed {
+            name: self.name.clone(),
+        });
+    }
+}
+
+impl Render for DeleteDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let actions = div()
+            .flex()
+            .flex_col()
+            .gap(s::S3)
+            .children(self.error.clone().map(error_message))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(s::S3)
+                    .child(self.cancel_button.clone())
+                    .child(self.confirm_button.clone()),
+            );
+        destructive_dialog(
+            "delete voice",
+            None,
+            format!("delete {:?}?", self.name.as_str()),
+            actions,
+        )
+    }
+}
+
+enum View {
     List {
         add_new_button: Entity<Button>,
         edit_button: Entity<Button>,
@@ -60,41 +152,39 @@ enum DialogView {
         cancel_button: Entity<Button>,
         save_button: Entity<Button>,
         delete_button: Entity<Button>,
-        cancel_delete_button: Entity<Button>,
-        confirm_delete_button: Entity<Button>,
         form_error: Option<String>,
-        delete_error: Option<String>,
-        confirming_delete: bool,
     },
 }
 
-pub struct VoicesDialog {
+pub struct VoicesWorkspace {
     voices: Vec<Voice>,
     acoustic_scene: AcousticScene,
     selected_voice: Option<VoiceName>,
-    view: DialogView,
-    close_button: Entity<Button>,
+    view: View,
 }
 
-impl EventEmitter<Msg> for VoicesDialog {}
+impl EventEmitter<Msg> for VoicesWorkspace {}
 
-impl VoicesDialog {
+impl VoicesWorkspace {
     pub fn new(voices: Vec<Voice>, acoustic_scene: AcousticScene, cx: &mut Context<Self>) -> Self {
         let selected_voice = voices.first().map(|voice| voice.name.clone());
-        let close_button = cx.new(|_| Button::x("close-voices"));
-
-        cx.subscribe(&close_button, Self::on_close_clicked).detach();
 
         Self {
             voices,
             acoustic_scene,
             selected_voice,
             view: Self::list_view(cx),
-            close_button,
         }
     }
 
-    fn list_view(cx: &mut Context<Self>) -> DialogView {
+    pub fn has_draft(&self) -> bool {
+        match &self.view {
+            View::List { .. } => false,
+            View::Add { .. } | View::Edit { .. } => true,
+        }
+    }
+
+    fn list_view(cx: &mut Context<Self>) -> View {
         let add_new_button = cx.new(|_| Button::new("add-new-voice", "add new voice"));
         let edit_button = cx.new(|_| Button::new("edit-voice", "edit voice"));
 
@@ -102,13 +192,13 @@ impl VoicesDialog {
             .detach();
         cx.subscribe(&edit_button, Self::on_edit_clicked).detach();
 
-        DialogView::List {
+        View::List {
             add_new_button,
             edit_button,
         }
     }
 
-    fn add_view(acoustic_scene: &AcousticScene, cx: &mut Context<Self>) -> DialogView {
+    fn add_view(acoustic_scene: &AcousticScene, cx: &mut Context<Self>) -> View {
         let name = cx.new(|cx| TextInput::new("", "lead", cx));
         let selected_voice_type = VoiceType::Sin;
         let voice_type_buttons = VoiceTypeButtons::new(selected_voice_type, cx);
@@ -121,7 +211,7 @@ impl VoicesDialog {
         cx.subscribe(&add_button, Self::on_add_clicked).detach();
         Self::subscribe_voice_type_buttons(&voice_type_buttons, cx);
 
-        DialogView::Add {
+        View::Add {
             name,
             selected_voice_type,
             voice_type_buttons,
@@ -132,7 +222,7 @@ impl VoicesDialog {
         }
     }
 
-    fn edit_view(voice: &Voice, cx: &mut Context<Self>) -> DialogView {
+    fn edit_view(voice: &Voice, cx: &mut Context<Self>) -> View {
         let voice_name = voice.name.as_str().to_owned();
         let name = cx.new(move |cx| TextInput::new(voice_name, "lead", cx));
         let selected_voice_type = voice.voice_type;
@@ -141,21 +231,15 @@ impl VoicesDialog {
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let save_button = cx.new(|_| Button::new("save-voice", "save changes"));
         let delete_button = cx.new(|_| Button::new("delete-voice", "delete voice"));
-        let cancel_delete_button = cx.new(|_| Button::new("cancel-delete-voice", "keep voice"));
-        let confirm_delete_button = cx.new(|_| Button::new("confirm-delete-voice", "delete voice"));
 
         cx.subscribe(&cancel_button, Self::on_cancel_clicked)
             .detach();
         cx.subscribe(&save_button, Self::on_save_clicked).detach();
         cx.subscribe(&delete_button, Self::on_delete_clicked)
             .detach();
-        cx.subscribe(&cancel_delete_button, Self::on_cancel_delete_clicked)
-            .detach();
-        cx.subscribe(&confirm_delete_button, Self::on_confirm_delete_clicked)
-            .detach();
         Self::subscribe_voice_type_buttons(&voice_type_buttons, cx);
 
-        DialogView::Edit {
+        View::Edit {
             name,
             selected_voice_type,
             voice_type_buttons,
@@ -163,21 +247,13 @@ impl VoicesDialog {
             cancel_button,
             save_button,
             delete_button,
-            cancel_delete_button,
-            confirm_delete_button,
             form_error: None,
-            delete_error: None,
-            confirming_delete: false,
         }
     }
 
     fn subscribe_voice_type_buttons(buttons: &VoiceTypeButtons, cx: &mut Context<Self>) {
         cx.subscribe(&buttons.sin, Self::on_sin_clicked).detach();
         cx.subscribe(&buttons.saw, Self::on_saw_clicked).detach();
-    }
-
-    fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Msg::Closed);
     }
 
     fn on_add_new_clicked(
@@ -221,42 +297,6 @@ impl VoicesDialog {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        if let DialogView::Edit {
-            confirming_delete,
-            delete_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = true;
-            *delete_error = None;
-            cx.notify();
-        }
-    }
-
-    fn on_cancel_delete_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        if let DialogView::Edit {
-            confirming_delete,
-            delete_error,
-            ..
-        } = &mut self.view
-        {
-            *confirming_delete = false;
-            *delete_error = None;
-            cx.notify();
-        }
-    }
-
-    fn on_confirm_delete_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
         let Some(name) = self.selected_voice.clone() else {
             return;
         };
@@ -266,7 +306,7 @@ impl VoicesDialog {
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         let request = match &self.view {
-            DialogView::Add {
+            View::Add {
                 name,
                 selected_voice_type,
                 position,
@@ -279,18 +319,18 @@ impl VoicesDialog {
         let (name, voice_type, position) = match request {
             Ok(request) => request,
             Err(error) => {
-                if let DialogView::Add { form_error, .. } = &mut self.view {
+                if let View::Add { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
                 }
                 return;
             }
         };
-        cx.emit(Msg::AddRequested {
+        cx.emit(Msg::Change(Change::Add {
             name,
             voice_type,
             position,
-        });
+        }));
     }
 
     fn on_save_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -298,7 +338,7 @@ impl VoicesDialog {
             return;
         };
         let request = match &self.view {
-            DialogView::Edit {
+            View::Edit {
                 name,
                 selected_voice_type,
                 position,
@@ -311,19 +351,19 @@ impl VoicesDialog {
         let (name, voice_type, position) = match request {
             Ok(request) => request,
             Err(error) => {
-                if let DialogView::Edit { form_error, .. } = &mut self.view {
+                if let View::Edit { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
                 }
                 return;
             }
         };
-        cx.emit(Msg::EditRequested {
+        cx.emit(Msg::Change(Change::Edit {
             original_name,
             name,
             voice_type,
             position,
-        });
+        }));
     }
 
     fn on_sin_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -336,19 +376,19 @@ impl VoicesDialog {
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
         let (selected_voice_type, voice_type_buttons, form_error) = match &mut self.view {
-            DialogView::Add {
+            View::Add {
                 selected_voice_type,
                 voice_type_buttons,
                 form_error,
                 ..
             }
-            | DialogView::Edit {
+            | View::Edit {
                 selected_voice_type,
                 voice_type_buttons,
                 form_error,
                 ..
             } => (selected_voice_type, voice_type_buttons, form_error),
-            DialogView::List { .. } => return,
+            View::List { .. } => return,
         };
 
         if *selected_voice_type == voice_type {
@@ -374,7 +414,7 @@ impl VoicesDialog {
     }
 
     fn suppress_add_new_hover(&self, cx: &mut Context<Self>) {
-        if let DialogView::List { add_new_button, .. } = &self.view {
+        if let View::List { add_new_button, .. } = &self.view {
             add_new_button.update(cx, |button, cx| {
                 button.suppress_hover_until_pointer_exit(cx);
             });
@@ -390,7 +430,7 @@ impl VoicesDialog {
     }
 
     pub fn add_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Add { form_error, .. } = &mut self.view {
+        if let View::Add { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -404,7 +444,7 @@ impl VoicesDialog {
     }
 
     pub fn edit_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Edit { form_error, .. } = &mut self.view {
+        if let View::Edit { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -431,28 +471,33 @@ impl VoicesDialog {
         cx.notify();
     }
 
-    pub fn delete_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        if let DialogView::Edit {
-            delete_error,
-            confirming_delete,
-            ..
-        } = &mut self.view
+    pub fn sync_project(
+        &mut self,
+        voices: Vec<Voice>,
+        acoustic_scene: AcousticScene,
+        cx: &mut Context<Self>,
+    ) {
+        self.voices = voices;
+        self.acoustic_scene = acoustic_scene;
+        if self
+            .selected_voice
+            .as_ref()
+            .is_none_or(|selected| find_voice(&self.voices, selected).is_none())
         {
-            *delete_error = Some(error);
-            *confirming_delete = false;
-            cx.notify();
+            self.selected_voice = self.voices.first().map(|voice| voice.name.clone());
         }
+        cx.notify();
     }
 }
 
-impl Render for VoicesDialog {
+impl Render for VoicesWorkspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.view {
-            DialogView::List {
+            View::List {
                 add_new_button,
                 edit_button,
-            } => self.voice_list_dialog(add_new_button.clone(), edit_button.clone(), cx),
-            DialogView::Add {
+            } => self.voice_list(add_new_button.clone(), edit_button.clone(), cx),
+            View::Add {
                 name,
                 voice_type_buttons,
                 position,
@@ -460,8 +505,7 @@ impl Render for VoicesDialog {
                 add_button,
                 form_error,
                 ..
-            } => self.voice_form_dialog(
-                "add voice",
+            } => self.voice_form(
                 name.clone(),
                 voice_type_buttons,
                 position,
@@ -473,18 +517,14 @@ impl Render for VoicesDialog {
                     .child(cancel_button.clone())
                     .child(add_button.clone()),
             ),
-            DialogView::Edit {
+            View::Edit {
                 name,
                 voice_type_buttons,
                 position,
                 cancel_button,
                 save_button,
                 delete_button,
-                cancel_delete_button,
-                confirm_delete_button,
                 form_error,
-                delete_error,
-                confirming_delete,
                 ..
             } => {
                 let actions = div()
@@ -492,13 +532,7 @@ impl Render for VoicesDialog {
                     .items_end()
                     .justify_between()
                     .gap(s::CONTENT_PADDING)
-                    .child(self.delete_voice_actions(
-                        delete_button.clone(),
-                        cancel_delete_button.clone(),
-                        confirm_delete_button.clone(),
-                        *confirming_delete,
-                        delete_error.clone(),
-                    ))
+                    .child(div().flex().child(delete_button.clone()))
                     .child(
                         div()
                             .flex()
@@ -507,8 +541,7 @@ impl Render for VoicesDialog {
                             .child(save_button.clone()),
                     );
 
-                self.voice_form_dialog(
-                    "edit voice",
+                self.voice_form(
                     name.clone(),
                     voice_type_buttons,
                     position,
@@ -520,16 +553,14 @@ impl Render for VoicesDialog {
     }
 }
 
-impl VoicesDialog {
-    fn voice_list_dialog(
+impl VoicesWorkspace {
+    fn voice_list(
         &self,
         add_new_button: Entity<Button>,
         edit_button: Entity<Button>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        list_detail_dialog(dialog::ListDetailArgs {
-            title: "voices",
-            close_button: self.close_button.clone(),
+        workspace::list_detail(workspace::ListDetailArgs {
             list: voice_list(&self.voices, self.selected_voice.as_ref(), cx),
             details: voice_details(
                 self.selected_voice
@@ -542,9 +573,8 @@ impl VoicesDialog {
         })
     }
 
-    fn voice_form_dialog(
+    fn voice_form(
         &self,
-        title: &'static str,
         name: Entity<TextInput>,
         voice_type_buttons: &VoiceTypeButtons,
         position: &PositionFields,
@@ -572,38 +602,7 @@ impl VoicesDialog {
             form
         };
 
-        management_form_dialog(title, self.close_button.clone(), form, actions)
-    }
-
-    fn delete_voice_actions(
-        &self,
-        delete_button: Entity<Button>,
-        cancel_delete_button: Entity<Button>,
-        confirm_delete_button: Entity<Button>,
-        confirming_delete: bool,
-        delete_error: Option<String>,
-    ) -> gpui::Div {
-        let actions = if confirming_delete {
-            destructive_confirmation(
-                self.selected_voice
-                    .as_ref()
-                    .map(|name| format!("delete {:?}?", name.as_str()))
-                    .unwrap_or_else(|| "delete this voice?".to_string()),
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(cancel_delete_button)
-                    .child(confirm_delete_button),
-            )
-        } else {
-            div().flex().child(delete_button)
-        };
-
-        if let Some(error) = delete_error {
-            actions.child(error_message(error))
-        } else {
-            actions
-        }
+        workspace::management_form(form, actions)
     }
 }
 
@@ -616,7 +615,7 @@ fn find_voice<'a>(voices: &'a [Voice], name: &VoiceName) -> Option<&'a Voice> {
 fn voice_list(
     voices: &[Voice],
     selected_voice: Option<&VoiceName>,
-    cx: &mut Context<VoicesDialog>,
+    cx: &mut Context<VoicesWorkspace>,
 ) -> gpui::Div {
     let rows = voices
         .iter()
@@ -631,7 +630,7 @@ fn voice_list_row(
     index: usize,
     voice: &Voice,
     selected: bool,
-    cx: &mut Context<VoicesDialog>,
+    cx: &mut Context<VoicesWorkspace>,
 ) -> gpui::Div {
     let voice_name = voice.name.clone();
     selection_list::row(index, selected, voice.name.as_str().to_owned()).on_mouse_down(
@@ -710,7 +709,7 @@ struct VoiceTypeButtons {
 }
 
 impl VoiceTypeButtons {
-    fn new(selected: VoiceType, cx: &mut Context<VoicesDialog>) -> Self {
+    fn new(selected: VoiceType, cx: &mut Context<VoicesWorkspace>) -> Self {
         Self {
             sin: voice_type_button("voice-type-sin", VoiceType::Sin, selected, cx),
             saw: voice_type_button("voice-type-saw", VoiceType::Saw, selected, cx),
@@ -721,7 +720,7 @@ impl VoiceTypeButtons {
         vec![self.sin.clone(), self.saw.clone()]
     }
 
-    fn set_selected(&self, selected: VoiceType, cx: &mut Context<VoicesDialog>) {
+    fn set_selected(&self, selected: VoiceType, cx: &mut Context<VoicesWorkspace>) {
         set_button_selected(&self.sin, selected == VoiceType::Sin, cx);
         set_button_selected(&self.saw, selected == VoiceType::Saw, cx);
     }
@@ -731,12 +730,12 @@ fn voice_type_button(
     id: &'static str,
     voice_type: VoiceType,
     selected: VoiceType,
-    cx: &mut Context<VoicesDialog>,
+    cx: &mut Context<VoicesWorkspace>,
 ) -> Entity<Button> {
     cx.new(|_| Button::new(id, voice_type.label()).depressed(voice_type == selected))
 }
 
-fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context<VoicesDialog>) {
+fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context<VoicesWorkspace>) {
     button.update(cx, |button, cx| button.set_depressed(selected, cx));
 }
 
@@ -744,7 +743,7 @@ fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context
 mod tests {
     use gpui::{px, size, TestAppContext};
 
-    use super::{DialogView, VoicesDialog};
+    use super::{View, VoicesWorkspace};
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
         voice::{Voice, VoiceType},
@@ -755,12 +754,12 @@ mod tests {
         let room = RectangularRoom::new(8.0, 10.0, 3.0, 0.25).unwrap();
         let scene = AcousticScene::new(room.center(), Some(room)).unwrap();
         let (dialog, cx) =
-            cx.add_window_view(move |_, cx| VoicesDialog::new(Vec::new(), scene, cx));
+            cx.add_window_view(move |_, cx| VoicesWorkspace::new(Vec::new(), scene, cx));
         cx.simulate_resize(size(px(800.0), px(800.0)));
         cx.run_until_parked();
 
         dialog.update(cx, |dialog, cx| {
-            dialog.view = VoicesDialog::add_view(&dialog.acoustic_scene, cx);
+            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
             cx.notify();
         });
         cx.run_until_parked();
@@ -770,7 +769,7 @@ mod tests {
         assert!(cx.debug_bounds("add-voice-position-z").is_some());
         let position = cx.update(|_, cx| {
             let dialog = dialog.read(cx);
-            let DialogView::Add { position, .. } = &dialog.view else {
+            let View::Add { position, .. } = &dialog.view else {
                 panic!("add button must show the add form");
             };
             position.position(&dialog.acoustic_scene, cx).unwrap()
@@ -784,13 +783,13 @@ mod tests {
         let saved_position = Point3Meters::new(-2.0, 4.5, 1.0).unwrap();
         let voice = Voice::new(1, "lead", VoiceType::Saw).with_position(saved_position);
         let (dialog, cx) =
-            cx.add_window_view(move |_, cx| VoicesDialog::new(vec![voice], scene, cx));
+            cx.add_window_view(move |_, cx| VoicesWorkspace::new(vec![voice], scene, cx));
         cx.simulate_resize(size(px(800.0), px(800.0)));
         cx.run_until_parked();
 
         dialog.update(cx, |dialog, cx| {
             let voice = dialog.voices[0].clone();
-            dialog.view = VoicesDialog::edit_view(&voice, cx);
+            dialog.view = VoicesWorkspace::edit_view(&voice, cx);
             cx.notify();
         });
         cx.run_until_parked();
@@ -800,7 +799,7 @@ mod tests {
         assert!(cx.debug_bounds("edit-voice-position-z").is_some());
         let position = cx.update(|_, cx| {
             let dialog = dialog.read(cx);
-            let DialogView::Edit { position, .. } = &dialog.view else {
+            let View::Edit { position, .. } = &dialog.view else {
                 panic!("edit button must show the edit form");
             };
             position.position(&dialog.acoustic_scene, cx).unwrap()
