@@ -681,18 +681,14 @@ impl Render for ExportRowsDialog {
 pub(super) enum ScoreAction {
     LoopPart,
     ExportRows,
-    InsertBefore,
-    InsertAfter,
     ClearRows,
     DeleteRows,
 }
 
 impl ScoreAction {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 4] = [
         Self::LoopPart,
         Self::ExportRows,
-        Self::InsertBefore,
-        Self::InsertAfter,
         Self::ClearRows,
         Self::DeleteRows,
     ];
@@ -705,8 +701,6 @@ impl ScoreAction {
         match self {
             Self::LoopPart => "loop part",
             Self::ExportRows => "export selected rows as part",
-            Self::InsertBefore => "insert row above",
-            Self::InsertAfter => "insert row below",
             Self::ClearRows => "clear selected rows",
             Self::DeleteRows => "delete selected rows",
         }
@@ -721,6 +715,8 @@ pub struct ScoreEditor {
     cells: Vec<Vec<Entity<TextInput>>>,
     row_selection: Option<AnchoredRowSelection>,
     drag_anchor: Option<usize>,
+    insert_before_button: Entity<Button>,
+    insert_after_button: Entity<Button>,
     action_menu: Entity<ActionMenu>,
     playing_row: Option<usize>,
     scroll_handle: data_grid::DataGridScrollHandle,
@@ -761,14 +757,16 @@ impl ScoreEditor {
             )
         });
         let cells = Self::build_cells(editor_id, &score, &part, cx);
+        let insert_before_button = cx
+            .new(move |_| Button::new(("insert-row-before", editor_id), "+ above").disabled(true));
+        let insert_after_button =
+            cx.new(move |_| Button::new(("insert-row-after", editor_id), "+ below").disabled(true));
         let action_labels = ScoreAction::ALL.map(ScoreAction::label);
         let action_menu = cx.new(move |cx| {
             let mut menu =
                 ActionMenu::new(("score-actions", editor_id), "actions", action_labels, cx);
             for action in [
                 ScoreAction::ExportRows,
-                ScoreAction::InsertBefore,
-                ScoreAction::InsertAfter,
                 ScoreAction::ClearRows,
                 ScoreAction::DeleteRows,
             ] {
@@ -779,6 +777,10 @@ impl ScoreEditor {
 
         cx.subscribe(&document, Self::on_document_event).detach();
         cx.subscribe(&part_dropdown, Self::on_part_selected)
+            .detach();
+        cx.subscribe(&insert_before_button, Self::on_insert_before_clicked)
+            .detach();
+        cx.subscribe(&insert_after_button, Self::on_insert_after_clicked)
             .detach();
         cx.subscribe(&action_menu, Self::on_action_selected)
             .detach();
@@ -791,6 +793,8 @@ impl ScoreEditor {
             cells,
             row_selection: None,
             drag_anchor: None,
+            insert_before_button,
+            insert_after_button,
             action_menu,
             playing_row: None,
             scroll_handle: data_grid::DataGridScrollHandle::compact(),
@@ -891,21 +895,19 @@ impl ScoreEditor {
             return;
         }
         self.row_selection = selection;
-        self.sync_action_menu(cx);
+        self.sync_actions(cx);
         cx.notify();
     }
 
-    fn sync_action_menu(&self, cx: &mut Context<Self>) {
+    fn sync_actions(&self, cx: &mut Context<Self>) {
         let selected = self.selected_rows();
         let no_selection = selected.is_none();
         let delete_disabled = selected.is_none_or(|rows| rows.len() == self.cells.len());
+        for button in [&self.insert_before_button, &self.insert_after_button] {
+            button.update(cx, |button, cx| button.set_disabled(no_selection, cx));
+        }
         self.action_menu.update(cx, |menu, cx| {
-            for action in [
-                ScoreAction::ExportRows,
-                ScoreAction::InsertBefore,
-                ScoreAction::InsertAfter,
-                ScoreAction::ClearRows,
-            ] {
+            for action in [ScoreAction::ExportRows, ScoreAction::ClearRows] {
                 menu.set_disabled(action.index(), no_selection, cx);
             }
             menu.set_disabled(ScoreAction::DeleteRows.index(), delete_disabled, cx);
@@ -931,8 +933,6 @@ impl ScoreEditor {
                     rows,
                 });
             }
-            Some(ScoreAction::InsertBefore) => self.insert_before(cx),
-            Some(ScoreAction::InsertAfter) => self.insert_after(cx),
             Some(ScoreAction::ClearRows) => self.clear_rows(cx),
             Some(ScoreAction::DeleteRows) => self.delete_rows(cx),
             None => {}
@@ -982,6 +982,24 @@ impl ScoreEditor {
 
     fn on_row_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
         self.drag_anchor = None;
+    }
+
+    fn on_insert_before_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_before(cx);
+    }
+
+    fn on_insert_after_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_after(cx);
     }
 
     fn insert_before(&mut self, cx: &mut Context<Self>) {
@@ -1089,7 +1107,7 @@ impl ScoreEditor {
                 } else {
                     None
                 };
-                self.sync_action_menu(cx);
+                self.sync_actions(cx);
             }
             DocumentEvent::Reset => {
                 let document = self.document.read(cx);
@@ -1098,7 +1116,7 @@ impl ScoreEditor {
                 self.cells = Self::build_cells(self.editor_id, &score, &part, cx);
                 self.drag_anchor = None;
                 self.row_selection = None;
-                self.sync_action_menu(cx);
+                self.sync_actions(cx);
             }
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
@@ -1154,11 +1172,20 @@ impl Render for ScoreEditor {
         let row_labels = (0..self.cells.len())
             .map(|row| document.part().beat_label(row))
             .collect::<Vec<_>>();
-        let score_actions = div().flex().flex_none().items_center().justify_end().child(
+        let score_actions = button::action_group([
+            div()
+                .debug_selector(|| "insert-row-before-control".to_string())
+                .child(self.insert_before_button.clone()),
+            div()
+                .debug_selector(|| "insert-row-after-control".to_string())
+                .child(self.insert_after_button.clone()),
             div()
                 .debug_selector(|| "score-actions-control".to_string())
                 .child(self.action_menu.clone()),
-        );
+        ])
+        .flex_none()
+        .items_center()
+        .justify_end();
         let header = div()
             .flex()
             .items_center()
@@ -1455,14 +1482,23 @@ mod tests {
             let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
             ScoreEditor::new(0, document, vec![part_name], cx)
         });
-        let action_menu = cx.update(|_, cx| editor.read(cx).action_menu.clone());
+        let (insert_before, insert_after, action_menu) = cx.update(|_, cx| {
+            let editor = editor.read(cx);
+            (
+                editor.insert_before_button.clone(),
+                editor.insert_after_button.clone(),
+                editor.action_menu.clone(),
+            )
+        });
 
+        assert!(cx.debug_bounds("insert-row-before-control").is_some());
+        assert!(cx.debug_bounds("insert-row-after-control").is_some());
         assert!(cx.debug_bounds("score-actions-control").is_some());
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
         assert!(cx.update(|_, cx| {
             let menu = action_menu.read(cx);
             menu.is_disabled(ScoreAction::ExportRows.index())
-                && menu.is_disabled(ScoreAction::InsertBefore.index())
-                && menu.is_disabled(ScoreAction::InsertAfter.index())
                 && menu.is_disabled(ScoreAction::ClearRows.index())
                 && menu.is_disabled(ScoreAction::DeleteRows.index())
                 && !menu.is_disabled(ScoreAction::LoopPart.index())
@@ -1477,33 +1513,33 @@ mod tests {
             ),
             Modifiers::default(),
         );
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
         assert!(cx.update(|_, cx| {
             let menu = action_menu.read(cx);
             menu.is_disabled(ScoreAction::ExportRows.index())
-                && menu.is_disabled(ScoreAction::InsertBefore.index())
-                && menu.is_disabled(ScoreAction::InsertAfter.index())
                 && menu.is_disabled(ScoreAction::ClearRows.index())
                 && menu.is_disabled(ScoreAction::DeleteRows.index())
         }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));
 
         cx.simulate_click(first.center(), Modifiers::default());
+        assert!(!cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(!cx.update(|_, cx| insert_after.read(cx).is_disabled()));
         assert!(cx.update(|_, cx| {
             let menu = action_menu.read(cx);
             !menu.is_disabled(ScoreAction::ExportRows.index())
-                && !menu.is_disabled(ScoreAction::InsertBefore.index())
-                && !menu.is_disabled(ScoreAction::InsertAfter.index())
                 && !menu.is_disabled(ScoreAction::ClearRows.index())
                 && !menu.is_disabled(ScoreAction::DeleteRows.index())
         }));
         assert!(cx.debug_bounds("score-selected-row-header-0").is_some());
 
         cx.simulate_click(first.center(), Modifiers::default());
+        assert!(cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(cx.update(|_, cx| insert_after.read(cx).is_disabled()));
         assert!(cx.update(|_, cx| {
             let menu = action_menu.read(cx);
             menu.is_disabled(ScoreAction::ExportRows.index())
-                && menu.is_disabled(ScoreAction::InsertBefore.index())
-                && menu.is_disabled(ScoreAction::InsertAfter.index())
                 && menu.is_disabled(ScoreAction::ClearRows.index())
                 && menu.is_disabled(ScoreAction::DeleteRows.index())
         }));
@@ -1518,6 +1554,8 @@ mod tests {
                 ..Modifiers::default()
             },
         );
+        assert!(!cx.update(|_, cx| insert_before.read(cx).is_disabled()));
+        assert!(!cx.update(|_, cx| insert_after.read(cx).is_disabled()));
         assert!(cx.update(|_, cx| {
             let menu = action_menu.read(cx);
             !menu.is_disabled(ScoreAction::ExportRows.index())

@@ -286,9 +286,10 @@ fn open_project_dialog(
 
     s::raised(
         div()
+            .debug_selector(|| "open-project-dialog".to_string())
             .flex()
             .flex_col()
-            .w(s::S10)
+            .w(s::S10 + s::S7)
             .bg(s::GRAY2)
             .child(title_bar("open project", None))
             .child(body)
@@ -427,10 +428,12 @@ fn project_details(project: Option<&ProjectEntry>) -> gpui::Div {
     };
 
     div()
+        .debug_selector(|| "open-project-details".to_string())
         .flex()
         .flex_col()
         .gap_4()
         .flex_1()
+        .min_w(s::S0)
         .min_h(s::S9)
         .child(details)
 }
@@ -449,17 +452,27 @@ fn selected_project_details(project: &ProjectEntry) -> gpui::Div {
             "description",
             project.project.description.clone(),
         ))
-        .child(div().flex().gap_4().children([
-            metric("beat length", project.project.beat_length.to_string()),
+        .child(div().flex().flex_col().gap_4().children([
             metric(
+                "open-project-beat-length",
+                "beat length",
+                project.project.beat_length.to_string(),
+            ),
+            metric(
+                "open-project-timing-variance",
                 "timing variance (samples)",
                 project.project.timing_variance.to_string(),
             ),
             metric(
+                "open-project-frequency-variance",
                 "frequency variance (decimal)",
                 project.project.frequency_variance().ratio().to_string(),
             ),
-            metric("seed", project.project.seed.value().to_string()),
+            metric(
+                "open-project-seed",
+                "seed",
+                project.project.seed.value().to_string(),
+            ),
         ]))
 }
 
@@ -472,12 +485,17 @@ fn detail_row(label: &'static str, value: impl Into<SharedString>) -> gpui::Div 
         .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
 }
 
-fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
+fn metric(
+    debug_selector: &'static str,
+    label: &'static str,
+    value: impl Into<SharedString>,
+) -> gpui::Div {
     div()
+        .debug_selector(move || debug_selector.to_string())
         .flex()
         .flex_col()
         .gap_1()
-        .flex_1()
+        .min_w(s::S0)
         .child(div().text_color(s::TEXT_HEADER).child(label))
         .child(div().text_color(s::TEXT_DEFAULT).child(value.into()))
 }
@@ -486,14 +504,49 @@ fn metric(label: &'static str, value: impl Into<SharedString>) -> gpui::Div {
 mod tests {
     use std::{fs, path::PathBuf, time::SystemTime};
 
-    use gpui::TestAppContext;
+    use gpui::{px, size, TestAppContext};
 
     use super::{button, DialogView, OpenProjectDialog};
-    use crate::{project, seed::Seed};
+    use crate::{project, seed::Seed, style as s};
+
+    #[gpui::test]
+    fn project_metrics_stay_inside_the_wider_details_column(cx: &mut TestAppContext) {
+        let root = temp_root("metrics-layout");
+        project::create_project(
+            &root,
+            &project::Project::new("Original", 800, 12, Seed::new(1)),
+        )
+        .unwrap();
+        let dialog_root = root.clone();
+        let (_, cx) = cx.add_window_view(|_, cx| OpenProjectDialog::new(dialog_root, cx));
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        cx.run_until_parked();
+
+        let dialog = cx.debug_bounds("open-project-dialog").unwrap();
+        let details = cx.debug_bounds("open-project-details").unwrap();
+        let metrics = [
+            cx.debug_bounds("open-project-beat-length").unwrap(),
+            cx.debug_bounds("open-project-timing-variance").unwrap(),
+            cx.debug_bounds("open-project-frequency-variance").unwrap(),
+            cx.debug_bounds("open-project-seed").unwrap(),
+        ];
+
+        assert_eq!(dialog.size.width, s::S10 + s::S7);
+        assert!(details.size.width > s::S9);
+        assert!(metrics
+            .windows(2)
+            .all(|pair| pair[0].origin.y + pair[0].size.height <= pair[1].origin.y));
+        assert!(metrics.iter().all(|metric| {
+            metric.origin.x >= details.origin.x
+                && metric.origin.x + metric.size.width <= details.origin.x + details.size.width
+        }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[gpui::test]
     fn duplicate_project_action_collects_a_name_and_creates_the_copy(cx: &mut TestAppContext) {
-        let root = temp_root();
+        let root = temp_root("duplicate");
         project::create_project(
             &root,
             &project::Project::new("Original", 800, 0, Seed::new(1)),
@@ -540,13 +593,13 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn temp_root() -> PathBuf {
+    fn temp_root(label: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "ahess-open-project-duplicate-{}-{unique}",
+            "ahess-open-project-{label}-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();

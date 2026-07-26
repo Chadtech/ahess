@@ -3199,26 +3199,15 @@ mod tests {
 
         let first_row = cx.debug_bounds("score-row-header-0").unwrap();
         cx.simulate_click(first_row.center(), Default::default());
-        let actions = cx.update(|_, cx| {
-            model.read(cx).score_views[0]
-                .editor
-                .as_ref()
-                .unwrap()
-                .read(cx)
-                .actions()
-        });
-        actions.update(cx, |menu, cx| {
-            menu.activate(ScoreAction::InsertAfter.index(), cx);
-        });
+        let insert_after = cx.debug_bounds("insert-row-after-control").unwrap();
+        cx.simulate_click(insert_after.center(), Default::default());
         cx.run_until_parked();
         assert_eq!(
             cx.update(|_, cx| model.read(cx).project.parts()[0].length),
             3
         );
 
-        actions.update(cx, |menu, cx| {
-            menu.activate(ScoreAction::InsertAfter.index(), cx);
-        });
+        cx.simulate_click(insert_after.center(), Default::default());
         cx.run_until_parked();
 
         let (project, document) = cx.update(|_, cx| {

@@ -119,9 +119,10 @@ or when it defines how a shared component is used.
 - keep row actions in the editor header alongside other grid-level controls so
   they do not consume a separate row of vertical space. Keep compact actions
   on one line and cap or truncate flexible selectors before wrapping controls.
-  When the command set outgrows a compact toolbar, put the complete set in a
-  shared action menu rather than adding another toolbar row. Keep every menu
-  item visible and disable actions that do not apply without a row selection.
+  Keep high-frequency repeatable commands directly available when they fit,
+  and put the remaining commands in a shared action menu rather than adding
+  another toolbar row. Keep every menu item visible and disable actions that
+  do not apply without a row selection.
 
 ## ordered input lists
 
