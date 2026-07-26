@@ -506,12 +506,11 @@ impl Render for Model {
                     .debug_selector(|| "tuning-editor-sidebar".to_string())
                     .child(list)
                     .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .pt(s::S4)
-                            .child(self.new_button.clone())
-                            .child(self.duplicate_button.clone()),
+                        button::action_group([
+                            self.new_button.clone(),
+                            self.duplicate_button.clone(),
+                        ])
+                        .pt(s::S4),
                     ),
             )
             .child(details);
@@ -602,20 +601,16 @@ impl Model {
         };
         let identity = original_id.map(|id| detail("stable id", id.as_str().to_string()));
         let (kind_settings, tuning_values) = self.kind_sections(draft, cx);
-        let primary_actions = div()
-            .flex()
-            .gap_3()
-            .child(self.cancel_button.clone())
-            .child(self.save_button.clone())
-            .debug_selector(|| "tuning-primary-actions".to_string());
+        let primary_actions =
+            button::action_group([self.cancel_button.clone(), self.save_button.clone()])
+                .debug_selector(|| "tuning-primary-actions".to_string());
         let settings_actions = match (original_id, deletion) {
             (Some(id), DeletionState::Confirming) => destructive_confirmation(
                 format!("delete tuning system {:?}?", id.as_str()),
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(self.cancel_delete_button.clone())
-                    .child(self.confirm_delete_button.clone()),
+                button::action_group([
+                    self.cancel_delete_button.clone(),
+                    self.confirm_delete_button.clone(),
+                ]),
             ),
             (Some(_), DeletionState::Idle) => div()
                 .flex()
@@ -768,11 +763,7 @@ impl Model {
 
     fn row_actions(&self) -> gpui::Div {
         div().flex().w_full().justify_end().child(
-            div()
-                .flex()
-                .gap_3()
-                .child(self.add_row_button.clone())
-                .child(self.remove_row_button.clone())
+            button::action_group([self.add_row_button.clone(), self.remove_row_button.clone()])
                 .debug_selector(|| "tuning-row-action-buttons".to_string()),
         )
     }

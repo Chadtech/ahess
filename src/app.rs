@@ -676,13 +676,12 @@ fn project_picker_dialog(buttons: &ProjectStartButtons) -> impl IntoElement {
                         .overflow_hidden(),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .justify_center()
-                        .gap_5()
-                        .child(buttons.new_project.clone())
-                        .child(buttons.open_existing.clone())
-                        .child(buttons.tuning_systems.clone()),
+                    button::action_group([
+                        buttons.new_project.clone(),
+                        buttons.open_existing.clone(),
+                        buttons.tuning_systems.clone(),
+                    ])
+                    .justify_center(),
                 ),
         ),
     )

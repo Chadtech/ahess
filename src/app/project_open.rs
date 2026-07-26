@@ -247,12 +247,8 @@ impl Render for CloseProjectDialog {
             "close project",
             None,
             "discard unfinished workspace changes and close this project?",
-            div()
-                .flex()
-                .justify_end()
-                .gap(s::S3)
-                .child(self.cancel_button.clone())
-                .child(self.confirm_button.clone()),
+            button::action_group([self.cancel_button.clone(), self.confirm_button.clone()])
+                .justify_end(),
         )
     }
 }

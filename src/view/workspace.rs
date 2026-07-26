@@ -88,7 +88,7 @@ pub fn column_with_actions(content: impl IntoElement, actions: impl IntoElement)
         .flex_1()
         .min_h(px(0.0))
         .child(content)
-        .child(div().flex().pt(s::S4).child(actions))
+        .child(div().flex().pt(s::S5).child(actions))
 }
 
 pub fn tile(content: impl IntoElement) -> gpui::Div {
@@ -128,4 +128,40 @@ fn equal_width_column(child: impl IntoElement) -> gpui::Div {
         .min_w(s::S0)
         .min_h(px(0.0))
         .child(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{prelude::*, Context, TestAppContext, Window};
+
+    use super::column_with_actions;
+    use crate::style as s;
+
+    struct ColumnWithActionsHost;
+
+    impl Render for ColumnWithActionsHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            column_with_actions(
+                gpui::div()
+                    .flex_none()
+                    .h(s::S6)
+                    .debug_selector(|| "column-content".to_string()),
+                gpui::div()
+                    .flex_none()
+                    .h(s::S6)
+                    .debug_selector(|| "column-actions".to_string()),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn column_actions_are_separated_from_content_with_s5(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| ColumnWithActionsHost);
+        cx.run_until_parked();
+
+        let content = cx.debug_bounds("column-content").unwrap();
+        let actions = cx.debug_bounds("column-actions").unwrap();
+
+        assert_eq!(actions.top() - content.bottom(), s::S5);
+    }
 }

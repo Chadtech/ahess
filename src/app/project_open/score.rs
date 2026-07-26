@@ -537,20 +537,15 @@ impl RowEditConfirmation {
 
 impl Render for RowEditConfirmation {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let actions = div()
-            .flex()
-            .justify_end()
-            .gap(s::S3)
-            .child(
-                div()
-                    .debug_selector(|| "cancel-row-edit-control".to_string())
-                    .child(self.cancel_button.clone()),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "confirm-row-edit-control".to_string())
-                    .child(self.confirm_button.clone()),
-            );
+        let actions = button::action_group([
+            div()
+                .debug_selector(|| "cancel-row-edit-control".to_string())
+                .child(self.cancel_button.clone()),
+            div()
+                .debug_selector(|| "confirm-row-edit-control".to_string())
+                .child(self.confirm_button.clone()),
+        ])
+        .justify_end();
         destructive_dialog("confirm row change", None, self.message(), actions)
     }
 }
@@ -650,12 +645,9 @@ impl ExportRowsDialog {
 
 impl Render for ExportRowsDialog {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let actions = div()
-            .flex()
-            .justify_end()
-            .gap(s::S3)
-            .child(self.cancel_button.clone())
-            .child(self.export_button.clone());
+        let actions =
+            button::action_group([self.cancel_button.clone(), self.export_button.clone()])
+                .justify_end();
         let content = div()
             .flex()
             .flex_col()

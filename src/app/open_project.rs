@@ -293,13 +293,9 @@ fn open_project_dialog(
             .child(title_bar("open project", None))
             .child(body)
             .child(
-                div()
-                    .flex()
+                button::action_group([duplicate_button, open_button])
                     .justify_end()
-                    .gap_3()
-                    .p(s::CONTENT_PADDING)
-                    .child(duplicate_button)
-                    .child(open_button),
+                    .p(s::CONTENT_PADDING),
             ),
     )
 }
@@ -341,14 +337,7 @@ fn duplicate_project_dialog(
                     .gap(s::CONTENT_PADDING)
                     .p(s::CONTENT_PADDING)
                     .child(form)
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap_3()
-                            .child(cancel_button)
-                            .child(duplicate_button),
-                    ),
+                    .child(button::action_group([cancel_button, duplicate_button]).justify_end()),
             ),
     )
 }

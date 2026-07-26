@@ -114,12 +114,8 @@ impl Render for DeleteDialog {
             .gap(s::S3)
             .children(self.error.clone().map(error_message))
             .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(s::S3)
-                    .child(self.cancel_button.clone())
-                    .child(self.confirm_button.clone()),
+                button::action_group([self.cancel_button.clone(), self.confirm_button.clone()])
+                    .justify_end(),
             );
         destructive_dialog(
             "delete voice",
@@ -510,12 +506,7 @@ impl Render for VoicesWorkspace {
                 voice_type_buttons,
                 position,
                 form_error.clone(),
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_3()
-                    .child(cancel_button.clone())
-                    .child(add_button.clone()),
+                button::action_group([cancel_button.clone(), add_button.clone()]).justify_end(),
             ),
             View::Edit {
                 name,
@@ -533,13 +524,10 @@ impl Render for VoicesWorkspace {
                     .justify_between()
                     .gap(s::CONTENT_PADDING)
                     .child(div().flex().child(delete_button.clone()))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(cancel_button.clone())
-                            .child(save_button.clone()),
-                    );
+                    .child(button::action_group([
+                        cancel_button.clone(),
+                        save_button.clone(),
+                    ]));
 
                 self.voice_form(
                     name.clone(),

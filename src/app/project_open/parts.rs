@@ -120,12 +120,8 @@ impl Render for DeleteDialog {
             .gap(s::S3)
             .children(self.error.clone().map(error_message))
             .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(s::S3)
-                    .child(self.cancel_button.clone())
-                    .child(self.confirm_button.clone()),
+                button::action_group([self.cancel_button.clone(), self.confirm_button.clone()])
+                    .justify_end(),
             );
         destructive_dialog(
             "delete part",
@@ -1032,12 +1028,11 @@ impl Render for PartsWorkspace {
             View::List(view) => workspace::list_detail(workspace::ListDetailArgs {
                 list: workspace::column_with_actions(
                     part_list(&self.parts, self.selected_part.as_ref(), cx),
-                    div()
-                        .flex()
-                        .gap_3()
-                        .debug_selector(|| "part-list-actions".to_string())
-                        .child(view.add_new_button.clone())
-                        .child(view.combine_button.clone()),
+                    button::action_group([
+                        view.add_new_button.clone(),
+                        view.combine_button.clone(),
+                    ])
+                    .debug_selector(|| "part-list-actions".to_string()),
                 ),
                 details: part_details(
                     self.selected_part
@@ -1093,12 +1088,7 @@ impl Render for PartsWorkspace {
 
                 workspace::management_form(
                     form,
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_3()
-                        .child(cancel_button.clone())
-                        .child(add_button.clone()),
+                    button::action_group([cancel_button.clone(), add_button.clone()]).justify_end(),
                 )
             }
             View::Duplicate {
@@ -1126,12 +1116,8 @@ impl Render for PartsWorkspace {
 
                 workspace::management_form(
                     form,
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_3()
-                        .child(cancel_button.clone())
-                        .child(duplicate_button.clone()),
+                    button::action_group([cancel_button.clone(), duplicate_button.clone()])
+                        .justify_end(),
                 )
             }
             View::Edit {
@@ -1164,12 +1150,8 @@ impl Render for PartsWorkspace {
 
                 workspace::management_form(
                     form,
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_3()
-                        .child(cancel_button.clone())
-                        .child(save_button.clone()),
+                    button::action_group([cancel_button.clone(), save_button.clone()])
+                        .justify_end(),
                 )
             }
             View::Combine {
@@ -1192,17 +1174,17 @@ impl Render for PartsWorkspace {
                     .justify_end()
                     .debug_selector(|| "combine-available-actions".to_string())
                     .child(add_source_button.clone());
-                let movement_actions = div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().text_color(s::TEXT_HEADER).child("move"))
-                    .child(move_source_earlier_button.clone())
-                    .child(move_source_later_button.clone());
+                let movement_actions = button::labeled_action_group(
+                    "move",
+                    [
+                        move_source_earlier_button.clone(),
+                        move_source_later_button.clone(),
+                    ],
+                );
                 let selected_actions = div()
                     .flex()
                     .justify_between()
-                    .gap(s::S4)
+                    .gap(s::S5)
                     .debug_selector(|| "combine-selected-actions".to_string())
                     .child(movement_actions)
                     .child(remove_source_button.clone());
@@ -1243,13 +1225,9 @@ impl Render for PartsWorkspace {
 
                 workspace::management_form(
                     form,
-                    div()
-                        .flex()
+                    button::action_group([cancel_button.clone(), combine_button.clone()])
                         .justify_end()
-                        .gap_3()
-                        .debug_selector(|| "combine-workspace-actions".to_string())
-                        .child(cancel_button.clone())
-                        .child(combine_button.clone()),
+                        .debug_selector(|| "combine-workspace-actions".to_string()),
                 )
             }
         }
@@ -1451,33 +1429,24 @@ fn part_details(
                 .flex()
                 .flex_col()
                 .items_start()
-                .gap_3()
+                .gap(s::S5)
                 .debug_selector(|| "part-details-actions".to_string())
                 .child(
                     div()
                         .debug_selector(|| "add-to-arrangement-control".to_string())
                         .child(add_to_arrangement),
                 )
-                .child(
+                .child(button::action_group([
                     div()
-                        .flex()
-                        .gap_3()
-                        .child(
-                            div()
-                                .debug_selector(|| "edit-part-control".to_string())
-                                .child(edit),
-                        )
-                        .child(
-                            div()
-                                .debug_selector(|| "duplicate-part-control".to_string())
-                                .child(duplicate),
-                        )
-                        .child(
-                            div()
-                                .debug_selector(|| "delete-part-control".to_string())
-                                .child(delete),
-                        ),
-                );
+                        .debug_selector(|| "edit-part-control".to_string())
+                        .child(edit),
+                    div()
+                        .debug_selector(|| "duplicate-part-control".to_string())
+                        .child(duplicate),
+                    div()
+                        .debug_selector(|| "delete-part-control".to_string())
+                        .child(delete),
+                ]));
             let beat_label = if part.length == 1 { "beat" } else { "beats" };
 
             div()
@@ -1591,27 +1560,18 @@ fn arrangement_panel(
     let beat_label = if total_beats == 1 { "beat" } else { "beats" };
     let has_selection = selected_occurrence.is_some_and(|index| index < sequence.len());
 
-    let movement_actions = div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .debug_selector(|| "arrangement-movement-actions".to_string())
-        .child(div().text_color(s::TEXT_HEADER).child("move"))
-        .child(move_earlier_button)
-        .child(move_later_button);
-    let occurrence_actions = div()
-        .flex()
-        .gap_3()
-        .debug_selector(|| "arrangement-occurrence-actions".to_string())
-        .child(repeat_button)
-        .child(remove_occurrence_button);
+    let movement_actions =
+        button::labeled_action_group("move", [move_earlier_button, move_later_button])
+            .debug_selector(|| "arrangement-movement-actions".to_string());
+    let occurrence_actions = button::action_group([repeat_button, remove_occurrence_button])
+        .debug_selector(|| "arrangement-occurrence-actions".to_string());
     let action_row = div()
         .flex()
-        .gap(s::S4)
+        .gap(s::S5)
         .debug_selector(|| "arrangement-actions".to_string())
         .child(movement_actions)
         .when(has_selection, |actions| actions.child(occurrence_actions));
-    let actions = div().flex().flex_col().gap_3().pt(s::S4).child(action_row);
+    let actions = div().flex().flex_col().gap_3().pt(s::S5).child(action_row);
     let actions = if let Some(error) = arrangement_error {
         actions.child(error_message(error))
     } else {

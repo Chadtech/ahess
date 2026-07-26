@@ -5,6 +5,28 @@ use gpui::{
 
 use crate::style as s;
 
+pub fn action_group<Action>(actions: impl IntoIterator<Item = Action>) -> gpui::Div
+where
+    Action: IntoElement,
+{
+    gpui::div().flex().gap(s::S5).children(actions)
+}
+
+pub fn labeled_action_group<Action>(
+    label: impl Into<SharedString>,
+    actions: impl IntoIterator<Item = Action>,
+) -> gpui::Div
+where
+    Action: IntoElement,
+{
+    gpui::div()
+        .flex()
+        .items_center()
+        .gap(s::S3)
+        .child(gpui::div().text_color(s::TEXT_HEADER).child(label.into()))
+        .child(action_group(actions))
+}
+
 pub struct Button {
     id: ElementId,
     label: SharedString,
@@ -262,9 +284,42 @@ impl Render for Button {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{prelude::*, Context, Entity, TestAppContext, Window};
 
-    use super::Button;
+    use super::{action_group, Button};
+    use crate::style as s;
+
+    struct ActionGroupHost {
+        first: Entity<Button>,
+        second: Entity<Button>,
+    }
+
+    impl Render for ActionGroupHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            action_group([
+                gpui::div()
+                    .debug_selector(|| "first-action-control".to_string())
+                    .child(self.first.clone()),
+                gpui::div()
+                    .debug_selector(|| "second-action-control".to_string())
+                    .child(self.second.clone()),
+            ])
+        }
+    }
+
+    #[gpui::test]
+    fn action_groups_separate_buttons_with_s5(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| ActionGroupHost {
+            first: cx.new(|_| Button::new("first-action", "first")),
+            second: cx.new(|_| Button::new("second-action", "second")),
+        });
+        cx.run_until_parked();
+
+        let first = cx.debug_bounds("first-action-control").unwrap();
+        let second = cx.debug_bounds("second-action-control").unwrap();
+
+        assert_eq!(second.left() - first.right(), s::S5);
+    }
 
     #[gpui::test]
     fn disabled_buttons_ignore_hover_press_and_depressed_states(cx: &mut TestAppContext) {

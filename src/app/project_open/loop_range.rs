@@ -417,13 +417,9 @@ impl Render for LoopWorkspace {
             controls = controls.child(error_message(error.clone()));
         }
 
-        let actions = div()
-            .flex()
+        let actions = button::action_group([self.cancel_button.clone(), self.apply_button.clone()])
             .justify_end()
-            .gap(s::S3)
-            .debug_selector(|| "loop-range-actions".to_string())
-            .child(self.cancel_button.clone())
-            .child(self.apply_button.clone());
+            .debug_selector(|| "loop-range-actions".to_string());
         let controls_column = workspace::column_with_actions(controls, actions)
             .flex_none()
             .flex_basis(s::S9)

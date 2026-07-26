@@ -93,12 +93,8 @@ impl Render for ResetDialog {
             "reset project settings",
             None,
             "discard unsaved project settings?",
-            div()
-                .flex()
-                .justify_end()
-                .gap(s::S3)
-                .child(self.cancel_button.clone())
-                .child(self.confirm_button.clone()),
+            button::action_group([self.cancel_button.clone(), self.confirm_button.clone()])
+                .justify_end(),
         )
     }
 }
@@ -686,12 +682,7 @@ fn project_settings_workspace(
 
     let feedback = save_error.map(error_message);
 
-    let actions = div()
-        .flex()
-        .justify_end()
-        .gap_3()
-        .child(cancel_button)
-        .child(save_button);
+    let actions = button::action_group([cancel_button, save_button]).justify_end();
 
     let settings = div()
         .flex()

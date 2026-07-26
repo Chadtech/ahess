@@ -56,12 +56,17 @@ or when it defines how a shared component is used.
 
 ## buttons
 
+- compose adjacent ordinary actions with `view::button::action_group`; it uses
+  `S5` so separate click targets do not feel crowded.
+- reserve `S3` button spacing for intentionally compact, related control sets
+  such as workspace selectors.
 - use the shared `view::button::Button` disabled state for unavailable actions
   that must keep a stable position. Disabled buttons use the lighter `GRAY3`
   background, do not react to hover or presses, and cannot become depressed.
-- use shared square buttons for compact, familiar symbols. When multiple square
-  buttons express directions within a toolbar, give the group a nearby text
-  label rather than repeating text in every button.
+- use shared square buttons for compact, familiar symbols. Compose multiple
+  directional buttons with `view::button::labeled_action_group` so their click
+  targets keep the ordinary `S5` action gap while their nearby text label uses
+  `S3`.
 
 ## dropdowns
 
@@ -198,9 +203,10 @@ or when it defines how a shared component is used.
   `view::workspace::management_form` for their add, edit, duplicate, or combine
   forms.
 - use `view::workspace::column_with_actions` to place controls that act on one
-  column in a single toolbar directly beneath that column. Keep controls for
-  the same operation adjacent and use a larger spacing token to distinguish
-  separate control groups.
+  column in a single toolbar directly beneath that column. Separate the column
+  content from its actions with `S5`. Keep controls for the same operation
+  adjacent and use a larger spacing token to distinguish separate control
+  groups.
 - a list/detail workspace may use an auxiliary third column for an ordered
   workflow that directly consumes the selected resource. Keep all three
   columns visible together and give them fixed equal widths so changing one
