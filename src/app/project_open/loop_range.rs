@@ -17,7 +17,6 @@ use crate::{
 
 pub enum Msg {
     Applied(BeatRange),
-    ResetRequested,
 }
 
 // Remember to add any new modes to ALL_SELECTION_MODES below
@@ -49,15 +48,12 @@ impl SelectionMode {
 pub struct LoopWorkspace {
     occurrences: Vec<ArrangementOccurrence>,
     arrangement_beat_count: u64,
-    applied_range: Option<BeatRange>,
     selection_mode: SelectionMode,
     selection_mode_dropdown: Entity<Dropdown>,
     arrangement_range: Entity<RangeSelectionList>,
     entire_arrangement_button: Entity<Button>,
     from_beat: Entity<TextInput>,
     to_beat: Entity<TextInput>,
-    cancel_button: Entity<Button>,
-    apply_button: Entity<Button>,
     error: Option<String>,
 }
 
@@ -133,9 +129,6 @@ impl LoopWorkspace {
             .unwrap_or(arrangement_beat_count.max(1));
         let from_beat = cx.new(|cx| TextInput::new(first.to_string(), "", cx));
         let to_beat = cx.new(|cx| TextInput::new(last.to_string(), "", cx));
-        let cancel_button = cx.new(|_| Button::new("reset-loop-range", "reset"));
-        let apply_button =
-            cx.new(|_| Button::new("apply-loop-range", "apply").disabled(occurrences.is_empty()));
 
         cx.subscribe(&selection_mode_dropdown, Self::on_selection_mode_changed)
             .detach();
@@ -149,37 +142,18 @@ impl LoopWorkspace {
         cx.subscribe(&from_beat, Self::on_exact_beat_changed)
             .detach();
         cx.subscribe(&to_beat, Self::on_exact_beat_changed).detach();
-        cx.subscribe(&cancel_button, Self::on_reset_clicked)
-            .detach();
-        cx.subscribe(&apply_button, Self::on_apply_clicked).detach();
 
         Self {
             occurrences,
             arrangement_beat_count,
-            applied_range: range,
             selection_mode,
             selection_mode_dropdown,
             arrangement_range,
             entire_arrangement_button,
             from_beat,
             to_beat,
-            cancel_button,
-            apply_button,
             error: None,
         }
-    }
-
-    pub fn is_dirty(&self, cx: &App) -> bool {
-        match self.selected_beat_range(cx) {
-            Ok(range) => Some(range) != self.applied_range,
-            Err(_) => self.applied_range.is_some() || self.arrangement_beat_count > 0,
-        }
-    }
-
-    pub fn applied(&mut self, range: BeatRange, cx: &mut Context<Self>) {
-        self.applied_range = Some(range);
-        self.error = None;
-        cx.notify();
     }
 
     fn on_selection_mode_changed(
@@ -202,8 +176,7 @@ impl LoopWorkspace {
             }
         }
         self.selection_mode = selection_mode;
-        self.error = None;
-        cx.notify();
+        self.apply_selected_range(cx);
     }
 
     fn on_arrangement_range_changed(
@@ -217,8 +190,7 @@ impl LoopWorkspace {
             self.selection_mode_dropdown
                 .update(cx, |dropdown, cx| dropdown.set_selected_index(0, cx));
         }
-        self.error = None;
-        cx.notify();
+        self.apply_selected_range(cx);
     }
 
     fn on_entire_arrangement_clicked(
@@ -238,17 +210,16 @@ impl LoopWorkspace {
         _: &TextChanged,
         cx: &mut Context<Self>,
     ) {
-        self.error = None;
-        cx.notify();
+        self.apply_selected_range(cx);
     }
 
-    fn on_reset_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        cx.emit(Msg::ResetRequested);
-    }
-
-    fn on_apply_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+    fn apply_selected_range(&mut self, cx: &mut Context<Self>) {
         match self.selected_beat_range(cx) {
-            Ok(range) => cx.emit(Msg::Applied(range)),
+            Ok(range) => {
+                self.error = None;
+                cx.emit(Msg::Applied(range));
+                cx.notify();
+            }
             Err(error) => {
                 self.error = Some(error);
                 cx.notify();
@@ -417,10 +388,7 @@ impl Render for LoopWorkspace {
             controls = controls.child(error_message(error.clone()));
         }
 
-        let actions = button::action_group([self.cancel_button.clone(), self.apply_button.clone()])
-            .justify_end()
-            .debug_selector(|| "loop-range-actions".to_string());
-        let controls_column = workspace::column_with_actions(controls, actions)
+        let controls_column = controls
             .flex_none()
             .flex_basis(s::S9)
             .w(s::S9)
@@ -499,13 +467,42 @@ where
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, size, TestAppContext};
+    use gpui::{
+        prelude::*, px, size, Context, Entity, Modifiers, MouseButton, TestAppContext, Window,
+    };
 
-    use super::{LoopWorkspace, SelectionMode};
+    use super::{LoopWorkspace, Msg, SelectionMode};
     use crate::{
         part::Part, playback::BeatRange, project::Project, seed::Seed,
         view::range_selection_list::SelectedRange,
     };
+
+    struct LoopWorkspaceHost {
+        workspace: Entity<LoopWorkspace>,
+        applied_ranges: Vec<BeatRange>,
+    }
+
+    impl LoopWorkspaceHost {
+        fn new(cx: &mut Context<Self>) -> Self {
+            let range = BeatRange::new(1, 32, 32).unwrap();
+            let workspace = cx.new(|cx| LoopWorkspace::new(occurrences(), Some(range), cx));
+            cx.subscribe(&workspace, |host, _, msg, _| {
+                let Msg::Applied(range) = msg;
+                host.applied_ranges.push(*range);
+            })
+            .detach();
+            Self {
+                workspace,
+                applied_ranges: Vec::new(),
+            }
+        }
+    }
+
+    impl Render for LoopWorkspaceHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.workspace.clone()
+        }
+    }
 
     fn occurrences() -> Vec<crate::project::ArrangementOccurrence> {
         Project::new("test", 800, 0, Seed::new(1))
@@ -528,7 +525,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn loop_workspace_fits_its_arrangement_picker_and_actions(cx: &mut TestAppContext) {
+    fn loop_workspace_fits_its_arrangement_picker_and_controls(cx: &mut TestAppContext) {
         let range = BeatRange::new(1, 448, 448).unwrap();
         let (_dialog, cx) =
             cx.add_window_view(|_, cx| LoopWorkspace::new(many_occurrences(), Some(range), cx));
@@ -539,7 +536,6 @@ mod tests {
         let controls = cx.debug_bounds("loop-controls-column").unwrap();
         let arrangement = cx.debug_bounds("loop-arrangement-column").unwrap();
         let list = cx.debug_bounds("loop-arrangement-list").unwrap();
-        let actions = cx.debug_bounds("loop-range-actions").unwrap();
 
         assert!(workspace.size.width > crate::style::S11);
         assert!(workspace.size.height > crate::style::S10);
@@ -557,10 +553,7 @@ mod tests {
         );
         assert!(list.size.height > crate::style::S9);
         assert!(list.origin.x + list.size.width <= workspace.origin.x + workspace.size.width);
-        assert!(actions.origin.x + actions.size.width <= controls.origin.x + controls.size.width);
-        assert!(
-            actions.origin.y + actions.size.height <= workspace.origin.y + workspace.size.height
-        );
+        assert!(cx.debug_bounds("apply-loop-range").is_none());
     }
 
     #[gpui::test]
@@ -627,6 +620,31 @@ mod tests {
         assert_eq!(
             dialog.update(cx, |dialog, cx| dialog.selected_beat_range(cx).unwrap()),
             range
+        );
+    }
+
+    #[gpui::test]
+    fn clicking_and_dragging_applies_each_selected_part_range(cx: &mut TestAppContext) {
+        let (host, cx) = cx.add_window_view(|_, cx| LoopWorkspaceHost::new(cx));
+        cx.run_until_parked();
+        let second = cx.debug_bounds("loop-arrangement-list-row-1").unwrap();
+        let third = cx.debug_bounds("loop-arrangement-list-row-2").unwrap();
+
+        cx.simulate_mouse_down(second.center(), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            third.center(),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(third.center(), MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|_, cx| host.read(cx).applied_ranges.clone()),
+            vec![
+                BeatRange::new(9, 24, 32).unwrap(),
+                BeatRange::new(9, 32, 32).unwrap(),
+            ]
         );
     }
 }

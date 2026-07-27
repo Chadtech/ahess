@@ -225,10 +225,38 @@ impl PartsWorkspace {
         }
     }
 
+    pub fn begin_editing_part(&mut self, name: &PartName, cx: &mut Context<Self>) -> bool {
+        if let View::Edit { source, .. } = &self.view {
+            if source.eq_ignore_ascii_case(name) {
+                self.selected_part = Some(source.clone());
+                return true;
+            }
+        }
+        if self.has_draft() {
+            return false;
+        }
+
+        let Some(part) = find_part(&self.parts, name).cloned() else {
+            return false;
+        };
+        self.selected_part = Some(part.name.clone());
+        self.view = Self::edit_view(part, cx);
+        cx.notify();
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn start_add_for_test(&mut self, cx: &mut Context<Self>) {
         self.view = Self::add_view(cx);
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(super) fn editing_part(&self) -> Option<&PartName> {
+        match &self.view {
+            View::Edit { source, .. } => Some(source),
+            _ => None,
+        }
     }
 
     fn list_view(cx: &mut Context<Self>) -> View {
@@ -237,8 +265,7 @@ impl PartsWorkspace {
         let edit_button = cx.new(|_| Button::new("edit-part", "edit"));
         let duplicate_button = cx.new(|_| Button::new("duplicate-part", "duplicate"));
         let delete_button = cx.new(|_| Button::new("delete-part", "delete"));
-        let add_to_arrangement_button =
-            cx.new(|_| Button::new("add-to-arrangement", "add to arrangement"));
+        let add_to_arrangement_button = cx.new(|_| Button::new("add-to-arrangement", "add ->"));
         let move_earlier_button =
             cx.new(|_| Button::square("move-arrangement-earlier", "↑").disabled(true));
         let move_later_button =
@@ -1427,15 +1454,8 @@ fn part_details(
                 .count();
             let actions = div()
                 .flex()
-                .flex_col()
                 .items_start()
-                .gap(s::S5)
                 .debug_selector(|| "part-details-actions".to_string())
-                .child(
-                    div()
-                        .debug_selector(|| "add-to-arrangement-control".to_string())
-                        .child(add_to_arrangement),
-                )
                 .child(button::action_group([
                     div()
                         .debug_selector(|| "edit-part-control".to_string())
@@ -1446,6 +1466,9 @@ fn part_details(
                     div()
                         .debug_selector(|| "delete-part-control".to_string())
                         .child(delete),
+                    div()
+                        .debug_selector(|| "add-to-arrangement-control".to_string())
+                        .child(add_to_arrangement),
                 ]));
             let beat_label = if part.length == 1 { "beat" } else { "beats" };
 
@@ -1847,7 +1870,7 @@ mod tests {
         assert!(details.origin.x < arrangement.origin.x);
         assert_eq!(part_list_actions.origin.x, part_list.origin.x);
         assert!(part_list.origin.y + part_list.size.height < part_list_actions.origin.y);
-        assert!(part_details_actions.origin.y < part_list_actions.origin.y);
+        assert_eq!(part_details_actions.origin.y, part_list_actions.origin.y);
         assert_eq!(part_list_actions.origin.y, arrangement_actions.origin.y);
         assert_eq!(
             part_list_actions.origin.y + part_list_actions.size.height,
@@ -1882,18 +1905,19 @@ mod tests {
         let edit_part = cx.debug_bounds("edit-part-control").unwrap();
         let duplicate_part = cx.debug_bounds("duplicate-part-control").unwrap();
         let delete_part_control = cx.debug_bounds("delete-part-control").unwrap();
-        assert!(add_to_arrangement.origin.y < duplicate_part.origin.y);
         assert_eq!(edit_part.origin.y, duplicate_part.origin.y);
         assert_eq!(duplicate_part.origin.y, delete_part_control.origin.y);
+        assert_eq!(delete_part_control.origin.y, add_to_arrangement.origin.y);
+        assert!(delete_part_control.origin.x < add_to_arrangement.origin.x);
         assert!(
             add_to_arrangement.size.width < details.size.width
                 && duplicate_part.size.width < details.size.width
         );
         assert!(
-            delete_part_control.origin.x + delete_part_control.size.width
+            add_to_arrangement.origin.x + add_to_arrangement.size.width
                 <= details.origin.x + details.size.width,
             "part actions should stay inside details: actions {part_details_actions:?}, \
-             delete {delete_part_control:?}, details {details:?}"
+             add to arrangement {add_to_arrangement:?}, details {details:?}"
         );
 
         dialog.update(cx, |dialog, cx| {

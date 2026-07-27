@@ -159,6 +159,11 @@ pub struct PartLoopRequested {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditPartRequested {
+    pub part_name: crate::part::PartName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportRowsRequested {
     pub part_name: crate::part::PartName,
     pub rows: ScoreRowRange,
@@ -679,6 +684,7 @@ impl Render for ExportRowsDialog {
 
 #[derive(Clone, Copy)]
 pub(super) enum ScoreAction {
+    EditPart,
     LoopPart,
     ExportRows,
     ClearRows,
@@ -686,7 +692,8 @@ pub(super) enum ScoreAction {
 }
 
 impl ScoreAction {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
+        Self::EditPart,
         Self::LoopPart,
         Self::ExportRows,
         Self::ClearRows,
@@ -699,6 +706,7 @@ impl ScoreAction {
 
     fn label(self) -> &'static str {
         match self {
+            Self::EditPart => "edit part",
             Self::LoopPart => "loop part",
             Self::ExportRows => "export selected rows as part",
             Self::ClearRows => "clear selected rows",
@@ -725,6 +733,7 @@ pub struct ScoreEditor {
 impl EventEmitter<PartSelected> for ScoreEditor {}
 impl EventEmitter<RowEditRequested> for ScoreEditor {}
 impl EventEmitter<PartLoopRequested> for ScoreEditor {}
+impl EventEmitter<EditPartRequested> for ScoreEditor {}
 impl EventEmitter<ExportRowsRequested> for ScoreEditor {}
 
 impl ScoreEditor {
@@ -921,6 +930,9 @@ impl ScoreEditor {
         cx: &mut Context<Self>,
     ) {
         match ScoreAction::ALL.get(selected.index).copied() {
+            Some(ScoreAction::EditPart) => cx.emit(EditPartRequested {
+                part_name: self.document.read(cx).part().name.clone(),
+            }),
             Some(ScoreAction::LoopPart) => cx.emit(PartLoopRequested {
                 part_name: self.document.read(cx).part().name.clone(),
             }),
@@ -1501,6 +1513,7 @@ mod tests {
             menu.is_disabled(ScoreAction::ExportRows.index())
                 && menu.is_disabled(ScoreAction::ClearRows.index())
                 && menu.is_disabled(ScoreAction::DeleteRows.index())
+                && !menu.is_disabled(ScoreAction::EditPart.index())
                 && !menu.is_disabled(ScoreAction::LoopPart.index())
         }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));

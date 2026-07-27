@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use gpui::{
-    div, prelude::*, AnyElement, App, Context, Entity, EventEmitter, PathPromptOptions, Window,
-};
+use gpui::{div, prelude::*, App, Context, Entity, EventEmitter, PathPromptOptions, Window};
 
 use crate::{
     app::room_form::RoomFields,
@@ -14,7 +12,7 @@ use crate::{
     tuning_system::{self, TuningSystem},
     view::{
         button::{self, Button},
-        dialog::{destructive_dialog, error_message},
+        dialog::error_message,
         dropdown::{self, Dropdown},
         field_group::{control_group, field_group},
         file_import::file_import,
@@ -25,78 +23,6 @@ use crate::{
 
 pub enum ProjectSettingsMsg {
     Saved(Box<Project>),
-    ResetRequested,
-    ResetConfirmationRequested,
-}
-
-pub(super) enum Overlay {
-    ConfirmReset(Entity<ResetDialog>),
-}
-
-impl Overlay {
-    pub(super) fn element(&self) -> AnyElement {
-        match self {
-            Self::ConfirmReset(dialog) => dialog.clone().into_any_element(),
-        }
-    }
-}
-
-pub(super) enum ResetDialogMsg {
-    Cancelled,
-    Confirmed,
-}
-
-pub(super) struct ResetDialog {
-    cancel_button: Entity<Button>,
-    confirm_button: Entity<Button>,
-}
-
-impl EventEmitter<ResetDialogMsg> for ResetDialog {}
-
-impl ResetDialog {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
-        let cancel_button =
-            cx.new(|_| Button::new("keep-editing-project-settings", "keep editing"));
-        let confirm_button = cx.new(|_| Button::new("discard-project-settings", "discard"));
-        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
-            .detach();
-        cx.subscribe(&confirm_button, Self::on_confirm_clicked)
-            .detach();
-        Self {
-            cancel_button,
-            confirm_button,
-        }
-    }
-
-    fn on_cancel_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(ResetDialogMsg::Cancelled);
-    }
-
-    fn on_confirm_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(ResetDialogMsg::Confirmed);
-    }
-}
-
-impl Render for ResetDialog {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        destructive_dialog(
-            "reset project settings",
-            None,
-            "discard unsaved project settings?",
-            button::action_group([self.cancel_button.clone(), self.confirm_button.clone()])
-                .justify_end(),
-        )
-    }
 }
 
 pub struct ProjectSettingsWorkspace {
@@ -108,7 +34,6 @@ pub struct ProjectSettingsWorkspace {
     original_tuning_index: usize,
     choose_impulse_response_button: Entity<Button>,
     remove_impulse_response_button: Entity<Button>,
-    cancel_button: Entity<Button>,
     save_button: Entity<Button>,
     save_error: Option<String>,
 }
@@ -146,11 +71,8 @@ impl ProjectSettingsWorkspace {
         let remove_impulse_response_button = cx.new(|_| {
             Button::new("remove-project-impulse-response", "remove").disabled(!has_impulse_response)
         });
-        let cancel_button = cx.new(|_| Button::new("reset-project-settings", "reset"));
         let save_button = cx.new(|_| Button::new("save-project-settings", "save changes"));
 
-        cx.subscribe(&cancel_button, Self::on_reset_clicked)
-            .detach();
         cx.subscribe(&save_button, Self::on_save_clicked).detach();
         cx.subscribe(&room_kind, Self::on_room_kind_selected)
             .detach();
@@ -174,18 +96,8 @@ impl ProjectSettingsWorkspace {
             original_tuning_index,
             choose_impulse_response_button,
             remove_impulse_response_button,
-            cancel_button,
             save_button,
             save_error: tuning_error,
-        }
-    }
-
-    fn on_reset_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        if self.is_dirty(cx) {
-            self.save_error = None;
-            cx.emit(ProjectSettingsMsg::ResetConfirmationRequested);
-        } else {
-            cx.emit(ProjectSettingsMsg::ResetRequested);
         }
     }
 
@@ -432,7 +344,6 @@ impl Render for ProjectSettingsWorkspace {
             &self.fields,
             room_form,
             impulse_response,
-            self.cancel_button.clone(),
             self.save_button.clone(),
             self.save_error.clone(),
         )
@@ -635,7 +546,6 @@ fn project_settings_workspace(
     fields: &ProjectSettingsFields,
     room_form: gpui::Div,
     impulse_response: gpui::Div,
-    cancel_button: Entity<Button>,
     save_button: Entity<Button>,
     save_error: Option<String>,
 ) -> impl IntoElement {
@@ -682,7 +592,7 @@ fn project_settings_workspace(
 
     let feedback = save_error.map(error_message);
 
-    let actions = button::action_group([cancel_button, save_button]).justify_end();
+    let actions = button::action_group([save_button]).justify_end();
 
     let settings = div()
         .flex()
