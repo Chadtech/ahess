@@ -492,36 +492,20 @@ impl AudioEngine {
 
         for (voice_index, voice) in self.playback_loop.voices.iter().enumerate() {
             let runtime = &mut self.voice_runtimes[voice_index];
-            let mut source_sample = 0.0;
-            let mut source_is_active = false;
-            if let Some(frequency) = voice.frequencies[self.beat_index] {
-                let delay = voice.delays[self.beat_index];
-                if self.sample_in_beat >= delay {
-                    let note_sample = self.sample_in_beat - delay;
-                    let note_length = self.playback_loop.beat_length - delay;
-                    source_sample = waveform_sample(voice.voice_type, runtime.oscillator_phase)
-                        * envelope(note_sample, note_length);
-                    source_is_active = true;
-                    runtime.oscillator_phase = (runtime.oscillator_phase
-                        + frequency.as_hz_f32() / self.sample_rate)
-                        .fract();
-                }
-            }
-
-            let (contribution, acoustically_active) =
-                runtime.spatializer.process(source_sample, source_is_active);
+            let (contribution, acoustically_active) = runtime.render(
+                voice,
+                Some(self.beat_index),
+                self.sample_in_beat,
+                self.playback_loop.beat_length,
+                self.sample_rate,
+            );
             mixed.add(contribution);
             if acoustically_active {
                 sounding_voice_count += 1;
             }
         }
 
-        let target_gain = if sounding_voice_count == 0 {
-            MASTER_GAIN
-        } else {
-            MASTER_GAIN / (sounding_voice_count as f32).sqrt()
-        };
-        let mix_gain = self.mix_gain.next(target_gain);
+        let mix_gain = self.mix_gain.next(mix_gain_target(sounding_voice_count));
 
         self.advance_playhead();
         if sounding_voice_count == 0 {
@@ -545,6 +529,100 @@ impl AudioEngine {
             self.playback_loop.first_arrangement_beat + self.beat_index as u64,
             Ordering::Relaxed,
         );
+    }
+}
+
+pub(crate) struct OfflineRenderer {
+    sample_rate: f32,
+    voice_runtimes: Vec<VoiceRuntime>,
+    voice_frames: Vec<StereoFrame>,
+    mix_gain: GainRamp,
+    beat_index: usize,
+    sample_in_beat: u32,
+    playback_loop: PlaybackLoop,
+}
+
+impl OfflineRenderer {
+    pub(crate) fn new(playback_loop: PlaybackLoop, sample_rate: u32) -> Self {
+        let sample_rate = sample_rate as f32;
+        let voice_runtimes = playback_loop
+            .voices
+            .iter()
+            .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
+            .collect();
+        let voice_frames = vec![StereoFrame::SILENCE; playback_loop.voices.len()];
+
+        Self {
+            sample_rate,
+            voice_runtimes,
+            voice_frames,
+            mix_gain: GainRamp::new(MASTER_GAIN),
+            beat_index: 0,
+            sample_in_beat: 0,
+            playback_loop,
+        }
+    }
+
+    pub(crate) fn voice_count(&self) -> usize {
+        self.voice_frames.len()
+    }
+
+    pub(crate) fn score_frame_count(&self) -> u64 {
+        self.playback_loop.beat_count as u64 * u64::from(self.playback_loop.beat_length)
+    }
+
+    pub(crate) fn next_frame(&mut self) -> Option<(StereoFrame, &[StereoFrame])> {
+        let score_is_active = self.beat_index < self.playback_loop.beat_count;
+        let beat_index = score_is_active.then_some(self.beat_index);
+        let mut sounding_voice_count = 0_u32;
+
+        for (voice_index, voice) in self.playback_loop.voices.iter().enumerate() {
+            let (contribution, acoustically_active) = self.voice_runtimes[voice_index].render(
+                voice,
+                beat_index,
+                self.sample_in_beat,
+                self.playback_loop.beat_length,
+                self.sample_rate,
+            );
+            self.voice_frames[voice_index] = contribution;
+            if acoustically_active {
+                sounding_voice_count += 1;
+            }
+        }
+
+        if !score_is_active && sounding_voice_count == 0 {
+            return None;
+        }
+
+        let mix_gain = self.mix_gain.next(mix_gain_target(sounding_voice_count));
+        let mut mixed = StereoFrame::SILENCE;
+        for frame in &mut self.voice_frames {
+            *frame = frame.scale(mix_gain);
+            mixed.add(*frame);
+        }
+        self.advance_score();
+
+        Some((mixed.clamp(), &self.voice_frames))
+    }
+
+    fn advance_score(&mut self) {
+        if self.beat_index >= self.playback_loop.beat_count {
+            return;
+        }
+
+        self.sample_in_beat += 1;
+        if self.sample_in_beat >= self.playback_loop.beat_length {
+            self.sample_in_beat = 0;
+            self.beat_index += 1;
+        }
+    }
+}
+
+fn mix_gain_target(sounding_voice_count: u32) -> f32 {
+    if sounding_voice_count == 0 {
+        MASTER_GAIN
+    } else {
+        MASTER_GAIN / (sounding_voice_count as f32).sqrt()
     }
 }
 
@@ -596,6 +674,34 @@ impl VoiceRuntime {
             spatializer: VoiceSpatializer::new(scene, voice.position, f64::from(sample_rate)),
         }
     }
+
+    fn render(
+        &mut self,
+        voice: &PlaybackVoice,
+        beat_index: Option<usize>,
+        sample_in_beat: u32,
+        beat_length: u32,
+        sample_rate: f32,
+    ) -> (StereoFrame, bool) {
+        let mut source_sample = 0.0;
+        let mut source_is_active = false;
+        if let Some(beat_index) = beat_index {
+            if let Some(frequency) = voice.frequencies[beat_index] {
+                let delay = voice.delays[beat_index];
+                if sample_in_beat >= delay {
+                    let note_sample = sample_in_beat - delay;
+                    let note_length = beat_length - delay;
+                    source_sample = waveform_sample(voice.voice_type, self.oscillator_phase)
+                        * envelope(note_sample, note_length);
+                    source_is_active = true;
+                    self.oscillator_phase =
+                        (self.oscillator_phase + frequency.as_hz_f32() / sample_rate).fract();
+                }
+            }
+        }
+
+        self.spatializer.process(source_sample, source_is_active)
+    }
 }
 
 fn write_device_frame<T>(device_frame: &mut [T], frame: StereoFrame)
@@ -641,7 +747,8 @@ mod tests {
 
     use super::{
         frequency_variance_seed, normally_distributed_delay, timing_seed, varied_frequency,
-        write_device_frame, AudioEngine, BeatRange, GainRamp, PlaybackLoop, MIX_GAIN_RAMP_SAMPLES,
+        write_device_frame, AudioEngine, BeatRange, GainRamp, OfflineRenderer, PlaybackLoop,
+        MIX_GAIN_RAMP_SAMPLES,
     };
     use crate::{
         acoustics::{Point3Meters, StereoFrame},
@@ -1021,6 +1128,56 @@ mod tests {
         }));
         assert_eq!(engine.beat_index, 0);
         assert_eq!(engine.sample_in_beat, 0);
+    }
+
+    #[test]
+    fn offline_renderer_matches_one_cycle_of_live_playback() {
+        let project = Project::new("test", 8, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Sin,
+        )]);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+        let shared = Arc::new(Mutex::new(playback_loop.clone()));
+        let playhead = Arc::new(AtomicU64::new(1));
+        let mut live = AudioEngine::new(48_000.0, shared, playhead);
+        let mut offline = OfflineRenderer::new(playback_loop, 48_000);
+
+        for _ in 0..8 {
+            let live_frame = live.next_frame();
+            let (offline_frame, voice_frames) = offline.next_frame().unwrap();
+            assert_eq!(offline_frame, live_frame);
+            assert_eq!(voice_frames.len(), 1);
+            assert_eq!(voice_frames[0], live_frame);
+        }
+        assert!(offline.next_frame().is_none());
+    }
+
+    #[test]
+    fn offline_renderer_finishes_after_emitting_acoustic_tails() {
+        let project = Project::new("test", 8, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )
+        .with_position(Point3Meters::new(1.0, 0.0, 0.0).unwrap())]);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+        let mut offline = OfflineRenderer::new(playback_loop, 48_000);
+        let mut rendered_frame_count = 0;
+
+        while offline.next_frame().is_some() {
+            rendered_frame_count += 1;
+        }
+
+        assert!(rendered_frame_count > 8);
+        assert!(rendered_frame_count < 1_000);
+        assert!(offline.next_frame().is_none());
     }
 
     #[test]

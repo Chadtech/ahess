@@ -1,3 +1,4 @@
+mod build_workspace;
 mod loop_range;
 mod parts;
 mod project_settings;
@@ -16,10 +17,11 @@ use gpui::{
 };
 
 use crate::{
+    audio_build,
     part::{self, PartName, PartScore, SubdivisionPattern},
     playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
-    style as s,
+    style as s, view,
     view::{
         button::{self, Button},
         dialog::destructive_dialog,
@@ -30,6 +32,7 @@ use crate::{
 };
 
 use self::{
+    build_workspace::{BuildWorkspace, Msg as BuildWorkspaceMsg},
     loop_range::{LoopWorkspace, Msg as LoopWorkspaceMsg},
     parts::PartsWorkspace,
     project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
@@ -56,6 +59,7 @@ pub struct Model {
     settings_button: Entity<Button>,
     parts_button: Entity<Button>,
     voices_button: Entity<Button>,
+    build_button: Entity<Button>,
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
     loop_button: Entity<Button>,
@@ -68,6 +72,7 @@ pub struct Model {
     loop_range: Option<BeatRange>,
     playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
+    build_task: Option<Task<()>>,
     transport_error: Option<String>,
     workspace_error: Option<String>,
 }
@@ -111,6 +116,7 @@ struct Workspace {
     voices: Entity<VoicesWorkspace>,
     loop_editor: Entity<LoopWorkspace>,
     project_settings: Entity<ProjectSettingsWorkspace>,
+    audio_build: Entity<BuildWorkspace>,
 }
 
 impl Workspace {
@@ -127,6 +133,7 @@ enum WorkspaceSection {
     Voices { overlay: Option<voices::Overlay> },
     Loop,
     Project,
+    Build,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,6 +143,7 @@ enum WorkspaceSectionKind {
     Voices,
     Loop,
     Project,
+    Build,
 }
 
 impl WorkspaceSection {
@@ -146,6 +154,7 @@ impl WorkspaceSection {
             Self::Voices { .. } => WorkspaceSectionKind::Voices,
             Self::Loop => WorkspaceSectionKind::Loop,
             Self::Project => WorkspaceSectionKind::Project,
+            Self::Build => WorkspaceSectionKind::Build,
         }
     }
 
@@ -154,7 +163,7 @@ impl WorkspaceSection {
             Self::Score { overlay } => overlay.is_some(),
             Self::Parts { overlay } => overlay.is_some(),
             Self::Voices { overlay } => overlay.is_some(),
-            Self::Loop | Self::Project => false,
+            Self::Loop | Self::Project | Self::Build => false,
         }
     }
 
@@ -173,7 +182,8 @@ impl WorkspaceSection {
             | Self::Parts { overlay: None }
             | Self::Voices { overlay: None }
             | Self::Loop
-            | Self::Project => None,
+            | Self::Project
+            | Self::Build => None,
         }
     }
 }
@@ -253,6 +263,7 @@ impl Model {
         let settings_button = cx.new(|_| Button::new("project-settings", "project"));
         let parts_button = cx.new(|_| Button::new("parts", "parts"));
         let voices_button = cx.new(|_| Button::new("voices", "voices"));
+        let build_button = cx.new(|_| Button::new("build-workspace", "build"));
         let close_button = cx.new(|_| Button::new("close-project", "close project"));
         let pane_count_dropdown =
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
@@ -268,6 +279,7 @@ impl Model {
         cx.subscribe(&parts_button, Self::on_parts_clicked).detach();
         cx.subscribe(&voices_button, Self::on_voices_clicked)
             .detach();
+        cx.subscribe(&build_button, Self::on_build_clicked).detach();
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
             .detach();
@@ -305,6 +317,11 @@ impl Model {
         cx.subscribe(&project_settings, Self::on_settings_msg)
             .detach();
 
+        let build_project = project.clone();
+        let audio_build = cx.new(move |cx| BuildWorkspace::new(build_project, cx));
+        cx.subscribe(&audio_build, Self::on_build_workspace_msg)
+            .detach();
+
         let initial_part = project.parts.first().map(|part| part.name.clone());
         let mut model = Self {
             project,
@@ -315,11 +332,13 @@ impl Model {
                 voices: voices_workspace,
                 loop_editor: loop_workspace,
                 project_settings,
+                audio_build,
             },
             score_button,
             settings_button,
             parts_button,
             voices_button,
+            build_button,
             close_button,
             pane_count_dropdown,
             loop_button,
@@ -335,6 +354,7 @@ impl Model {
             loop_range,
             playback: None,
             playhead_task: None,
+            build_task: None,
             transport_error: None,
             workspace_error: None,
         };
@@ -366,27 +386,24 @@ impl Model {
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
         vec![
-            crate::view::workspace::selector([
-                self.score_button.clone(),
-                self.parts_button.clone(),
-                self.voices_button.clone(),
-                self.loop_button.clone(),
-                self.settings_button.clone(),
-            ])
-            .into_any_element(),
             div()
                 .flex()
                 .items_center()
                 .gap(s::S3)
-                .child(
-                    div()
-                        .max_w(s::S8)
-                        .truncate()
-                        .text_color(s::TEXT_DEFAULT)
-                        .child(loop_range_summary(&self.project, self.loop_range)),
-                )
                 .child(self.play_button.clone())
                 .child(self.stop_button.clone())
+                .into_any_element(),
+            div()
+                .flex()
+                .gap(s::S3)
+                .children([
+                    self.score_button.clone(),
+                    self.parts_button.clone(),
+                    self.voices_button.clone(),
+                    self.loop_button.clone(),
+                    self.settings_button.clone(),
+                    self.build_button.clone(),
+                ])
                 .into_any_element(),
             div()
                 .flex()
@@ -464,6 +481,7 @@ impl Model {
                 &self.settings_button,
                 selected == WorkspaceSectionKind::Project,
             ),
+            (&self.build_button, selected == WorkspaceSectionKind::Build),
         ];
         for (button, depressed) in sections {
             button.update(cx, |button, cx| {
@@ -755,6 +773,11 @@ impl Model {
                 false
             }
         };
+        if changes_playback {
+            self.workspace.audio_build.update(cx, |workspace, cx| {
+                workspace.mark_project_changed(cx);
+            });
+        }
         if self.playback.is_some() && changes_playback {
             self.update_live_playback(cx);
         }
@@ -768,6 +791,23 @@ impl Model {
         let range = self.loop_range.ok_or_else(|| {
             "add at least one part to the arrangement before starting playback".to_string()
         })?;
+        self.arrangement_playback_loop_for_range(range, cx)
+    }
+
+    fn full_arrangement_playback_loop(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<PlaybackLoop, String> {
+        let beat_count = self.project.arrangement_beat_count();
+        let range = BeatRange::new(1, beat_count, beat_count).map_err(|error| error.to_string())?;
+        self.arrangement_playback_loop_for_range(range, cx)
+    }
+
+    fn arrangement_playback_loop_for_range(
+        &mut self,
+        range: BeatRange,
+        cx: &mut Context<Self>,
+    ) -> Result<PlaybackLoop, String> {
         let sequence = self.project.sequence().to_vec();
         let mut arrangement_scores = Vec::with_capacity(sequence.len());
         for part_name in sequence {
@@ -1344,6 +1384,10 @@ impl Model {
         });
 
         self.workspace.project_settings.update(cx, |workspace, cx| {
+            workspace.sync_project(project.clone(), cx);
+        });
+
+        self.workspace.audio_build.update(cx, |workspace, cx| {
             workspace.sync_project(project, cx);
         });
     }
@@ -1379,6 +1423,57 @@ impl Model {
 
     fn on_loop_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         self.set_workspace_section(WorkspaceSection::Loop, cx);
+    }
+
+    fn on_build_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        self.set_workspace_section(WorkspaceSection::Build, cx);
+    }
+
+    fn on_build_workspace_msg(
+        &mut self,
+        workspace: Entity<BuildWorkspace>,
+        msg: &BuildWorkspaceMsg,
+        cx: &mut Context<Self>,
+    ) {
+        let BuildWorkspaceMsg::Requested {
+            request_id,
+            sample_rate,
+        } = *msg;
+        let playback_loop = match self.full_arrangement_playback_loop(cx) {
+            Ok(playback_loop) => playback_loop,
+            Err(error) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.build_finished(request_id, Err(error), cx);
+                });
+                return;
+            }
+        };
+        let project = self.project.clone();
+        let project_directory = self.project_directory.clone();
+        self.build_task.take();
+        self.build_task = Some(cx.spawn(
+            async move |model: WeakEntity<Model>, cx: &mut AsyncApp| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        audio_build::build_project_audio(
+                            project_directory,
+                            &project,
+                            playback_loop,
+                            sample_rate,
+                        )
+                        .map_err(|error| error.to_string())
+                    })
+                    .await;
+                model
+                    .update(cx, |model, cx| {
+                        model.workspace.audio_build.update(cx, |workspace, cx| {
+                            workspace.build_finished(request_id, result, cx);
+                        });
+                    })
+                    .ok();
+            },
+        ));
     }
 
     fn on_loop_range_msg(
@@ -2048,6 +2143,7 @@ impl Render for Model {
             WorkspaceSection::Voices { .. } => self.workspace.voices.clone().into_any_element(),
             WorkspaceSection::Loop => self.workspace.loop_editor.clone().into_any_element(),
             WorkspaceSection::Project => self.workspace.project_settings.clone().into_any_element(),
+            WorkspaceSection::Build => self.workspace.audio_build.clone().into_any_element(),
         }
     }
 }
@@ -2693,11 +2789,12 @@ mod tests {
         combine_project_parts, create_configured_project_part, create_project_part,
         delete_project_part, duplicate_project_part, export_project_part_rows, loop_range_summary,
         parts, playing_score_row, rename_project_part, update_project_sequence, voices,
-        ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError, PartsWorkspace,
-        ProjectOverlay, RowEditConfirmationMsg, RowEditRequested, StatusAction, WorkspaceSection,
-        WorkspaceSectionKind,
+        BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
+        PartsWorkspace, ProjectOverlay, RowEditConfirmationMsg, RowEditRequested, StatusAction,
+        WorkspaceSection, WorkspaceSectionKind,
     };
     use crate::{
+        audio_build::{planned_audio_files, BuildSampleRate},
         part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
@@ -2753,6 +2850,52 @@ mod tests {
             "loop beats 10–23"
         );
         assert_eq!(loop_range_summary(&project, None), "set loop");
+    }
+
+    #[gpui::test]
+    fn audio_build_renders_the_full_arrangement_instead_of_the_playback_loop(
+        cx: &mut TestAppContext,
+    ) {
+        let root = temp_root("full-arrangement-audio-build");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+        let part = Part::new("intro", 2);
+        let project = Project::new("test project", 8, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let output_files = planned_audio_files(&project);
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+
+        model.update(cx, |model, cx| {
+            model.loop_range = BeatRange::new(1, 1, 2).ok();
+            let workspace = model.workspace.audio_build.clone();
+            model.on_build_workspace_msg(
+                workspace,
+                &BuildWorkspaceMsg::Requested {
+                    request_id: 1,
+                    sample_rate: BuildSampleRate::Hz48000,
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        for output_file in output_files {
+            let bytes = fs::read(project_directory.join("build").join(output_file.file_name))
+                .expect("the background build should publish every planned WAV");
+            assert_eq!(
+                u32::from_le_bytes(bytes[46..50].try_into().unwrap()),
+                16,
+                "two eight-sample beats should be rendered even when playback loops one beat"
+            );
+        }
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

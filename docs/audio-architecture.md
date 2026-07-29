@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-24
+Last updated: 2026-07-26
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -504,6 +504,35 @@ the callback accepts its new playback snapshot, following the pre-existing
 snapshot update pattern. Move that preparation outside the callback before
 exposing continuous position automation.
 
+## Offline audio builds
+
+The build workspace renders the complete project arrangement to audio files.
+It does not follow the selected playback loop. A build writes one stereo mix
+and one stereo file per voice under the project's `build/` directory. Repeated
+builds replace the files they own, and a private manifest lets the builder
+remove a generated stem after its voice is removed or renamed without deleting
+unrelated files.
+
+Offline rendering consumes the same prepared `PlaybackLoop`, voice waveform,
+envelope, spatializer, and master-gain behavior as real-time playback. It is a
+finite renderer rather than a simulated audio device: after the last
+arrangement beat it feeds silence through every voice runtime until propagation
+and reflection tails are no longer active. It therefore needs no output device
+and does not duplicate score interpretation or instrument DSP.
+
+The initial build format is stereo 32-bit IEEE-float WAV. The workspace offers
+44.1, 48, and 96 kHz, with 48 kHz as the default. Because the current project
+model expresses beat length and timing variance in samples, selecting a sample
+rate also determines the rendered duration of those sample counts. The selected
+rate is explicit in the build workspace rather than inferred from audio
+hardware.
+
+Voice files contain their post-spatialization contributions with the same
+master normalization ramp used by the mix. Summing the voice files therefore
+reproduces the mix before its final `[-1, 1]` safety clamp. Float samples let an
+individual stem preserve values outside that range instead of clipping before
+the files are recombined.
+
 ## Persistence and compatibility
 
 Current project files store `tuning_system_id` instead of duplicating a tuning
@@ -639,7 +668,10 @@ reflections. Surface-dependent damping and the late room response remain.
 - `src/project.rs`: stores and resolves the tuning-system reference and will
   eventually store the acoustic scene and new voice representation.
 - `src/playback.rs`: stores prepared events and runtime voices, then progresses
-  from mono samples to explicit stereo frames.
+  from mono samples to explicit stereo frames. It also exposes the finite
+  renderer used by offline builds.
+- `src/audio_build.rs`: streams the offline mix and per-voice frames to
+  project-local IEEE-float WAV files and publishes completed builds.
 - `src/acoustics.rs`: owns validated points and rooms, stereo frames,
   two-ear propagation, image-source path preparation, and per-voice
   fractional delay lines.

@@ -1,5 +1,6 @@
 pub mod acoustics;
 mod app;
+mod audio_build;
 pub mod convolution;
 mod cpal_spike;
 mod gpui_spike;
