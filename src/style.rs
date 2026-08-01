@@ -71,23 +71,31 @@ pub const MODAL_BACKDROP: Rgba = Rgba {
 };
 
 pub fn raised(child: impl IntoElement) -> Div {
+    raised_with_border(child, GRAY3, GRAY1)
+}
+
+pub fn raised_with_border(child: impl IntoElement, light_border: Rgba, dark_border: Rgba) -> Div {
     gpui::div()
         .relative()
         .child(child)
-        .child(bevel_top(GRAY3))
-        .child(bevel_left(GRAY3))
-        .child(bevel_bottom(GRAY1))
-        .child(bevel_right(GRAY1))
+        .child(bevel_top(light_border))
+        .child(bevel_left(light_border))
+        .child(bevel_bottom(dark_border))
+        .child(bevel_right(dark_border))
 }
 
 pub fn sunken(child: impl IntoElement) -> Div {
+    sunken_with_border(child, GRAY3, GRAY1)
+}
+
+pub fn sunken_with_border(child: impl IntoElement, light_border: Rgba, dark_border: Rgba) -> Div {
     gpui::div()
         .relative()
         .child(child)
-        .child(bevel_top(GRAY1))
-        .child(bevel_left(GRAY1))
-        .child(bevel_bottom(GRAY3))
-        .child(bevel_right(GRAY3))
+        .child(bevel_top(dark_border))
+        .child(bevel_left(dark_border))
+        .child(bevel_bottom(light_border))
+        .child(bevel_right(light_border))
 }
 
 const fn rgba(color: palette::Color) -> Rgba {

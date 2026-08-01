@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-26
+Last updated: 2026-07-29
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -361,6 +361,15 @@ It may generate partials, detuned oscillators, FM carriers, noise bands, or
 resonances at any frequencies required by its algorithm. Those internal
 frequencies do not need to be members of the project tuning.
 
+The harmonic-saw voice is the first implemented example. It sums up to 64 sine
+partials, omits partials too close to or above Nyquist for the current note and
+sample rate, and rolls their amplitudes off slightly faster than the ideal
+`1/n` saw series to soften the discontinuity. Its fundamental remains at the
+resolved pitch. Higher partials use a small progressively stretched
+inharmonicity modeled after a stiff resonating string, so they sit just above
+exact integer multiples without requiring those frequencies to exist in the
+project tuning.
+
 ## Triggered voices
 
 Triggered notation is independent of the project pitch system. Possible future
@@ -537,8 +546,8 @@ the files are recombined.
 
 Current project files store `tuning_system_id` instead of duplicating a tuning
 definition. Existing projects may have no pitch-system field or may contain an
-embedded `[pitch_system]` table, and their voices store `voice_type = "sin"` or
-`"saw"`.
+embedded `[pitch_system]` table, and their voices store `voice_type = "sin"`,
+`"saw"`, or `"harmonic-saw"`.
 
 Compatibility loading should:
 
@@ -547,7 +556,7 @@ Compatibility loading should:
   references.
 - Continue to load an embedded pitch-system table as a legacy project-owned
   definition.
-- Interpret existing sin and saw voices as pitched instrument variants.
+- Interpret sin, saw, and harmonic-saw voices as pitched instrument variants.
 - Interpret a missing voice position as the acoustic center.
 - Interpret a missing acoustic scene as a dry centered stereo scene.
 - Write the built-in tuning-system reference when a project with no historical

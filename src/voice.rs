@@ -58,15 +58,17 @@ impl From<u64> for VoiceId {
 pub enum VoiceType {
     Sin,
     Saw,
+    HarmonicSaw,
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 2] = [Self::Sin, Self::Saw];
+    pub const ALL: [Self; 3] = [Self::Sin, Self::Saw, Self::HarmonicSaw];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Sin => "sin",
             Self::Saw => "saw",
+            Self::HarmonicSaw => "harmonic saw",
         }
     }
 
@@ -74,6 +76,7 @@ impl VoiceType {
         match self {
             Self::Sin => "sin",
             Self::Saw => "saw",
+            Self::HarmonicSaw => "harmonic-saw",
         }
     }
 }

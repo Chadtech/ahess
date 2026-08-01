@@ -118,6 +118,19 @@ impl RangeSelectionList {
         self.selection.map(AnchoredSelection::range)
     }
 
+    pub(crate) fn sync_rows(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) {
+        if self.rows == rows {
+            return;
+        }
+
+        self.rows = rows;
+        self.drag_anchor = None;
+        self.selection = self.selection.and_then(|selection| {
+            AnchoredSelection::new(selection.anchor, selection.head, self.rows.len())
+        });
+        cx.notify();
+    }
+
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
         if self.rows.is_empty() {
             return;

@@ -4,6 +4,8 @@ mod audio_build;
 pub mod convolution;
 mod cpal_spike;
 mod gpui_spike;
+#[cfg(target_os = "macos")]
+mod macos;
 mod palette;
 pub mod part;
 pub mod pitch_system;
@@ -22,10 +24,10 @@ use clap::{Parser, Subcommand};
 #[command(author = "ct", version, about = "Ahess music composition spikes")]
 struct Args {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Eq, PartialEq, Subcommand)]
 enum Command {
     #[command(name = "ui")]
     Ui,
@@ -41,8 +43,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
-        Command::Ui => app::run(),
-        Command::RunGpuiSpike => gpui_spike::run(),
-        Command::RunCpalSpike => cpal_spike::run(),
+        None | Some(Command::Ui) => app::run(),
+        Some(Command::RunGpuiSpike) => gpui_spike::run(),
+        Some(Command::RunCpalSpike) => cpal_spike::run(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, Command};
+    use clap::Parser;
+
+    #[test]
+    fn launches_ui_when_no_command_is_given() {
+        let args = Args::try_parse_from(["ahess"]).unwrap();
+
+        assert_eq!(args.command, None);
+    }
+
+    #[test]
+    fn accepts_explicit_ui_command() {
+        let args = Args::try_parse_from(["ahess", "ui"]).unwrap();
+
+        assert_eq!(args.command, Some(Command::Ui));
     }
 }

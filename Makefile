@@ -12,5 +12,5 @@ dev-ui:
 		--watch src \
 		--watch assets \
 		--watch Cargo.toml \
-		--exts rs,toml,ttf \
+		--exts rs,toml,ttf,png \
 		-- cargo run -- ui

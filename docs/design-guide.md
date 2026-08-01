@@ -63,6 +63,11 @@ or when it defines how a shared component is used.
 - use the shared `view::button::Button` disabled state for unavailable actions
   that must keep a stable position. Disabled buttons use the lighter `GRAY3`
   background, do not react to hover or presses, and cannot become depressed.
+- use the shared primary variant for the main affirmative or start action in a
+  control group. It uses a yellow background and border.
+- use the shared danger variant for an action that stops an active process or
+  performs another immediately destructive operation. It uses a red background
+  and border.
 - use shared square buttons for compact, familiar symbols. Compose multiple
   directional buttons with `view::button::labeled_action_group` so their click
   targets keep the ordinary `S5` action gap while their nearby text label uses

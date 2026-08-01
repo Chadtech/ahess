@@ -90,25 +90,7 @@ impl LoopWorkspace {
                 cx,
             )
         });
-        let rows = occurrences
-            .iter()
-            .map(|occurrence| {
-                let beat_label = singular_or_plural(occurrence.length(), "beat", "beats");
-                Row::new(
-                    format!(
-                        "{}. {}",
-                        occurrence.index() + 1,
-                        occurrence.part_name().as_str()
-                    ),
-                    format!("{} {beat_label}", occurrence.length()),
-                    format!(
-                        "beats {}–{}",
-                        occurrence.first_beat(),
-                        occurrence.last_beat()
-                    ),
-                )
-            })
-            .collect();
+        let rows = occurrence_rows(&occurrences);
         let arrangement_range = cx.new(|cx| {
             RangeSelectionList::new(
                 "loop-arrangement-list",
@@ -154,6 +136,36 @@ impl LoopWorkspace {
             to_beat,
             error: None,
         }
+    }
+
+    pub(crate) fn sync_occurrences(
+        &mut self,
+        occurrences: Vec<ArrangementOccurrence>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.occurrences == occurrences {
+            return;
+        }
+
+        self.arrangement_beat_count = occurrences
+            .last()
+            .map_or(0, ArrangementOccurrence::last_beat);
+        self.arrangement_range.update(cx, |range, cx| {
+            range.sync_rows(occurrence_rows(&occurrences), cx);
+        });
+        self.entire_arrangement_button.update(cx, |button, cx| {
+            button.set_disabled(occurrences.is_empty(), cx)
+        });
+        self.occurrences = occurrences;
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(super) fn occurrence_names(&self) -> Vec<&str> {
+        self.occurrences
+            .iter()
+            .map(|occurrence| occurrence.part_name().as_str())
+            .collect()
     }
 
     fn on_selection_mode_changed(
@@ -365,6 +377,28 @@ impl LoopWorkspace {
     }
 }
 
+fn occurrence_rows(occurrences: &[ArrangementOccurrence]) -> Vec<Row> {
+    occurrences
+        .iter()
+        .map(|occurrence| {
+            let beat_label = singular_or_plural(occurrence.length(), "beat", "beats");
+            Row::new(
+                format!(
+                    "{}. {}",
+                    occurrence.index() + 1,
+                    occurrence.part_name().as_str()
+                ),
+                format!("{} {beat_label}", occurrence.length()),
+                format!(
+                    "beats {}–{}",
+                    occurrence.first_beat(),
+                    occurrence.last_beat()
+                ),
+            )
+        })
+        .collect()
+}
+
 impl Render for LoopWorkspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mode_controls = match self.selection_mode {
@@ -473,7 +507,7 @@ mod tests {
 
     use super::{LoopWorkspace, Msg, SelectionMode};
     use crate::{
-        part::Part, playback::BeatRange, project::Project, seed::Seed,
+        part::Part, playback::BeatRange, project, project::Project, seed::Seed, style,
         view::range_selection_list::SelectedRange,
     };
 
@@ -504,7 +538,7 @@ mod tests {
         }
     }
 
-    fn occurrences() -> Vec<crate::project::ArrangementOccurrence> {
+    fn occurrences() -> Vec<project::ArrangementOccurrence> {
         Project::new("test", 800, 0, Seed::new(1))
             .with_parts(vec![
                 Part::new("intro", 8),
@@ -515,7 +549,18 @@ mod tests {
             .arrangement_occurrences()
     }
 
-    fn many_occurrences() -> Vec<crate::project::ArrangementOccurrence> {
+    fn renamed_occurrences() -> Vec<project::ArrangementOccurrence> {
+        Project::new("test", 800, 0, Seed::new(1))
+            .with_parts(vec![
+                Part::new("opening", 8),
+                Part::new("middle", 16),
+                Part::new("ending", 8),
+            ])
+            .with_sequence(vec!["opening".into(), "middle".into(), "ending".into()])
+            .arrangement_occurrences()
+    }
+
+    fn many_occurrences() -> Vec<project::ArrangementOccurrence> {
         let parts = (1..=28)
             .map(|index| Part::new(format!("part-{index}"), 16))
             .collect();
@@ -537,8 +582,8 @@ mod tests {
         let arrangement = cx.debug_bounds("loop-arrangement-column").unwrap();
         let list = cx.debug_bounds("loop-arrangement-list").unwrap();
 
-        assert!(workspace.size.width > crate::style::S11);
-        assert!(workspace.size.height > crate::style::S10);
+        assert!(workspace.size.width > style::S11);
+        assert!(workspace.size.height > style::S10);
         assert!(workspace.origin.x >= px(0.0));
         assert!(workspace.origin.y >= px(0.0));
         assert!(workspace.origin.x + workspace.size.width <= px(1_200.0));
@@ -551,7 +596,7 @@ mod tests {
             list.size.width > controls.size.width,
             "controls: {controls:?}, arrangement: {arrangement:?}, list: {list:?}"
         );
-        assert!(list.size.height > crate::style::S9);
+        assert!(list.size.height > style::S9);
         assert!(list.origin.x + list.size.width <= workspace.origin.x + workspace.size.width);
         assert!(cx.debug_bounds("apply-loop-range").is_none());
     }
@@ -590,6 +635,34 @@ mod tests {
     }
 
     #[gpui::test]
+    fn syncing_occurrence_names_preserves_the_loop_draft(cx: &mut TestAppContext) {
+        let range = BeatRange::new(10, 30, 32).unwrap();
+        let (workspace, cx) =
+            cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.from_beat.update(cx, |input, cx| {
+                input.sync_value("unfinished", cx);
+            });
+            workspace.sync_occurrences(renamed_occurrences(), cx);
+        });
+
+        cx.update(|_, cx| {
+            let workspace = workspace.read(cx);
+            assert_eq!(workspace.selection_mode, SelectionMode::ExactBeats);
+            assert_eq!(workspace.from_beat.read(cx).value(), "unfinished");
+            assert_eq!(
+                workspace.arrangement_range.read(cx).selected_range(),
+                SelectedRange::new(1, 2, 3)
+            );
+            assert_eq!(
+                workspace.occurrence_names(),
+                ["opening", "middle", "ending"]
+            );
+        });
+    }
+
+    #[gpui::test]
     fn exact_mode_keeps_the_same_wide_two_column_layout(cx: &mut TestAppContext) {
         let range = BeatRange::new(2, 447, 448).unwrap();
         let (_dialog, cx) =
@@ -603,11 +676,11 @@ mod tests {
         let list = cx.debug_bounds("loop-arrangement-list").unwrap();
         let fields = cx.debug_bounds("loop-range-fields").unwrap();
 
-        assert!(workspace.size.width > crate::style::S11);
-        assert!(workspace.size.height > crate::style::S10);
-        assert_eq!(controls.size.width, crate::style::S9);
+        assert!(workspace.size.width > style::S11);
+        assert!(workspace.size.height > style::S10);
+        assert_eq!(controls.size.width, style::S9);
         assert!(controls.origin.x < arrangement.origin.x);
-        assert!(list.size.height > crate::style::S9);
+        assert!(list.size.height > style::S9);
         assert!(fields.origin.x + fields.size.width <= controls.origin.x + controls.size.width);
     }
 

@@ -33,6 +33,7 @@ pub struct Button {
     trailing_label: Option<SharedString>,
     max_width: Option<Pixels>,
     size: Size,
+    variant: ButtonVariant,
     disabled: bool,
     depressed: bool,
     pressing: bool,
@@ -43,6 +44,14 @@ pub struct Button {
 pub struct Clicked;
 
 impl EventEmitter<Clicked> for Button {}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ButtonVariant {
+    #[default]
+    Default,
+    Primary,
+    Danger,
+}
 
 enum Size {
     Text,
@@ -57,6 +66,7 @@ impl Button {
             trailing_label: None,
             max_width: None,
             size: Size::Text,
+            variant: ButtonVariant::Default,
             disabled: false,
             depressed: false,
             pressing: false,
@@ -91,6 +101,11 @@ impl Button {
         self
     }
 
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
     pub fn square(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
@@ -98,6 +113,7 @@ impl Button {
             trailing_label: None,
             max_width: None,
             size: Size::Square,
+            variant: ButtonVariant::Default,
             disabled: false,
             depressed: false,
             pressing: false,
@@ -142,6 +158,15 @@ impl Button {
     #[cfg(test)]
     pub(crate) fn is_disabled(&self) -> bool {
         self.disabled
+    }
+
+    pub fn set_variant(&mut self, variant: ButtonVariant, cx: &mut Context<Self>) {
+        if self.variant == variant {
+            return;
+        }
+
+        self.variant = variant;
+        cx.notify();
     }
 
     pub fn set_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -226,7 +251,12 @@ impl Render for Button {
         } else {
             s::BUTTON_TEXT
         };
-        let background = if self.disabled { s::GRAY3 } else { s::GRAY2 };
+        let (background, light_border, dark_border) = match self.variant {
+            ButtonVariant::Default => (s::GRAY2, s::GRAY3, s::GRAY1),
+            ButtonVariant::Primary => (s::YELLOW3, s::YELLOW5, s::YELLOW1),
+            ButtonVariant::Danger => (s::RED1, s::RED2, s::RED1),
+        };
+        let background = if self.disabled { s::GRAY3 } else { background };
         let cursor = if self.disabled {
             CursorStyle::Arrow
         } else {
@@ -274,10 +304,12 @@ impl Render for Button {
             button.max_w(width).overflow_hidden()
         });
 
-        if !self.disabled && (self.depressed || self.pressing) {
-            s::sunken(button)
-        } else {
+        if self.disabled {
             s::raised(button)
+        } else if self.depressed || self.pressing {
+            s::sunken_with_border(button, light_border, dark_border)
+        } else {
+            s::raised_with_border(button, light_border, dark_border)
         }
     }
 }
@@ -286,7 +318,7 @@ impl Render for Button {
 mod tests {
     use gpui::{prelude::*, Context, Entity, TestAppContext, Window};
 
-    use super::{action_group, Button};
+    use super::{action_group, Button, ButtonVariant};
     use crate::style as s;
 
     struct ActionGroupHost {
@@ -356,5 +388,27 @@ mod tests {
         });
 
         assert!(cx.update(|_, cx| button.read(cx).pressing));
+    }
+
+    #[gpui::test]
+    fn button_variants_can_be_set_at_creation_and_runtime(cx: &mut TestAppContext) {
+        let (button, cx) = cx.add_window_view(|_, _| {
+            Button::new("variant-button", "play").variant(ButtonVariant::Primary)
+        });
+
+        assert_eq!(
+            cx.update(|_, cx| button.read(cx).variant),
+            ButtonVariant::Primary
+        );
+
+        button.update(cx, |button, cx| {
+            button.set_label("stop", cx);
+            button.set_variant(ButtonVariant::Danger, cx);
+        });
+
+        assert_eq!(
+            cx.update(|_, cx| button.read(cx).variant),
+            ButtonVariant::Danger
+        );
     }
 }

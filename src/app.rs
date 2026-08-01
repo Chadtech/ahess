@@ -14,8 +14,8 @@ use std::{
 };
 
 use gpui::{
-    div, img, prelude::*, px, AnyElement, App, Application, Context, Entity, Image, ImageFormat,
-    ObjectFit, SharedString, Window, WindowOptions,
+    actions, div, img, prelude::*, px, AnyElement, App, Application, Context, Entity, Image,
+    ImageFormat, KeyBinding, ObjectFit, SharedString, Window, WindowOptions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +30,8 @@ use crate::{
 };
 
 use self::{new_project::NewProjectDialog, open_project::OpenProjectDialog};
+
+actions!(ahess, [TogglePlayback]);
 
 const AHESS_IMAGE_HEIGHT_RATIO: f32 = 1086.0 / 1448.0;
 const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
@@ -151,6 +153,13 @@ impl AhessApp {
                 self.set_project_start_mode(ProjectStartMode::New, cx);
             }
         }
+    }
+
+    fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        let AppMode::ProjectOpen(model) = &self.app_mode else {
+            return;
+        };
+        model.update(cx, |model, cx| model.toggle_playback(cx));
     }
 
     fn on_new_project_opened(
@@ -517,21 +526,40 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let startup_error_from_callback = Rc::clone(&startup_error);
 
     Application::new().run(move |cx: &mut App| {
-        view::text_input::bind_keys(cx);
+        #[cfg(target_os = "macos")]
+        crate::macos::set_application_icon();
 
-        if let Err(error) = cx.open_window(WindowOptions::default(), |window, cx| {
+        bind_keys(cx);
+
+        let app = cx.new(AhessApp::new);
+        let window_app = app.clone();
+        if let Err(error) = cx.open_window(WindowOptions::default(), move |window, _| {
             window.set_window_title("ahess");
-            cx.new(AhessApp::new)
+            window_app
         }) {
             startup_error_from_callback.set(Some(io::Error::other(error)));
             cx.quit();
+            return;
         }
+        register_actions(app, cx);
     });
 
     match startup_error.take() {
         Some(error) => Err(Box::new(error)),
         None => Ok(()),
     }
+}
+
+fn bind_keys(cx: &mut App) {
+    view::text_input::bind_keys(cx);
+    cx.bind_keys([KeyBinding::new("secondary-p", TogglePlayback, None)]);
+}
+
+fn register_actions(app: Entity<AhessApp>, cx: &mut App) {
+    let app = app.downgrade();
+    cx.on_action(move |_: &TogglePlayback, cx| {
+        app.update(cx, |app, cx| app.toggle_playback(cx)).ok();
+    });
 }
 
 struct AppFrame {
@@ -756,9 +784,11 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use gpui::{div, prelude::*, Context, FocusHandle, TestAppContext, Window};
+
     use super::{
-        load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode, Storage,
-        StoredAppMode,
+        bind_keys, load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
+        Storage, StoredAppMode, TogglePlayback,
     };
     use crate::{
         project::{self, Project},
@@ -832,6 +862,53 @@ mod tests {
         ));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct PlaybackShortcutHost {
+        project_focus: FocusHandle,
+        text_input_focus: FocusHandle,
+        toggle_count: usize,
+    }
+
+    impl Render for PlaybackShortcutHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.project_focus).child(
+                div()
+                    .key_context("TextInput")
+                    .track_focus(&self.text_input_focus),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn command_p_toggles_playback_with_or_without_focus(cx: &mut TestAppContext) {
+        cx.update(bind_keys);
+        let (host, cx) = cx.add_window_view(|_, cx| PlaybackShortcutHost {
+            project_focus: cx.focus_handle(),
+            text_input_focus: cx.focus_handle(),
+            toggle_count: 0,
+        });
+        let weak_host = host.downgrade();
+        cx.update(move |_, cx| {
+            cx.on_action(move |_: &TogglePlayback, cx| {
+                weak_host.update(cx, |host, _| host.toggle_count += 1).ok();
+            });
+        });
+
+        cx.update(|window, cx| host.read(cx).project_focus.focus(window));
+        cx.simulate_keystrokes("secondary-p");
+        assert_eq!(cx.update(|_, cx| host.read(cx).toggle_count), 1);
+
+        cx.update(|window, cx| host.read(cx).text_input_focus.focus(window));
+        cx.simulate_keystrokes("secondary-p");
+        assert_eq!(cx.update(|_, cx| host.read(cx).toggle_count), 2);
+
+        cx.update(|window, _| window.blur());
+        cx.simulate_keystrokes("secondary-p");
+        assert_eq!(cx.update(|_, cx| host.read(cx).toggle_count), 3);
+
+        cx.simulate_keystrokes("space");
+        assert_eq!(cx.update(|_, cx| host.read(cx).toggle_count), 3);
     }
 
     fn temp_root(test_name: &str) -> PathBuf {

@@ -250,6 +250,8 @@ impl VoicesWorkspace {
     fn subscribe_voice_type_buttons(buttons: &VoiceTypeButtons, cx: &mut Context<Self>) {
         cx.subscribe(&buttons.sin, Self::on_sin_clicked).detach();
         cx.subscribe(&buttons.saw, Self::on_saw_clicked).detach();
+        cx.subscribe(&buttons.harmonic_saw, Self::on_harmonic_saw_clicked)
+            .detach();
     }
 
     fn on_add_new_clicked(
@@ -368,6 +370,15 @@ impl VoicesWorkspace {
 
     fn on_saw_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
         self.select_voice_type(VoiceType::Saw, cx);
+    }
+
+    fn on_harmonic_saw_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_voice_type(VoiceType::HarmonicSaw, cx);
     }
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
@@ -694,6 +705,7 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
 struct VoiceTypeButtons {
     sin: Entity<Button>,
     saw: Entity<Button>,
+    harmonic_saw: Entity<Button>,
 }
 
 impl VoiceTypeButtons {
@@ -701,16 +713,27 @@ impl VoiceTypeButtons {
         Self {
             sin: voice_type_button("voice-type-sin", VoiceType::Sin, selected, cx),
             saw: voice_type_button("voice-type-saw", VoiceType::Saw, selected, cx),
+            harmonic_saw: voice_type_button(
+                "voice-type-harmonic-saw",
+                VoiceType::HarmonicSaw,
+                selected,
+                cx,
+            ),
         }
     }
 
     fn entities(&self) -> Vec<Entity<Button>> {
-        vec![self.sin.clone(), self.saw.clone()]
+        vec![
+            self.sin.clone(),
+            self.saw.clone(),
+            self.harmonic_saw.clone(),
+        ]
     }
 
     fn set_selected(&self, selected: VoiceType, cx: &mut Context<VoicesWorkspace>) {
         set_button_selected(&self.sin, selected == VoiceType::Sin, cx);
         set_button_selected(&self.saw, selected == VoiceType::Saw, cx);
+        set_button_selected(&self.harmonic_saw, selected == VoiceType::HarmonicSaw, cx);
     }
 }
 
@@ -734,8 +757,37 @@ mod tests {
     use super::{View, VoicesWorkspace};
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
+        view::button,
         voice::{Voice, VoiceType},
     };
+
+    #[gpui::test]
+    fn harmonic_saw_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
+            let harmonic_saw_button = match &dialog.view {
+                View::Add {
+                    voice_type_buttons, ..
+                } => voice_type_buttons.harmonic_saw.clone(),
+                _ => panic!("add view must contain voice type buttons"),
+            };
+
+            dialog.on_harmonic_saw_clicked(harmonic_saw_button, &button::Clicked, cx);
+
+            let View::Add {
+                selected_voice_type,
+                ..
+            } = &dialog.view
+            else {
+                panic!("voice type selection must keep the add view open");
+            };
+            assert_eq!(*selected_voice_type, VoiceType::HarmonicSaw);
+        });
+    }
 
     #[gpui::test]
     fn add_voice_position_starts_at_the_listener(cx: &mut TestAppContext) {

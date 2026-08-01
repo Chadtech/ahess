@@ -27,6 +27,11 @@ const TIMING_SEED_DOMAIN: u64 = 0x7469_6d69_6e67_2d31;
 const FREQUENCY_VARIANCE_SEED_DOMAIN: u64 = 0x6672_6571_2d76_6172;
 const TIMING_STANDARD_DEVIATIONS: f64 = 3.0;
 const FREQUENCY_STANDARD_DEVIATIONS: f64 = 3.0;
+const HARMONIC_SAW_PARTIAL_COUNT: usize = 32;
+const HARMONIC_SAW_INHARMONICITY: f32 = 0.000_016;
+const HARMONIC_SAW_SPECTRAL_SLOPE: f32 = 1.12;
+const HARMONIC_SAW_NYQUIST_MARGIN: f32 = 0.98;
+const HARMONIC_SAW_RENORMALIZE_INTERVAL: u32 = 1_024;
 
 pub struct Playback {
     _stream: Stream,
@@ -472,6 +477,7 @@ impl AudioEngine {
                         f64::from(self.sample_rate),
                     );
                 }
+                runtime.reconcile_voice_type(voice.voice_type);
                 runtime
             })
             .collect();
@@ -661,7 +667,7 @@ impl GainRamp {
 struct VoiceRuntime {
     id: VoiceId,
     position: Point3Meters,
-    oscillator_phase: f32,
+    oscillator: OscillatorRuntime,
     spatializer: VoiceSpatializer,
 }
 
@@ -670,8 +676,14 @@ impl VoiceRuntime {
         Self {
             id: voice.id,
             position: voice.position,
-            oscillator_phase: 0.0,
+            oscillator: OscillatorRuntime::new(voice.voice_type),
             spatializer: VoiceSpatializer::new(scene, voice.position, f64::from(sample_rate)),
+        }
+    }
+
+    fn reconcile_voice_type(&mut self, voice_type: VoiceType) {
+        if self.oscillator.voice_type() != voice_type {
+            self.oscillator = OscillatorRuntime::new(voice_type);
         }
     }
 
@@ -691,16 +703,175 @@ impl VoiceRuntime {
                 if sample_in_beat >= delay {
                     let note_sample = sample_in_beat - delay;
                     let note_length = beat_length - delay;
-                    source_sample = waveform_sample(voice.voice_type, self.oscillator_phase)
+                    source_sample = self.oscillator.sample(frequency.as_hz_f32(), sample_rate)
                         * envelope(note_sample, note_length);
                     source_is_active = true;
-                    self.oscillator_phase =
-                        (self.oscillator_phase + frequency.as_hz_f32() / sample_rate).fract();
                 }
             }
         }
 
         self.spatializer.process(source_sample, source_is_active)
+    }
+}
+
+enum OscillatorRuntime {
+    Sin { phase: f32 },
+    Saw { phase: f32 },
+    HarmonicSaw(HarmonicSawRuntime),
+}
+
+impl OscillatorRuntime {
+    fn new(voice_type: VoiceType) -> Self {
+        match voice_type {
+            VoiceType::Sin => Self::Sin { phase: 0.0 },
+            VoiceType::Saw => Self::Saw { phase: 0.0 },
+            VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
+        }
+    }
+
+    fn voice_type(&self) -> VoiceType {
+        match self {
+            Self::Sin { .. } => VoiceType::Sin,
+            Self::Saw { .. } => VoiceType::Saw,
+            Self::HarmonicSaw(_) => VoiceType::HarmonicSaw,
+        }
+    }
+
+    fn sample(&mut self, frequency: f32, sample_rate: f32) -> f32 {
+        match self {
+            Self::Sin { phase } => {
+                let sample = (*phase * std::f32::consts::TAU).sin();
+                advance_phase(phase, frequency, sample_rate);
+                sample
+            }
+            Self::Saw { phase } => {
+                let sample = (*phase * 2.0) - 1.0;
+                advance_phase(phase, frequency, sample_rate);
+                sample
+            }
+            Self::HarmonicSaw(runtime) => runtime.sample(frequency, sample_rate),
+        }
+    }
+}
+
+fn advance_phase(phase: &mut f32, frequency: f32, sample_rate: f32) {
+    *phase = (*phase + frequency / sample_rate).fract();
+}
+
+struct HarmonicSawRuntime {
+    partials: [HarmonicPartial; HARMONIC_SAW_PARTIAL_COUNT],
+    prepared: Option<PreparedHarmonicSaw>,
+    samples_since_normalization: u32,
+}
+
+impl HarmonicSawRuntime {
+    fn new() -> Self {
+        Self {
+            partials: std::array::from_fn(|index| HarmonicPartial::new(index + 1)),
+            prepared: None,
+            samples_since_normalization: 0,
+        }
+    }
+
+    fn sample(&mut self, fundamental: f32, sample_rate: f32) -> f32 {
+        let active_partial_count = match self.prepared {
+            Some(prepared)
+                if prepared.fundamental == fundamental && prepared.sample_rate == sample_rate =>
+            {
+                prepared.active_partial_count
+            }
+            _ => self.prepare(fundamental, sample_rate),
+        };
+        let mut sample = 0.0;
+        for partial in &mut self.partials[..active_partial_count] {
+            sample -= partial.sin_phase * partial.amplitude;
+            partial.advance();
+        }
+
+        self.samples_since_normalization += 1;
+        if self.samples_since_normalization >= HARMONIC_SAW_RENORMALIZE_INTERVAL {
+            for partial in &mut self.partials[..active_partial_count] {
+                partial.normalize_phase();
+            }
+            self.samples_since_normalization = 0;
+        }
+
+        sample
+    }
+
+    fn prepare(&mut self, fundamental: f32, sample_rate: f32) -> usize {
+        let maximum_frequency = sample_rate * 0.5 * HARMONIC_SAW_NYQUIST_MARGIN;
+        let mut active_partial_count = 0;
+
+        for partial in &mut self.partials {
+            let frequency = fundamental * partial.frequency_ratio;
+            if frequency >= maximum_frequency {
+                break;
+            }
+            partial.set_frequency(frequency, sample_rate);
+            active_partial_count += 1;
+        }
+
+        self.prepared = Some(PreparedHarmonicSaw {
+            fundamental,
+            sample_rate,
+            active_partial_count,
+        });
+        active_partial_count
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreparedHarmonicSaw {
+    fundamental: f32,
+    sample_rate: f32,
+    active_partial_count: usize,
+}
+
+struct HarmonicPartial {
+    sin_phase: f32,
+    cos_phase: f32,
+    sin_step: f32,
+    cos_step: f32,
+    frequency_ratio: f32,
+    amplitude: f32,
+}
+
+impl HarmonicPartial {
+    fn new(number: usize) -> Self {
+        let number = number as f32;
+        let stretch = ((1.0 + HARMONIC_SAW_INHARMONICITY * number * number)
+            / (1.0 + HARMONIC_SAW_INHARMONICITY))
+            .sqrt();
+
+        Self {
+            sin_phase: 0.0,
+            cos_phase: 1.0,
+            sin_step: 0.0,
+            cos_step: 1.0,
+            frequency_ratio: number * stretch,
+            amplitude: (2.0 / std::f32::consts::PI) / number.powf(HARMONIC_SAW_SPECTRAL_SLOPE),
+        }
+    }
+
+    fn set_frequency(&mut self, frequency: f32, sample_rate: f32) {
+        let phase_step = std::f32::consts::TAU * frequency / sample_rate;
+        (self.sin_step, self.cos_step) = phase_step.sin_cos();
+    }
+
+    fn advance(&mut self) {
+        let sin_phase = self.sin_phase * self.cos_step + self.cos_phase * self.sin_step;
+        let cos_phase = self.cos_phase * self.cos_step - self.sin_phase * self.sin_step;
+        self.sin_phase = sin_phase;
+        self.cos_phase = cos_phase;
+    }
+
+    fn normalize_phase(&mut self) {
+        let magnitude = (self.sin_phase * self.sin_phase + self.cos_phase * self.cos_phase).sqrt();
+        if magnitude > 0.0 {
+            self.sin_phase /= magnitude;
+            self.cos_phase /= magnitude;
+        }
     }
 }
 
@@ -718,13 +889,6 @@ where
                 *sample = T::from_sample(0.0);
             }
         }
-    }
-}
-
-fn waveform_sample(voice_type: VoiceType, phase: f32) -> f32 {
-    match voice_type {
-        VoiceType::Sin => (phase * std::f32::consts::TAU).sin(),
-        VoiceType::Saw => (phase * 2.0) - 1.0,
     }
 }
 
@@ -747,8 +911,8 @@ mod tests {
 
     use super::{
         frequency_variance_seed, normally_distributed_delay, timing_seed, varied_frequency,
-        write_device_frame, AudioEngine, BeatRange, GainRamp, OfflineRenderer, PlaybackLoop,
-        MIX_GAIN_RAMP_SAMPLES,
+        write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial, HarmonicSawRuntime,
+        OfflineRenderer, PlaybackLoop, HARMONIC_SAW_PARTIAL_COUNT, MIX_GAIN_RAMP_SAMPLES,
     };
     use crate::{
         acoustics::{Point3Meters, StereoFrame},
@@ -757,6 +921,39 @@ mod tests {
         project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType},
         seed::Seed,
     };
+
+    #[test]
+    fn harmonic_saw_keeps_its_fundamental_and_gently_stretches_every_upper_partial() {
+        let partials = (1..=HARMONIC_SAW_PARTIAL_COUNT)
+            .map(HarmonicPartial::new)
+            .collect::<Vec<_>>();
+
+        assert_eq!(partials[0].frequency_ratio, 1.0);
+        for (index, partial) in partials.iter().enumerate().skip(1) {
+            let harmonic_number = (index + 1) as f32;
+            assert!(partial.frequency_ratio > harmonic_number);
+            assert!(partial.frequency_ratio < harmonic_number + 1.0);
+            assert!(partial.amplitude < partials[index - 1].amplitude);
+        }
+        assert!(
+            partials[1].amplitude < (2.0 / std::f32::consts::PI) / 2.0,
+            "upper partials should roll off faster than an ideal saw"
+        );
+    }
+
+    #[test]
+    fn harmonic_saw_omits_partials_too_close_to_nyquist() {
+        let mut runtime = HarmonicSawRuntime::new();
+
+        assert_eq!(runtime.sample(1_000.0, 4_000.0), 0.0);
+        assert!((runtime.partials[0].sin_phase - 1.0).abs() < 1e-6);
+        assert_eq!(runtime.partials[1].sin_phase, 0.0);
+        assert_eq!(runtime.prepared.unwrap().active_partial_count, 1);
+
+        let sample = runtime.sample(1_000.0, 4_000.0);
+        let expected_fundamental_peak = -(2.0 / std::f32::consts::PI);
+        assert!((sample - expected_fundamental_peak).abs() < 1e-6);
+    }
 
     #[test]
     fn builds_a_two_voice_loop_from_score_rows() {
@@ -1131,29 +1328,28 @@ mod tests {
     }
 
     #[test]
-    fn offline_renderer_matches_one_cycle_of_live_playback() {
-        let project = Project::new("test", 8, 0, Seed::new(1)).with_voices(vec![Voice::new(
-            1,
-            "lead",
-            VoiceType::Sin,
-        )]);
-        let part = Part::new("intro", 1);
-        let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
-        let rows = score.resolved_rows(&part, &project).unwrap();
-        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
-        let shared = Arc::new(Mutex::new(playback_loop.clone()));
-        let playhead = Arc::new(AtomicU64::new(1));
-        let mut live = AudioEngine::new(48_000.0, shared, playhead);
-        let mut offline = OfflineRenderer::new(playback_loop, 48_000);
+    fn every_voice_type_matches_between_live_and_offline_rendering() {
+        for voice_type in VoiceType::ALL {
+            let project = Project::new("test", 8, 0, Seed::new(1))
+                .with_voices(vec![Voice::new(1, "lead", voice_type)]);
+            let part = Part::new("intro", 1);
+            let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
+            let rows = score.resolved_rows(&part, &project).unwrap();
+            let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+            let shared = Arc::new(Mutex::new(playback_loop.clone()));
+            let playhead = Arc::new(AtomicU64::new(1));
+            let mut live = AudioEngine::new(48_000.0, shared, playhead);
+            let mut offline = OfflineRenderer::new(playback_loop, 48_000);
 
-        for _ in 0..8 {
-            let live_frame = live.next_frame();
-            let (offline_frame, voice_frames) = offline.next_frame().unwrap();
-            assert_eq!(offline_frame, live_frame);
-            assert_eq!(voice_frames.len(), 1);
-            assert_eq!(voice_frames[0], live_frame);
+            for _ in 0..8 {
+                let live_frame = live.next_frame();
+                let (offline_frame, voice_frames) = offline.next_frame().unwrap();
+                assert_eq!(offline_frame, live_frame);
+                assert_eq!(voice_frames.len(), 1);
+                assert_eq!(voice_frames[0], live_frame);
+            }
+            assert!(offline.next_frame().is_none());
         }
-        assert!(offline.next_frame().is_none());
     }
 
     #[test]

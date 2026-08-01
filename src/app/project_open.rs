@@ -23,7 +23,7 @@ use crate::{
     project::{self, Project},
     style as s, view,
     view::{
-        button::{self, Button},
+        button::{self, Button, ButtonVariant},
         dialog::destructive_dialog,
         dropdown::{self, Dropdown},
         status_bar,
@@ -63,8 +63,7 @@ pub struct Model {
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
     loop_button: Entity<Button>,
-    play_button: Entity<Button>,
-    stop_button: Entity<Button>,
+    transport_button: Entity<Button>,
     project_overlay: Option<ProjectOverlay>,
     score_documents: Vec<ScoreDocumentEntry>,
     score_views: Vec<ScoreViewEntry>,
@@ -270,8 +269,8 @@ impl Model {
         let arrangement_beat_count = project.arrangement_beat_count();
         let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
         let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
-        let play_button = cx.new(|_| Button::new("play-score", "play"));
-        let stop_button = cx.new(|_| Button::new("stop-score", "stop"));
+        let transport_button =
+            cx.new(|_| Button::new("toggle-playback", "play").variant(ButtonVariant::Primary));
 
         cx.subscribe(&score_button, Self::on_score_clicked).detach();
         cx.subscribe(&settings_button, Self::on_settings_clicked)
@@ -284,8 +283,8 @@ impl Model {
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
             .detach();
         cx.subscribe(&loop_button, Self::on_loop_clicked).detach();
-        cx.subscribe(&play_button, Self::on_play_clicked).detach();
-        cx.subscribe(&stop_button, Self::on_stop_clicked).detach();
+        cx.subscribe(&transport_button, Self::on_transport_clicked)
+            .detach();
 
         let parts = project.parts.clone();
         let sequence = project.sequence().to_vec();
@@ -342,8 +341,7 @@ impl Model {
             close_button,
             pane_count_dropdown,
             loop_button,
-            play_button,
-            stop_button,
+            transport_button,
             project_overlay: None,
             score_documents: Vec::new(),
             score_views: vec![ScoreViewEntry {
@@ -386,12 +384,11 @@ impl Model {
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
         vec![
+            self.transport_button.clone().into_any_element(),
             div()
                 .flex()
-                .items_center()
                 .gap(s::S3)
-                .child(self.play_button.clone())
-                .child(self.stop_button.clone())
+                .child(self.pane_count_dropdown.clone())
                 .into_any_element(),
             div()
                 .flex()
@@ -405,11 +402,6 @@ impl Model {
                     self.build_button.clone(),
                 ])
                 .into_any_element(),
-            div()
-                .flex()
-                .gap(s::S3)
-                .child(self.pane_count_dropdown.clone())
-                .into_any_element(),
             self.close_button.clone().into_any_element(),
         ]
     }
@@ -419,6 +411,28 @@ impl Model {
             return Some(overlay.clone().into_any_element());
         }
         self.workspace.section.overlay_element()
+    }
+
+    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_overlay() {
+            return;
+        }
+        if self.playback.is_some() {
+            self.stop_playback(cx);
+            return;
+        }
+
+        let target = PlaybackTarget::Arrangement;
+        let playback_loop = match self.playback_loop_for_target(&target, cx) {
+            Ok(playback_loop) => playback_loop,
+            Err(error) => {
+                self.transport_error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+
+        self.start_playback(target, playback_loop, cx);
     }
 
     fn has_active_overlay(&self) -> bool {
@@ -865,18 +879,13 @@ impl Model {
         cx.notify();
     }
 
-    fn on_play_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        let target = PlaybackTarget::Arrangement;
-        let playback_loop = match self.playback_loop_for_target(&target, cx) {
-            Ok(playback_loop) => playback_loop,
-            Err(error) => {
-                self.transport_error = Some(error);
-                cx.notify();
-                return;
-            }
-        };
-
-        self.start_playback(target, playback_loop, cx);
+    fn on_transport_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_playback(cx);
     }
 
     fn start_playback(
@@ -895,19 +904,15 @@ impl Model {
                     target,
                 });
                 self.transport_error = None;
-                self.set_transport_playing(true, cx);
+                self.sync_transport_button(cx);
                 self.start_playhead_tracking(cx);
             }
             Err(error) => {
                 self.transport_error = Some(error.to_string());
-                self.set_transport_playing(false, cx);
+                self.sync_transport_button(cx);
             }
         }
         cx.notify();
-    }
-
-    fn on_stop_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        self.stop_playback(cx);
     }
 
     fn stop_playback(&mut self, cx: &mut Context<Self>) {
@@ -915,13 +920,22 @@ impl Model {
         self.playback = None;
         self.clear_playhead_highlights(cx);
         self.transport_error = None;
-        self.set_transport_playing(false, cx);
+        self.sync_transport_button(cx);
         cx.notify();
     }
 
-    fn set_transport_playing(&self, playing: bool, cx: &mut Context<Self>) {
-        self.play_button.update(cx, |button, cx| {
-            button.set_depressed(playing, cx);
+    fn sync_transport_button(&self, cx: &mut Context<Self>) {
+        let playing = self.playback.is_some();
+        self.transport_button.update(cx, |button, cx| {
+            button.set_label(if playing { "stop" } else { "play" }, cx);
+            button.set_variant(
+                if playing {
+                    ButtonVariant::Danger
+                } else {
+                    ButtonVariant::Primary
+                },
+                cx,
+            );
         });
     }
 
@@ -1381,6 +1395,11 @@ impl Model {
         let acoustic_scene = project.acoustic_scene().clone();
         self.workspace.voices.update(cx, |workspace, cx| {
             workspace.sync_project(voices, acoustic_scene, cx);
+        });
+
+        let occurrences = project.arrangement_occurrences();
+        self.workspace.loop_editor.update(cx, |workspace, cx| {
+            workspace.sync_occurrences(occurrences, cx);
         });
 
         self.workspace.project_settings.update(cx, |workspace, cx| {
@@ -3226,6 +3245,12 @@ mod tests {
         let intro = create_project_part(&project_directory, &mut project, "intro", 1).unwrap();
         let score = PartScore::from_rows(vec![vec!["C4".to_string()]]);
         score.save(&project_directory, &intro, &project).unwrap();
+        update_project_sequence(
+            &project_directory,
+            &mut project,
+            vec![intro.name.clone(), intro.name.clone()],
+        )
+        .unwrap();
         let dialog_parts = project.parts.clone();
         let dialog_sequence = project.sequence().to_vec();
         let (model, cx) = cx.add_window_view(|_, cx| {
@@ -3261,6 +3286,10 @@ mod tests {
             assert_eq!(
                 model.score_views[0].part_name.as_ref().unwrap().as_str(),
                 "opening theme"
+            );
+            assert_eq!(
+                model.workspace.loop_editor.read(cx).occurrence_names(),
+                ["opening theme", "opening theme"]
             );
             assert_eq!(
                 model.score_documents[0]
