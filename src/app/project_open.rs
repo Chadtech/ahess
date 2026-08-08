@@ -15,13 +15,14 @@ use gpui::{
     div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
     EventEmitter, MouseButton, MouseDownEvent, Task, WeakEntity, Window,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     audio_build,
     part::{self, PartName, PartScore, SubdivisionPattern},
     playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
-    style as s, view,
+    style as s,
     view::{
         button::{self, Button, ButtonVariant},
         dialog::destructive_dialog,
@@ -49,6 +50,34 @@ const PLAYHEAD_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 
 pub enum Msg {
     CloseRequested,
+    UiStateChanged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(super) struct UiState {
+    #[serde(default)]
+    pub(super) workspace: WorkspaceSectionKind,
+    #[serde(default = "default_score_pane_count")]
+    pub(super) score_pane_count: usize,
+    #[serde(default)]
+    pub(super) open_score_parts: Vec<String>,
+    #[serde(default)]
+    pub(super) active_score_pane: usize,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            workspace: WorkspaceSectionKind::Score,
+            score_pane_count: default_score_pane_count(),
+            open_score_parts: Vec::new(),
+            active_score_pane: 0,
+        }
+    }
+}
+
+const fn default_score_pane_count() -> usize {
+    1
 }
 
 pub struct Model {
@@ -135,8 +164,10 @@ enum WorkspaceSection {
     Build,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WorkspaceSectionKind {
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum WorkspaceSectionKind {
+    #[default]
     Score,
     Parts,
     Voices,
@@ -146,6 +177,17 @@ enum WorkspaceSectionKind {
 }
 
 impl WorkspaceSection {
+    fn new(kind: WorkspaceSectionKind) -> Self {
+        match kind {
+            WorkspaceSectionKind::Score => Self::Score { overlay: None },
+            WorkspaceSectionKind::Parts => Self::Parts { overlay: None },
+            WorkspaceSectionKind::Voices => Self::Voices { overlay: None },
+            WorkspaceSectionKind::Loop => Self::Loop,
+            WorkspaceSectionKind::Project => Self::Project,
+            WorkspaceSectionKind::Build => Self::Build,
+        }
+    }
+
     fn kind(&self) -> WorkspaceSectionKind {
         match self {
             Self::Score { .. } => WorkspaceSectionKind::Score,
@@ -258,6 +300,22 @@ impl Model {
         workspace_root: PathBuf,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_ui_state(
+            project,
+            project_directory,
+            workspace_root,
+            UiState::default(),
+            cx,
+        )
+    }
+
+    pub(super) fn new_with_ui_state(
+        project: Project,
+        project_directory: PathBuf,
+        workspace_root: PathBuf,
+        ui_state: UiState,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let score_button = cx.new(|_| Button::new("score-workspace", "score").depressed(true));
         let settings_button = cx.new(|_| Button::new("project-settings", "project"));
         let parts_button = cx.new(|_| Button::new("parts", "parts"));
@@ -321,7 +379,6 @@ impl Model {
         cx.subscribe(&audio_build, Self::on_build_workspace_msg)
             .detach();
 
-        let initial_part = project.parts.first().map(|part| part.name.clone());
         let mut model = Self {
             project,
             project_directory,
@@ -356,9 +413,7 @@ impl Model {
             transport_error: None,
             workspace_error: None,
         };
-        if let Some(part_name) = initial_part {
-            model.assign_part_to_view(0, part_name, cx);
-        }
+        model.restore_ui_state(ui_state, cx);
         let part_names = model
             .project
             .parts()
@@ -380,6 +435,50 @@ impl Model {
 
     pub fn project_directory(&self) -> &Path {
         &self.project_directory
+    }
+
+    pub(super) fn ui_state(&self) -> UiState {
+        UiState {
+            workspace: self.workspace.section.kind(),
+            score_pane_count: self.score_views.len(),
+            open_score_parts: self
+                .score_views
+                .iter()
+                .filter_map(|view| view.part_name.as_ref())
+                .map(|part_name| part_name.as_str().to_string())
+                .collect(),
+            active_score_pane: self.active_score_view,
+        }
+    }
+
+    fn restore_ui_state(&mut self, ui_state: UiState, cx: &mut Context<Self>) {
+        let pane_count = ui_state.score_pane_count.clamp(1, 3);
+        self.score_views = (0..pane_count)
+            .map(|_| ScoreViewEntry {
+                part_name: None,
+                editor: None,
+            })
+            .collect();
+
+        let fallback_part = self.project.parts.first().map(|part| part.name.clone());
+        for view_index in 0..pane_count {
+            let part_name = ui_state
+                .open_score_parts
+                .get(view_index)
+                .and_then(|name| self.project.part(&PartName::new(name.clone())))
+                .map(|part| part.name.clone())
+                .or_else(|| fallback_part.clone());
+            if let Some(part_name) = part_name {
+                self.assign_part_to_view(view_index, part_name, cx);
+            }
+        }
+
+        self.active_score_view = ui_state.active_score_pane.min(pane_count - 1);
+        self.workspace.section = WorkspaceSection::new(ui_state.workspace);
+        self.pane_count_dropdown.update(cx, |dropdown, cx| {
+            dropdown.set_selected_index(pane_count - 1, cx);
+        });
+        self.sync_workspace_buttons(cx);
     }
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
@@ -478,6 +577,7 @@ impl Model {
         }
         self.workspace.section = section;
         self.sync_workspace_buttons(cx);
+        cx.emit(Msg::UiStateChanged);
         cx.notify();
     }
 
@@ -706,7 +806,9 @@ impl Model {
             return;
         }
 
-        self.assign_part_to_view(self.active_score_view, name, cx);
+        if self.assign_part_to_view(self.active_score_view, name, cx) {
+            cx.emit(Msg::UiStateChanged);
+        }
     }
 
     fn active_part(&self) -> Option<&PartName> {
@@ -1002,14 +1104,14 @@ impl Model {
         view_index: usize,
         part_name: PartName,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let document = match self.score_document(&part_name, cx) {
             Ok(document) => document,
             Err(error) => {
                 self.workspace_error = Some(error);
                 self.sync_score_editor_parts(cx);
                 cx.notify();
-                return;
+                return false;
             }
         };
         let part_names = self
@@ -1029,15 +1131,18 @@ impl Model {
             .detach();
         cx.subscribe(&editor, Self::on_score_editor_export_rows_requested)
             .detach();
-        if let Some(view) = self.score_views.get_mut(view_index) {
-            view.part_name = Some(part_name);
-            view.editor = Some(editor);
-            self.workspace_error = None;
-        }
+        let Some(view) = self.score_views.get_mut(view_index) else {
+            return false;
+        };
+        let changed = view.part_name.as_ref() != Some(&part_name) || view.editor.is_none();
+        view.part_name = Some(part_name);
+        view.editor = Some(editor);
+        self.workspace_error = None;
         if self.playback.is_some() {
             self.sync_playhead_highlights(cx);
         }
         cx.notify();
+        changed
     }
 
     fn on_score_editor_part_selected(
@@ -1054,7 +1159,9 @@ impl Model {
             return;
         };
         self.activate_score_view(view_index, cx);
-        self.assign_part_to_view(view_index, selected.part_name.clone(), cx);
+        if self.assign_part_to_view(view_index, selected.part_name.clone(), cx) {
+            cx.emit(Msg::UiStateChanged);
+        }
     }
 
     fn on_score_editor_edit_part_requested(
@@ -1335,6 +1442,7 @@ impl Model {
         }
         self.active_score_view = view_index;
         self.workspace_error = None;
+        cx.emit(Msg::UiStateChanged);
         cx.notify();
     }
 
@@ -1348,6 +1456,7 @@ impl Model {
     }
 
     fn set_view_count(&mut self, count: usize, cx: &mut Context<Self>) {
+        let previous_state = self.ui_state();
         let count = count.clamp(1, 3);
         let template_part = self
             .active_part()
@@ -1371,6 +1480,9 @@ impl Model {
                 dropdown.set_selected_index(count - 1, cx);
             }
         });
+        if self.ui_state() != previous_state {
+            cx.emit(Msg::UiStateChanged);
+        }
         cx.notify();
     }
 
@@ -1878,6 +1990,7 @@ impl Model {
                                 view.part_name = Some(updated_name.clone());
                             }
                         }
+                        cx.emit(Msg::UiStateChanged);
                         let parts = self.project.parts.clone();
                         let sequence = self.project.sequence().to_vec();
                         dialog.update(cx, |dialog, cx| {
@@ -2030,6 +2143,7 @@ impl Model {
                         self.assign_part_to_view(view_index, part_name, cx);
                     }
                 }
+                cx.emit(Msg::UiStateChanged);
                 self.sync_score_editor_parts(cx);
                 self.sync_workspace_project(cx);
                 self.set_parts_overlay(None, cx);
@@ -2093,8 +2207,8 @@ impl Model {
             .is_some_and(|name| name.eq_ignore_ascii_case(&part_name));
         if target_is_open {
             self.activate_score_view(view_index, cx);
-        } else {
-            self.assign_part_to_view(view_index, part_name, cx);
+        } else if self.assign_part_to_view(view_index, part_name, cx) {
+            cx.emit(Msg::UiStateChanged);
         }
 
         let Some(editor) = self
@@ -2810,7 +2924,7 @@ mod tests {
         parts, playing_score_row, rename_project_part, update_project_sequence, voices,
         BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
         PartsWorkspace, ProjectOverlay, RowEditConfirmationMsg, RowEditRequested, StatusAction,
-        WorkspaceSection, WorkspaceSectionKind,
+        UiState, WorkspaceSection, WorkspaceSectionKind,
     };
     use crate::{
         audio_build::{planned_audio_files, BuildSampleRate},
@@ -3539,6 +3653,86 @@ mod tests {
             panic!("saving to a missing directory should report a save error");
         };
         assert_eq!(project.sequence(), original_sequence);
+    }
+
+    #[gpui::test]
+    fn restores_the_open_workspace_and_score_panes(cx: &mut TestAppContext) {
+        let root = temp_root("restore-project-ui-state");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let verse = Part::new("verse", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone(), verse.clone()]);
+        for part in [&intro, &verse] {
+            PartScore::from_rows(vec![vec![String::new()]; 2])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+        let ui_state = UiState {
+            workspace: WorkspaceSectionKind::Parts,
+            score_pane_count: 3,
+            open_score_parts: vec![
+                "verse".to_string(),
+                "intro".to_string(),
+                "verse".to_string(),
+            ],
+            active_score_pane: 1,
+        };
+        let expected_ui_state = ui_state.clone();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new_with_ui_state(project, project_directory, root.clone(), ui_state, cx)
+        });
+
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.ui_state(), expected_ui_state);
+            assert_eq!(model.pane_count_dropdown.read(cx).selected_index(), 2);
+        });
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn invalid_saved_score_panes_restore_to_valid_fallbacks(cx: &mut TestAppContext) {
+        let root = temp_root("invalid-project-ui-state");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]; 2])
+            .save(&project_directory, &intro, &project)
+            .unwrap();
+        let ui_state = UiState {
+            workspace: WorkspaceSectionKind::Score,
+            score_pane_count: usize::MAX,
+            open_score_parts: vec!["missing".to_string()],
+            active_score_pane: usize::MAX,
+        };
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new_with_ui_state(project, project_directory, root.clone(), ui_state, cx)
+        });
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                model.read(cx).ui_state(),
+                UiState {
+                    workspace: WorkspaceSectionKind::Score,
+                    score_pane_count: 3,
+                    open_score_parts: vec!["intro".to_string(); 3],
+                    active_score_pane: 2,
+                }
+            );
+        });
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[gpui::test]

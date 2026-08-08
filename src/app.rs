@@ -73,6 +73,7 @@ enum StoredAppMode {
     ProjectOpen {
         project: Box<Project>,
         project_directory: PathBuf,
+        ui_state: project_open::UiState,
     },
     Error {
         message: String,
@@ -107,6 +108,7 @@ impl AhessApp {
             project_open::Msg::CloseRequested => {
                 self.set_project_start_mode(ProjectStartMode::Existing, cx);
             }
+            project_open::Msg::UiStateChanged => self.persist_storage(cx),
         }
     }
 
@@ -251,12 +253,14 @@ impl AppMode {
             StoredAppMode::ProjectOpen {
                 project,
                 project_directory,
+                ui_state,
             } => {
                 let model = cx.new(|cx| {
-                    project_open::Model::new(
+                    project_open::Model::new_with_ui_state(
                         *project,
                         project_directory,
                         workspace_root.to_path_buf(),
+                        ui_state,
                         cx,
                     )
                 });
@@ -323,6 +327,8 @@ enum Storage {
     },
     ProjectOpen {
         project_directory: PathBuf,
+        #[serde(default)]
+        ui_state: project_open::UiState,
     },
 }
 
@@ -423,12 +429,14 @@ impl Storage {
                 project_start_mode: project_start.project_start_mode,
             },
             AppMode::ProjectOpen(model) => {
-                let project_directory = model.read(cx).project_directory();
+                let model = model.read(cx);
+                let project_directory = model.project_directory();
                 Storage::ProjectOpen {
                     project_directory: project_directory
                         .strip_prefix(&app.workspace_root)
                         .unwrap_or(project_directory)
                         .to_path_buf(),
+                    ui_state: model.ui_state(),
                 }
             }
             AppMode::TuningSystems(_) => Storage::ProjectStart {
@@ -445,7 +453,10 @@ impl Storage {
             Storage::ProjectStart { project_start_mode } => {
                 Ok(StoredAppMode::ProjectStart { project_start_mode })
             }
-            Storage::ProjectOpen { project_directory } => {
+            Storage::ProjectOpen {
+                project_directory,
+                ui_state,
+            } => {
                 let project_directory = if project_directory.is_absolute() {
                     project_directory
                 } else {
@@ -457,6 +468,7 @@ impl Storage {
                 Ok(StoredAppMode::ProjectOpen {
                     project: Box::new(project.project),
                     project_directory: project.project_directory,
+                    ui_state,
                 })
             }
         }
@@ -786,6 +798,7 @@ mod tests {
 
     use gpui::{div, prelude::*, Context, FocusHandle, TestAppContext, Window};
 
+    use super::project_open::{UiState, WorkspaceSectionKind};
     use super::{
         bind_keys, load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
         Storage, StoredAppMode, TogglePlayback,
@@ -818,8 +831,15 @@ mod tests {
         let project = Project::new("Arc Light Sketch", 4000, 100, Seed::new(1234))
             .with_description("saved project");
         let project_directory = project::create_project(&root, &project).unwrap();
+        let ui_state = UiState {
+            workspace: WorkspaceSectionKind::Parts,
+            score_pane_count: 2,
+            open_score_parts: vec!["intro".to_string(), "verse".to_string()],
+            active_score_pane: 1,
+        };
         let storage = Storage::ProjectOpen {
             project_directory: project_directory.strip_prefix(&root).unwrap().to_path_buf(),
+            ui_state: ui_state.clone(),
         };
 
         save_storage(&root, &storage).unwrap();
@@ -829,6 +849,33 @@ mod tests {
             StoredAppMode::ProjectOpen {
                 project: Box::new(project),
                 project_directory,
+                ui_state,
+            }
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_open_project_storage_uses_the_default_ui_state() {
+        let root = temp_root("legacy-open-project-storage");
+        let project = Project::new("Arc Light Sketch", 4000, 100, Seed::new(1234));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        fs::write(
+            storage_path(&root),
+            format!(
+                "[ProjectOpen]\nproject_directory = {:?}\n",
+                project_directory.strip_prefix(&root).unwrap()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            restore_app_mode(&root),
+            StoredAppMode::ProjectOpen {
+                project: Box::new(project),
+                project_directory,
+                ui_state: UiState::default(),
             }
         );
 
