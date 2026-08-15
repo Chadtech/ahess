@@ -94,6 +94,14 @@ impl TextInput {
         self
     }
 
+    pub(crate) fn set_background(&mut self, background: Rgba, cx: &mut Context<Self>) {
+        if self.background == background {
+            return;
+        }
+        self.background = background;
+        cx.notify();
+    }
+
     #[cfg(test)]
     pub(crate) fn background(&self) -> Rgba {
         self.background

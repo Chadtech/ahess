@@ -12,6 +12,7 @@ use gpui::{
 use crate::{
     part::{
         Part, PartRowEdit, PartRowEditError, PartScore, ScoreError, ScoreRowIndex, ScoreRowRange,
+        SubdivisionPattern,
     },
     project::Project,
     style as s,
@@ -33,6 +34,7 @@ const AUTOSAVE_MAX_DELAY: Duration = Duration::from_secs(5);
 pub(super) enum Overlay {
     ExportRows(Entity<ExportRowsDialog>),
     RowEdit(Entity<RowEditConfirmation>),
+    Subdivision(Entity<SubdivisionDialog>),
 }
 
 impl Overlay {
@@ -40,6 +42,7 @@ impl Overlay {
         match self {
             Self::ExportRows(dialog) => dialog.clone().into_any_element(),
             Self::RowEdit(dialog) => dialog.clone().into_any_element(),
+            Self::Subdivision(dialog) => dialog.clone().into_any_element(),
         }
     }
 }
@@ -136,6 +139,7 @@ pub enum DocumentEvent {
     },
     Reset,
     ProjectChanged,
+    PartSettingsChanged,
 }
 
 impl EventEmitter<DocumentEvent> for ScoreDocument {}
@@ -160,6 +164,11 @@ pub struct PartLoopRequested {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditPartRequested {
+    pub part_name: crate::part::PartName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EditSubdivisionRequested {
     pub part_name: crate::part::PartName,
 }
 
@@ -434,6 +443,15 @@ impl ScoreDocument {
         cx.emit(DocumentEvent::ProjectChanged);
         cx.notify();
     }
+
+    pub fn part_settings_changed(&mut self, project: Project, part: Part, cx: &mut Context<Self>) {
+        self.project = project;
+        self.part = part;
+        self.refresh_parse_issues();
+        self.last_save_error = None;
+        cx.emit(DocumentEvent::PartSettingsChanged);
+        cx.notify();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -553,6 +571,134 @@ impl Render for RowEditConfirmation {
         .justify_end();
         destructive_dialog("confirm row change", None, self.message(), actions)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubdivisionDialogMsg {
+    Confirmed {
+        part_name: crate::part::PartName,
+        subdivision_pattern: Option<SubdivisionPattern>,
+    },
+    Cancelled,
+}
+
+pub struct SubdivisionDialog {
+    part_name: crate::part::PartName,
+    subdivision_pattern: Entity<TextInput>,
+    close_button: Entity<Button>,
+    cancel_button: Entity<Button>,
+    save_button: Entity<Button>,
+    error: Option<String>,
+}
+
+impl EventEmitter<SubdivisionDialogMsg> for SubdivisionDialog {}
+
+impl SubdivisionDialog {
+    pub fn new(part: &Part, cx: &mut Context<Self>) -> Self {
+        let value = part
+            .subdivision_pattern()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        let subdivision_pattern = cx.new(|cx| TextInput::new(value, "4 or 4, 3, 3", cx));
+        let close_button = cx.new(|_| Button::x("close-score-subdivision"));
+        let cancel_button = cx.new(|_| Button::new("cancel-score-subdivision", "cancel"));
+        let save_button = cx.new(|_| Button::new("save-score-subdivision", "save pattern"));
+
+        cx.subscribe(&close_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&save_button, Self::on_save_clicked).detach();
+
+        Self {
+            part_name: part.name.clone(),
+            subdivision_pattern,
+            close_button,
+            cancel_button,
+            save_button,
+            error: None,
+        }
+    }
+
+    fn on_cancel_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(SubdivisionDialogMsg::Cancelled);
+    }
+
+    fn on_save_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        match parse_optional_subdivision_pattern(&self.subdivision_pattern.read(cx).value()) {
+            Ok(subdivision_pattern) => cx.emit(SubdivisionDialogMsg::Confirmed {
+                part_name: self.part_name.clone(),
+                subdivision_pattern,
+            }),
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn save_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        cx.notify();
+    }
+}
+
+impl Render for SubdivisionDialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let content =
+            div()
+                .flex()
+                .flex_col()
+                .gap(s::CONTENT_PADDING)
+                .p(s::CONTENT_PADDING)
+                .child(
+                    div()
+                        .text_color(s::TEXT_DEFAULT)
+                        .child(format!("editing {:?}", self.part_name.as_str())),
+                )
+                .child(field_group(
+                    "subdivision pattern (optional)",
+                    self.subdivision_pattern.clone(),
+                ))
+                .child(div().text_color(s::TEXT_DEFAULT).child(
+                    "use comma-separated beat groups; leave blank for sequential beat numbers",
+                ))
+                .children(self.error.clone().map(error_message))
+                .child(
+                    button::action_group([self.cancel_button.clone(), self.save_button.clone()])
+                        .justify_end(),
+                );
+
+        s::raised(
+            div()
+                .flex()
+                .flex_col()
+                .w(s::S10)
+                .bg(s::GRAY2)
+                .child(title_bar(
+                    "edit subdivision pattern",
+                    Some(self.close_button.clone()),
+                ))
+                .child(content),
+        )
+    }
+}
+
+fn parse_optional_subdivision_pattern(value: &str) -> Result<Option<SubdivisionPattern>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse::<SubdivisionPattern>()
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -685,6 +831,7 @@ impl Render for ExportRowsDialog {
 #[derive(Clone, Copy)]
 pub(super) enum ScoreAction {
     EditPart,
+    EditSubdivision,
     LoopPart,
     ExportRows,
     ClearRows,
@@ -692,8 +839,9 @@ pub(super) enum ScoreAction {
 }
 
 impl ScoreAction {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::EditPart,
+        Self::EditSubdivision,
         Self::LoopPart,
         Self::ExportRows,
         Self::ClearRows,
@@ -707,6 +855,7 @@ impl ScoreAction {
     fn label(self) -> &'static str {
         match self {
             Self::EditPart => "edit part",
+            Self::EditSubdivision => "edit subdivision pattern",
             Self::LoopPart => "loop part",
             Self::ExportRows => "export selected rows as part",
             Self::ClearRows => "clear selected rows",
@@ -734,6 +883,7 @@ impl EventEmitter<PartSelected> for ScoreEditor {}
 impl EventEmitter<RowEditRequested> for ScoreEditor {}
 impl EventEmitter<PartLoopRequested> for ScoreEditor {}
 impl EventEmitter<EditPartRequested> for ScoreEditor {}
+impl EventEmitter<EditSubdivisionRequested> for ScoreEditor {}
 impl EventEmitter<ExportRowsRequested> for ScoreEditor {}
 
 impl ScoreEditor {
@@ -933,6 +1083,9 @@ impl ScoreEditor {
             Some(ScoreAction::EditPart) => cx.emit(EditPartRequested {
                 part_name: self.document.read(cx).part().name.clone(),
             }),
+            Some(ScoreAction::EditSubdivision) => cx.emit(EditSubdivisionRequested {
+                part_name: self.document.read(cx).part().name.clone(),
+            }),
             Some(ScoreAction::LoopPart) => cx.emit(PartLoopRequested {
                 part_name: self.document.read(cx).part().name.clone(),
             }),
@@ -1130,6 +1283,19 @@ impl ScoreEditor {
                 self.row_selection = None;
                 self.sync_actions(cx);
             }
+            DocumentEvent::PartSettingsChanged => {
+                let part = self.document.read(cx).part().clone();
+                for (row_index, row) in self.cells.iter().enumerate() {
+                    let background = if part.beat_is_highlighted(row_index) {
+                        s::GREEN4
+                    } else {
+                        s::GREEN3
+                    };
+                    for cell in row {
+                        cell.update(cx, |cell, cx| cell.set_background(background, cx));
+                    }
+                }
+            }
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
             | DocumentEvent::SaveFailed
@@ -1295,13 +1461,53 @@ mod tests {
         ScrollWheelEvent, TestAppContext, Window,
     };
 
-    use super::{ScoreAction, ScoreDocument, ScoreEditor};
+    use super::{parse_optional_subdivision_pattern, ScoreAction, ScoreDocument, ScoreEditor};
     use crate::{
         part::{Part, PartScore, ScoreRowRange},
         pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
         project::{Project, Voice, VoiceType},
         seed::Seed,
+        view::button,
     };
+
+    #[test]
+    fn subdivision_dialog_patterns_are_optional_positive_whole_number_lists() {
+        assert!(parse_optional_subdivision_pattern("  ").unwrap().is_none());
+        assert_eq!(
+            parse_optional_subdivision_pattern(" 4, 3,3 ")
+                .unwrap()
+                .unwrap()
+                .subdivisions()
+                .collect::<Vec<_>>(),
+            [4, 3, 3]
+        );
+        assert!(parse_optional_subdivision_pattern("4,,3").is_err());
+        assert!(parse_optional_subdivision_pattern("4, 0").is_err());
+        assert!(parse_optional_subdivision_pattern("4, 1.5").is_err());
+    }
+
+    #[gpui::test]
+    fn subdivision_dialog_starts_with_the_current_pattern_and_keeps_invalid_input_open(
+        cx: &mut TestAppContext,
+    ) {
+        let part =
+            Part::new("intro", 10).with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()));
+        let (dialog, cx) = cx.add_window_view(|_, cx| super::SubdivisionDialog::new(&part, cx));
+        let (input, save_button) = cx.update(|_, cx| {
+            let dialog = dialog.read(cx);
+            assert_eq!(dialog.subdivision_pattern.read(cx).value(), "4, 3, 3");
+            (
+                dialog.subdivision_pattern.clone(),
+                dialog.save_button.clone(),
+            )
+        });
+        input.update(cx, |input, cx| input.sync_value("4,,3", cx));
+        dialog.update(cx, |dialog, cx| {
+            dialog.on_save_clicked(save_button, &button::Clicked, cx);
+        });
+
+        assert!(cx.update(|_, cx| dialog.read(cx).error.is_some()));
+    }
 
     struct ScoreEditorHost {
         editor: Entity<ScoreEditor>,
@@ -1381,6 +1587,53 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
+        assert_eq!(
+            backgrounds,
+            [
+                crate::style::GREEN3,
+                crate::style::GREEN3,
+                crate::style::GREEN4,
+                crate::style::GREEN4,
+                crate::style::GREEN3,
+                crate::style::GREEN3,
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn changing_part_settings_updates_cell_groups_without_clearing_dirty_score(
+        cx: &mut TestAppContext,
+    ) {
+        let part = Part::new("part-a", 6);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec![String::new()]; 6]);
+        let part_name = part.name.clone();
+        let updated_part = part
+            .clone()
+            .with_subdivision_pattern(Some("2".parse().unwrap()));
+        let updated_project = project.clone().with_parts(vec![updated_part.clone()]);
+        let (editor, cx) = cx.add_window_view(move |_, cx| {
+            let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
+            ScoreEditor::new(0, document, vec![part_name], cx)
+        });
+        let document = cx.update(|_, cx| editor.read(cx).document.clone());
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+            document.part_settings_changed(updated_project, updated_part, cx);
+        });
+
+        let backgrounds = cx.update(|_, cx| {
+            editor
+                .read(cx)
+                .cells
+                .iter()
+                .map(|row| row[0].read(cx).background())
+                .collect::<Vec<_>>()
+        });
+
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
         assert_eq!(
             backgrounds,
             [
@@ -1514,6 +1767,7 @@ mod tests {
                 && menu.is_disabled(ScoreAction::ClearRows.index())
                 && menu.is_disabled(ScoreAction::DeleteRows.index())
                 && !menu.is_disabled(ScoreAction::EditPart.index())
+                && !menu.is_disabled(ScoreAction::EditSubdivision.index())
                 && !menu.is_disabled(ScoreAction::LoopPart.index())
         }));
         assert!(cx.update(|_, cx| editor.read(cx).selected_rows().is_none()));

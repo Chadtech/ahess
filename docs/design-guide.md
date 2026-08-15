@@ -101,6 +101,15 @@ or when it defines how a shared component is used.
 - action menus open toward the inside of their containing toolbar and use the
   same border, hover, height limit, and one-line labels as dropdown menus.
 
+## context menus
+
+- use `view::context_menu` for short commands scoped to one item and opened by
+  a secondary click on that item.
+- anchor the menu to a relative item container and keep the active item in one
+  `Option` so the menu cannot be open without a valid target.
+- use short verb-first action labels and close the menu after an action or an
+  outside click.
+
 ## data grids
 
 - use `view::data_grid::editable` for an editable row-and-column table.

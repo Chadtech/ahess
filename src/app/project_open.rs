@@ -12,8 +12,8 @@ use std::{
 };
 
 use gpui::{
-    div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
-    EventEmitter, MouseButton, MouseDownEvent, Task, WeakEntity, Window,
+    deferred, div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
+    EventEmitter, MouseButton, MouseDownEvent, MouseUpEvent, Task, WeakEntity, Window,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,10 +25,11 @@ use crate::{
     style as s,
     view::{
         button::{self, Button, ButtonVariant},
+        context_menu,
         dialog::destructive_dialog,
         dropdown::{self, Dropdown},
         range_selection_list::SelectedRange,
-        status_bar,
+        selection_list, status_bar,
     },
     voice_name::VoiceName,
 };
@@ -39,10 +40,10 @@ use self::{
     parts::PartsWorkspace,
     project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
     score::{
-        DocumentEvent, EditPartRequested, ExportRowsConfirmed, ExportRowsDialog,
-        ExportRowsDialogMsg, ExportRowsRequested, PartLoopRequested, PartSelected,
-        RowEditConfirmation, RowEditConfirmationMsg, RowEditRequested, SaveState, ScoreDocument,
-        ScoreEditor,
+        DocumentEvent, EditPartRequested, EditSubdivisionRequested, ExportRowsConfirmed,
+        ExportRowsDialog, ExportRowsDialogMsg, ExportRowsRequested, PartLoopRequested,
+        PartSelected, RowEditConfirmation, RowEditConfirmationMsg, RowEditRequested, SaveState,
+        ScoreDocument, ScoreEditor, SubdivisionDialog, SubdivisionDialogMsg,
     },
     voices::VoicesWorkspace,
 };
@@ -64,6 +65,8 @@ pub(super) struct UiState {
     pub(super) open_score_parts: Vec<String>,
     #[serde(default)]
     pub(super) active_score_pane: usize,
+    #[serde(default = "default_score_arrangement_visible")]
+    pub(super) score_arrangement_visible: bool,
 }
 
 impl Default for UiState {
@@ -73,12 +76,17 @@ impl Default for UiState {
             score_pane_count: default_score_pane_count(),
             open_score_parts: Vec::new(),
             active_score_pane: 0,
+            score_arrangement_visible: default_score_arrangement_visible(),
         }
     }
 }
 
 const fn default_score_pane_count() -> usize {
     1
+}
+
+const fn default_score_arrangement_visible() -> bool {
+    true
 }
 
 pub struct Model {
@@ -92,12 +100,15 @@ pub struct Model {
     build_button: Entity<Button>,
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
+    score_arrangement_button: Entity<Button>,
     loop_button: Entity<Button>,
     transport_button: Entity<Button>,
     project_overlay: Option<ProjectOverlay>,
     score_documents: Vec<ScoreDocumentEntry>,
     score_views: Vec<ScoreViewEntry>,
     active_score_view: usize,
+    score_arrangement_visible: bool,
+    score_arrangement_context: Option<usize>,
     loop_range: Option<BeatRange>,
     playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
@@ -325,6 +336,8 @@ impl Model {
         let close_button = cx.new(|_| Button::new("close-project", "close project"));
         let pane_count_dropdown =
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
+        let score_arrangement_button =
+            cx.new(|_| Button::new("toggle-score-arrangement", "arrangement").depressed(true));
         let arrangement_beat_count = project.arrangement_beat_count();
         let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
         let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
@@ -341,6 +354,11 @@ impl Model {
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
             .detach();
+        cx.subscribe(
+            &score_arrangement_button,
+            Self::on_score_arrangement_clicked,
+        )
+        .detach();
         cx.subscribe(&loop_button, Self::on_loop_clicked).detach();
         cx.subscribe(&transport_button, Self::on_transport_clicked)
             .detach();
@@ -398,6 +416,7 @@ impl Model {
             build_button,
             close_button,
             pane_count_dropdown,
+            score_arrangement_button,
             loop_button,
             transport_button,
             project_overlay: None,
@@ -407,6 +426,8 @@ impl Model {
                 editor: None,
             }],
             active_score_view: 0,
+            score_arrangement_visible: default_score_arrangement_visible(),
+            score_arrangement_context: None,
             loop_range,
             playback: None,
             playhead_task: None,
@@ -449,6 +470,7 @@ impl Model {
                 .map(|part_name| part_name.as_str().to_string())
                 .collect(),
             active_score_pane: self.active_score_view,
+            score_arrangement_visible: self.score_arrangement_visible,
         }
     }
 
@@ -475,21 +497,31 @@ impl Model {
         }
 
         self.active_score_view = ui_state.active_score_pane.min(pane_count - 1);
+        self.score_arrangement_visible = ui_state.score_arrangement_visible;
         self.workspace.section = WorkspaceSection::new(ui_state.workspace);
         self.pane_count_dropdown.update(cx, |dropdown, cx| {
             dropdown.set_selected_index(pane_count - 1, cx);
+        });
+        self.score_arrangement_button.update(cx, |button, cx| {
+            button.set_depressed(self.score_arrangement_visible, cx);
         });
         self.sync_workspace_buttons(cx);
     }
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
-        vec![
-            self.transport_button.clone().into_any_element(),
-            div()
-                .flex()
-                .gap(s::S3)
-                .child(self.pane_count_dropdown.clone())
-                .into_any_element(),
+        let mut actions = vec![self.transport_button.clone().into_any_element()];
+        if self.workspace.section.kind() == WorkspaceSectionKind::Score {
+            actions.push(
+                div()
+                    .flex()
+                    .gap(s::S3)
+                    .child(self.pane_count_dropdown.clone())
+                    .child(self.score_arrangement_button.clone())
+                    .debug_selector(|| "score-view-controls".to_string())
+                    .into_any_element(),
+            );
+        }
+        actions.extend([
             div()
                 .flex()
                 .gap(s::S3)
@@ -503,7 +535,8 @@ impl Model {
                 ])
                 .into_any_element(),
             self.close_button.clone().into_any_element(),
-        ]
+        ]);
+        actions
     }
 
     pub fn active_overlay(&self) -> Option<AnyElement> {
@@ -576,6 +609,7 @@ impl Model {
         if self.has_active_overlay() || self.workspace.section.kind() == section.kind() {
             return;
         }
+        self.score_arrangement_context = None;
         self.workspace.section = section;
         self.sync_workspace_buttons(cx);
         cx.emit(Msg::UiStateChanged);
@@ -870,7 +904,8 @@ impl Model {
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
             | DocumentEvent::Reset
-            | DocumentEvent::ProjectChanged => false,
+            | DocumentEvent::ProjectChanged
+            | DocumentEvent::PartSettingsChanged => false,
         };
         if clears_workspace_error {
             self.workspace_error = None;
@@ -886,9 +921,10 @@ impl Model {
             | DocumentEvent::StructureChanged { .. }
             | DocumentEvent::Reset
             | DocumentEvent::ProjectChanged => true,
-            DocumentEvent::Saved | DocumentEvent::RecoverySaved | DocumentEvent::SaveFailed => {
-                false
-            }
+            DocumentEvent::Saved
+            | DocumentEvent::RecoverySaved
+            | DocumentEvent::SaveFailed
+            | DocumentEvent::PartSettingsChanged => false,
         };
         if changes_playback {
             self.workspace.audio_build.update(cx, |workspace, cx| {
@@ -1126,6 +1162,8 @@ impl Model {
             .detach();
         cx.subscribe(&editor, Self::on_score_editor_edit_part_requested)
             .detach();
+        cx.subscribe(&editor, Self::on_score_editor_edit_subdivision_requested)
+            .detach();
         cx.subscribe(&editor, Self::on_score_editor_row_edit_requested)
             .detach();
         cx.subscribe(&editor, Self::on_score_editor_part_loop_requested)
@@ -1196,6 +1234,111 @@ impl Model {
 
         self.workspace_error = None;
         self.set_workspace_section(WorkspaceSection::Parts { overlay: None }, cx);
+    }
+
+    fn on_score_editor_edit_subdivision_requested(
+        &mut self,
+        editor: Entity<ScoreEditor>,
+        request: &EditSubdivisionRequested,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_active_overlay() {
+            return;
+        }
+        if let Some(view_index) = self
+            .score_views
+            .iter()
+            .position(|view| view.editor.as_ref() == Some(&editor))
+        {
+            self.activate_score_view(view_index, cx);
+        }
+
+        let Some(part) = self.project.part(&request.part_name).cloned() else {
+            self.workspace_error = Some(format!(
+                "part {:?} no longer exists",
+                request.part_name.as_str()
+            ));
+            cx.notify();
+            return;
+        };
+        let dialog = cx.new(move |cx| SubdivisionDialog::new(&part, cx));
+        cx.subscribe(&dialog, Self::on_subdivision_dialog_msg)
+            .detach();
+        self.workspace_error = None;
+        self.set_score_overlay(Some(score::Overlay::Subdivision(dialog)), cx);
+    }
+
+    fn on_subdivision_dialog_msg(
+        &mut self,
+        dialog: Entity<SubdivisionDialog>,
+        msg: &SubdivisionDialogMsg,
+        cx: &mut Context<Self>,
+    ) {
+        match msg {
+            SubdivisionDialogMsg::Cancelled => self.set_score_overlay(None, cx),
+            SubdivisionDialogMsg::Confirmed {
+                part_name,
+                subdivision_pattern,
+            } => self.save_score_subdivision(dialog, part_name, subdivision_pattern.clone(), cx),
+        }
+    }
+
+    fn save_score_subdivision(
+        &mut self,
+        dialog: Entity<SubdivisionDialog>,
+        part_name: &PartName,
+        subdivision_pattern: Option<SubdivisionPattern>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(current_part) = self.project.part(part_name) else {
+            dialog.update(cx, |dialog, cx| {
+                dialog.save_failed(
+                    format!("part {:?} no longer exists", part_name.as_str()),
+                    cx,
+                );
+            });
+            return;
+        };
+        if current_part.subdivision_pattern() == subdivision_pattern.as_ref() {
+            self.set_score_overlay(None, cx);
+            return;
+        }
+
+        let unchanged_name = current_part.name.as_str().to_string();
+        match update_project_part(
+            &self.project_directory,
+            &mut self.project,
+            part_name,
+            &unchanged_name,
+            subdivision_pattern,
+        ) {
+            Ok(part) => {
+                let project = self.project.clone();
+                for entry in &self.score_documents {
+                    if entry.part_name.eq_ignore_ascii_case(part_name) {
+                        let project = project.clone();
+                        let part = part.clone();
+                        entry.document.update(cx, |document, cx| {
+                            document.part_settings_changed(project, part, cx);
+                        });
+                    } else {
+                        let project = project.clone();
+                        entry.document.update(cx, |document, cx| {
+                            document.project_settings_changed(project, cx);
+                        });
+                    }
+                }
+                self.sync_workspace_project(cx);
+                self.workspace_error = None;
+                self.set_score_overlay(None, cx);
+            }
+            Err(error) => {
+                dialog.update(cx, |dialog, cx| {
+                    dialog.save_failed(error.to_string(), cx);
+                });
+            }
+        }
+        cx.notify();
     }
 
     fn on_score_editor_part_loop_requested(
@@ -1454,6 +1597,93 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         self.set_view_count(selected.index + 1, cx);
+    }
+
+    fn on_score_arrangement_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.score_arrangement_visible = !self.score_arrangement_visible;
+        if !self.score_arrangement_visible {
+            self.score_arrangement_context = None;
+        }
+        self.score_arrangement_button.update(cx, |button, cx| {
+            button.set_depressed(self.score_arrangement_visible, cx);
+        });
+        cx.emit(Msg::UiStateChanged);
+        cx.notify();
+    }
+
+    fn on_score_arrangement_row_clicked(
+        &mut self,
+        occurrence_index: usize,
+        _: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if occurrence_index >= self.project.sequence().len() {
+            return;
+        }
+
+        cx.stop_propagation();
+        self.score_arrangement_context = Some(occurrence_index);
+        cx.notify();
+    }
+
+    fn on_score_arrangement_panel_clicked(
+        &mut self,
+        _: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.score_arrangement_context.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn on_score_arrangement_context_mouse_up_out(
+        &mut self,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.score_arrangement_context.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn on_remove_score_arrangement_occurrence_clicked(
+        &mut self,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(occurrence_index) = self.score_arrangement_context.take() else {
+            return;
+        };
+        let mut sequence = self.project.sequence().to_vec();
+        if occurrence_index >= sequence.len() {
+            cx.notify();
+            return;
+        }
+        sequence.remove(occurrence_index);
+
+        let previous_arrangement_beat_count = self.project.arrangement_beat_count();
+        match update_project_sequence(&self.project_directory, &mut self.project, sequence) {
+            Ok(_) => {
+                self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                self.update_score_documents_for_project_settings(cx);
+                self.sync_workspace_project(cx);
+                self.workspace_error = None;
+            }
+            Err(error) => {
+                self.workspace_error =
+                    Some(format!("couldn't remove part from arrangement: {error}"));
+            }
+        }
+        cx.notify();
     }
 
     fn set_view_count(&mut self, count: usize, cx: &mut Context<Self>) {
@@ -2319,7 +2549,16 @@ impl Render for Model {
         match &self.workspace.section {
             WorkspaceSection::Score { .. } => {
                 let project_status = self.project_status(cx);
-                score_workspace(&self.score_views, project_status, cx).into_any_element()
+                score_workspace(
+                    &self.score_views,
+                    self.active_part(),
+                    &self.project,
+                    self.score_arrangement_visible,
+                    self.score_arrangement_context,
+                    project_status,
+                    cx,
+                )
+                .into_any_element()
             }
             WorkspaceSection::Parts { .. } => self.workspace.parts.clone().into_any_element(),
             WorkspaceSection::Voices { .. } => self.workspace.voices.clone().into_any_element(),
@@ -2373,6 +2612,10 @@ fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartNa
 
 fn score_workspace(
     score_views: &[ScoreViewEntry],
+    active_part: Option<&PartName>,
+    project: &Project,
+    arrangement_visible: bool,
+    arrangement_context: Option<usize>,
     project_status: ProjectStatus,
     cx: &mut Context<Model>,
 ) -> gpui::Div {
@@ -2418,7 +2661,15 @@ fn score_workspace(
         .min_h(s::S0)
         .overflow_hidden()
         .gap(s::CONTENT_PADDING)
-        .children(panes);
+        .children(panes)
+        .when(arrangement_visible, |editors| {
+            editors.child(score_arrangement_panel(
+                project,
+                active_part,
+                arrangement_context,
+                cx,
+            ))
+        });
     let status_is_actionable = match &project_status {
         ProjectStatus::Error { target, .. } => target.is_some(),
         ProjectStatus::Empty | ProjectStatus::Message(_) | ProjectStatus::Warning(_) => false,
@@ -2452,6 +2703,111 @@ fn score_workspace(
         .debug_selector(|| "score-workspace".to_string())
         .child(editor_workspace)
         .child(project_status_bar)
+}
+
+fn score_arrangement_panel(
+    project: &Project,
+    active_part: Option<&PartName>,
+    context_occurrence: Option<usize>,
+    cx: &mut Context<Model>,
+) -> gpui::Div {
+    let occurrences = project.arrangement_occurrences();
+    let occurrence_label = if occurrences.len() == 1 {
+        "part"
+    } else {
+        "parts"
+    };
+    let beat_count = project.arrangement_beat_count();
+    let beat_label = if beat_count == 1 { "beat" } else { "beats" };
+    let rows = occurrences
+        .iter()
+        .enumerate()
+        .map(|(index, occurrence)| {
+            let active = active_part.is_some_and(|active_part| {
+                occurrence.part_name().eq_ignore_ascii_case(active_part)
+            });
+            let row = selection_list::row(
+                index,
+                active,
+                format!("{}. {}", index + 1, occurrence.part_name().as_str()),
+            )
+            .relative()
+            .cursor(CursorStyle::Arrow)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |model, event, window, cx| {
+                    model.on_score_arrangement_row_clicked(index, event, window, cx);
+                }),
+            )
+            .debug_selector(move || {
+                if active {
+                    format!("score-arrangement-active-row-{index}")
+                } else {
+                    format!("score-arrangement-row-{index}")
+                }
+            });
+            if context_occurrence == Some(index) {
+                let remove = context_menu::action(0, "remove from arrangement")
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(Model::on_remove_score_arrangement_occurrence_clicked),
+                    )
+                    .debug_selector(|| "score-arrangement-context-remove".to_string());
+                row.child(
+                    deferred(
+                        context_menu::menu(vec![remove])
+                            .debug_selector(|| "score-arrangement-context-menu".to_string())
+                            .on_mouse_up_out(
+                                MouseButton::Left,
+                                cx.listener(Model::on_score_arrangement_context_mouse_up_out),
+                            ),
+                    )
+                    .with_priority(1),
+                )
+            } else {
+                row
+            }
+        })
+        .collect::<Vec<_>>();
+    let panel = div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(s::S0)
+        .overflow_hidden()
+        .bg(s::GRAY2)
+        .p(s::CONTENT_PADDING)
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(Model::on_score_arrangement_panel_clicked),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(s::S3)
+                .pb(s::S4)
+                .child(div().text_color(s::TEXT_HEADER).child("arrangement"))
+                .child(div().text_color(s::TEXT_DEFAULT).child(format!(
+                    "{} {occurrence_label}, {beat_count} {beat_label}",
+                    occurrences.len()
+                ))),
+        )
+        .child(
+            selection_list::list("score-arrangement-list", "no arranged parts yet", rows)
+                .w_full()
+                .debug_selector(|| "score-arrangement-list".to_string()),
+        );
+
+    s::raised(panel)
+        .flex()
+        .flex_none()
+        .w(s::S10)
+        .min_w(s::S10)
+        .min_h(s::S0)
+        .overflow_hidden()
+        .debug_selector(|| "score-arrangement-panel".to_string())
 }
 
 #[derive(Debug)]
@@ -3133,7 +3489,7 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
-    use gpui::{px, size, AppContext, TestAppContext};
+    use gpui::{px, size, AppContext, Modifiers, MouseButton, TestAppContext};
 
     use super::score::{self, ScoreAction};
     use super::{
@@ -4001,6 +4357,7 @@ mod tests {
                 "verse".to_string(),
             ],
             active_score_pane: 1,
+            score_arrangement_visible: false,
         };
         let expected_ui_state = ui_state.clone();
 
@@ -4035,6 +4392,7 @@ mod tests {
             score_pane_count: usize::MAX,
             open_score_parts: vec!["missing".to_string()],
             active_score_pane: usize::MAX,
+            score_arrangement_visible: true,
         };
 
         let (model, cx) = cx.add_window_view(|_, cx| {
@@ -4049,6 +4407,7 @@ mod tests {
                     score_pane_count: 3,
                     open_score_parts: vec!["intro".to_string(); 3],
                     active_score_pane: 2,
+                    score_arrangement_visible: true,
                 }
             );
         });
@@ -4090,13 +4449,192 @@ mod tests {
             cx.debug_bounds("score-view-1").unwrap(),
             cx.debug_bounds("score-view-2").unwrap(),
         ];
+        let arrangement = cx.debug_bounds("score-arrangement-panel").unwrap();
         let workspace_right = workspace.origin.x + workspace.size.width;
-        let third_right = panes[2].origin.x + panes[2].size.width;
+        let arrangement_right = arrangement.origin.x + arrangement.size.width;
 
         assert!(panes.iter().all(|pane| pane.size.width > px(0.0)));
         assert!((panes[0].size.width / panes[1].size.width - 1.0).abs() < 0.01);
         assert!((panes[1].size.width / panes[2].size.width - 1.0).abs() < 0.01);
-        assert!(third_right <= workspace_right + px(1.0));
+        assert_eq!(arrangement.size.width, crate::style::S10);
+        assert!(panes[2].right() < arrangement.left());
+        assert!(arrangement_right <= workspace_right + px(1.0));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_controls_only_show_in_score_and_toggle_the_arrangement_panel(cx: &mut TestAppContext) {
+        let root = temp_root("score-arrangement-toggle");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 4);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]; 4])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let pane_with_arrangement = cx.debug_bounds("score-view-0").unwrap();
+        assert!(cx.debug_bounds("score-arrangement-panel").is_some());
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 4);
+
+        let arrangement_button = cx.update(|_, cx| model.read(cx).score_arrangement_button.clone());
+        model.update(cx, |model, cx| {
+            model.on_score_arrangement_clicked(arrangement_button.clone(), &button::Clicked, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(!cx.update(|_, cx| model.read(cx).ui_state().score_arrangement_visible));
+        let pane_without_arrangement = cx.debug_bounds("score-view-0").unwrap();
+        assert!(pane_without_arrangement.size.width > pane_with_arrangement.size.width);
+
+        let parts_button = cx.update(|_, cx| model.read(cx).parts_button.clone());
+        model.update(cx, |model, cx| {
+            model.on_parts_clicked(parts_button, &button::Clicked, cx);
+        });
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 3);
+
+        let score_button = cx.update(|_, cx| model.read(cx).score_button.clone());
+        model.update(cx, |model, cx| {
+            model.on_score_clicked(score_button, &button::Clicked, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 4);
+        assert!(!cx.update(|_, cx| model.read(cx).ui_state().score_arrangement_visible));
+        assert_eq!(
+            cx.debug_bounds("score-view-0").unwrap().size.width,
+            pane_without_arrangement.size.width
+        );
+
+        model.update(cx, |model, cx| {
+            model.on_score_arrangement_clicked(arrangement_button, &button::Clicked, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| model.read(cx).ui_state().score_arrangement_visible));
+        assert_eq!(
+            cx.debug_bounds("score-view-0").unwrap().size.width,
+            pane_with_arrangement.size.width
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_arrangement_highlights_every_occurrence_of_the_active_pane(cx: &mut TestAppContext) {
+        let root = temp_root("score-arrangement-active-part");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let verse = Part::new("verse", 4);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone(), verse.clone()])
+            .with_sequence(vec![
+                intro.name.clone(),
+                verse.name.clone(),
+                verse.name.clone(),
+            ]);
+        for part in [&intro, &verse] {
+            PartScore::from_rows(vec![vec![String::new()]; part.length as usize])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+        let ui_state = UiState {
+            workspace: WorkspaceSectionKind::Score,
+            score_pane_count: 2,
+            open_score_parts: vec!["intro".to_string(), "verse".to_string()],
+            active_score_pane: 0,
+            score_arrangement_visible: true,
+        };
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new_with_ui_state(project, project_directory, root.clone(), ui_state, cx)
+        });
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("score-arrangement-active-row-0").is_some());
+        assert!(cx.debug_bounds("score-arrangement-row-1").is_some());
+        assert!(cx.debug_bounds("score-arrangement-row-2").is_some());
+
+        model.update(cx, |model, cx| model.activate_score_view(1, cx));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("score-arrangement-row-0").is_some());
+        assert!(cx.debug_bounds("score-arrangement-active-row-1").is_some());
+        assert!(cx.debug_bounds("score-arrangement-active-row-2").is_some());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_arrangement_context_menu_removes_only_the_clicked_occurrence(cx: &mut TestAppContext) {
+        let root = temp_root("score-arrangement-context-remove");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let verse = Part::new("verse", 4);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone(), verse.clone()])
+            .with_sequence(vec![
+                intro.name.clone(),
+                verse.name.clone(),
+                intro.name.clone(),
+            ]);
+        for part in [&intro, &verse] {
+            PartScore::from_rows(vec![vec![String::new()]; part.length as usize])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+        project::save_project(&project_directory, &project).unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let first_occurrence = cx.debug_bounds("score-arrangement-active-row-0").unwrap();
+        cx.simulate_mouse_down(
+            first_occurrence.center(),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            first_occurrence.center(),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+
+        assert!(cx.debug_bounds("score-arrangement-context-menu").is_some());
+        let remove = cx.debug_bounds("score-arrangement-context-remove").unwrap();
+        cx.simulate_click(remove.center(), Modifiers::default());
+        cx.run_until_parked();
+
+        let expected = vec![verse.name.clone(), intro.name.clone()];
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.sequence().to_vec()),
+            expected
+        );
+        assert_eq!(
+            project::load_project(&project_directory)
+                .unwrap()
+                .project
+                .sequence(),
+            expected
+        );
+        assert!(cx.debug_bounds("score-arrangement-context-menu").is_none());
+        assert!(cx.debug_bounds("score-arrangement-row-2").is_none());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -4237,6 +4775,101 @@ mod tests {
                 Some(&second_part.name)
             );
         });
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_subdivision_action_updates_the_part_without_leaving_score_or_clearing_dirty_cells(
+        cx: &mut TestAppContext,
+    ) {
+        let root = temp_root("score-subdivision-action");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let part = Part::new("part-a", 6);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        PartScore::from_rows(vec![vec![String::new()]; 6])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let (document, actions) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            let editor = model.score_views[0].editor.as_ref().unwrap().read(cx);
+            (model.score_documents[0].document.clone(), editor.actions())
+        });
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+        });
+
+        actions.update(cx, |menu, cx| {
+            menu.activate(ScoreAction::EditSubdivision.index(), cx);
+        });
+        cx.run_until_parked();
+
+        let dialog = cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.workspace.section.kind(), WorkspaceSectionKind::Score);
+            let WorkspaceSection::Score {
+                overlay: Some(score::Overlay::Subdivision(dialog)),
+            } = &model.workspace.section
+            else {
+                panic!("the score subdivision action should open its dialog");
+            };
+            dialog.clone()
+        });
+        model.update(cx, |model, cx| {
+            model.on_subdivision_dialog_msg(
+                dialog,
+                &score::SubdivisionDialogMsg::Confirmed {
+                    part_name: part.name.clone(),
+                    subdivision_pattern: Some(SubdivisionPattern::new([2, 3]).unwrap()),
+                },
+                cx,
+            );
+        });
+
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.workspace.section.kind(), WorkspaceSectionKind::Score);
+            assert!(model.active_overlay().is_none());
+            assert_eq!(
+                model.project.parts()[0]
+                    .subdivision_pattern()
+                    .unwrap()
+                    .subdivisions()
+                    .collect::<Vec<_>>(),
+                [2, 3]
+            );
+            assert!(document.read(cx).is_dirty());
+            assert_eq!(document.read(cx).score().rows()[0][0], "C4");
+            assert_eq!(
+                document
+                    .read(cx)
+                    .part()
+                    .subdivision_pattern()
+                    .unwrap()
+                    .subdivisions()
+                    .collect::<Vec<_>>(),
+                [2, 3]
+            );
+        });
+        assert_eq!(
+            project::load_project(&project_directory)
+                .unwrap()
+                .project
+                .parts()[0]
+                .subdivision_pattern()
+                .unwrap()
+                .subdivisions()
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

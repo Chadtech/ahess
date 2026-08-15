@@ -836,6 +836,7 @@ mod tests {
             score_pane_count: 2,
             open_score_parts: vec!["intro".to_string(), "verse".to_string()],
             active_score_pane: 1,
+            score_arrangement_visible: false,
         };
         let storage = Storage::ProjectOpen {
             project_directory: project_directory.strip_prefix(&root).unwrap().to_path_buf(),
