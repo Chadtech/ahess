@@ -118,6 +118,12 @@ impl RangeSelectionList {
         self.selection.map(AnchoredSelection::range)
     }
 
+    pub fn select_range(&mut self, selected: Option<SelectedRange>, cx: &mut Context<Self>) {
+        let selection = selected
+            .and_then(|range| AnchoredSelection::new(range.first(), range.last(), self.rows.len()));
+        self.set_selection(selection, cx);
+    }
+
     pub(crate) fn sync_rows(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) {
         if self.rows == rows {
             return;
@@ -239,8 +245,12 @@ impl Render for RangeSelectionList {
                     .gap(s::S4)
                     .w_full()
                     .child(gpui::div().flex_1().child(row.primary))
-                    .child(gpui::div().w(s::S8).child(row.secondary))
-                    .child(gpui::div().w(s::S8).child(row.trailing));
+                    .when(!row.secondary.is_empty(), |content| {
+                        content.child(gpui::div().w(s::S8).child(row.secondary))
+                    })
+                    .when(!row.trailing.is_empty(), |content| {
+                        content.child(gpui::div().w(s::S8).child(row.trailing))
+                    });
                 selection_list::row_content(index, is_selected, content)
                     .debug_selector({
                         let id = self.id.clone();

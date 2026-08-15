@@ -27,6 +27,7 @@ use crate::{
         button::{self, Button, ButtonVariant},
         dialog::destructive_dialog,
         dropdown::{self, Dropdown},
+        range_selection_list::SelectedRange,
         status_bar,
     },
     voice_name::VoiceName,
@@ -2048,9 +2049,57 @@ impl Model {
                     }
                 }
             }
+            parts::Msg::AppendVariants { sources, suffix } => {
+                if let Err(error) = self.flush_part_score_changes_for(sources, cx) {
+                    dialog.update(cx, |dialog, cx| {
+                        dialog.append_variants_failed(
+                            format!("couldn't save source score changes: {error}"),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+                let previous_arrangement_beat_count = self.project.arrangement_beat_count();
+                match append_project_variants(
+                    &self.project_directory,
+                    &mut self.project,
+                    sources,
+                    suffix,
+                ) {
+                    Ok(appended) => {
+                        let first_variant = appended.first.clone();
+                        let sequence = self.project.sequence().to_vec();
+                        let first = sequence.len() - appended.len();
+                        let selected_range =
+                            SelectedRange::new(first, sequence.len() - 1, sequence.len())
+                                .expect("the appended variant range must be selectable");
+                        let parts = self.project.parts.clone();
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.variants_appended(
+                                parts,
+                                sequence,
+                                first_variant.clone(),
+                                selected_range,
+                                cx,
+                            );
+                        });
+                        self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                        self.update_score_documents_for_project_settings(cx);
+                        self.select_part(first_variant, cx);
+                        self.sync_score_editor_parts(cx);
+                        self.sync_workspace_project(cx);
+                        self.workspace_error = None;
+                    }
+                    Err(error) => {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.append_variants_failed(error.to_string(), cx);
+                        });
+                    }
+                }
+            }
             parts::Msg::SequenceChange {
                 sequence,
-                selected_occurrence,
+                selected_range,
             } => {
                 let previous_arrangement_beat_count = self.project.arrangement_beat_count();
                 match update_project_sequence(
@@ -2060,7 +2109,7 @@ impl Model {
                 ) {
                     Ok(sequence) => {
                         dialog.update(cx, |dialog, cx| {
-                            dialog.sequence_changed(sequence, *selected_occurrence, cx);
+                            dialog.sequence_changed(sequence, *selected_range, cx);
                         });
                         self.reconcile_loop_range(previous_arrangement_beat_count, cx);
                         self.update_score_documents_for_project_settings(cx);
@@ -2409,6 +2458,16 @@ fn score_workspace(
 enum PartChangeError {
     Recovery(project::ProjectTransactionError),
     CreateFile(part::CreatePartError),
+    AppendVariantsNeedsPart,
+    EmptyVariantSuffix,
+    CreateVariants {
+        source: part::CreatePartError,
+        rollback_errors: Vec<part::PartFileRollbackError>,
+    },
+    SaveVariants {
+        source: project::SaveProjectError,
+        rollback_errors: Vec<part::PartFileRollbackError>,
+    },
     CombineNeedsTwoParts,
     CombinedPartTooLong,
     LoadCombinationScore {
@@ -2445,11 +2504,39 @@ enum PartChangeError {
     },
 }
 
+#[derive(Debug)]
+struct AppendedVariants {
+    first: PartName,
+    remaining: Vec<PartName>,
+}
+
+impl AppendedVariants {
+    fn len(&self) -> usize {
+        1 + self.remaining.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PartName> {
+        std::iter::once(&self.first).chain(&self.remaining)
+    }
+}
+
 impl fmt::Display for PartChangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Recovery(error) => write!(f, "failed to recover a project update: {error}"),
             Self::CreateFile(error) => write!(f, "{error}"),
+            Self::AppendVariantsNeedsPart => {
+                f.write_str("select at least one arranged part to append as a variant")
+            }
+            Self::EmptyVariantSuffix => f.write_str("variant suffix cannot be empty"),
+            Self::CreateVariants {
+                source,
+                rollback_errors,
+            } => write_variant_error(f, source, rollback_errors),
+            Self::SaveVariants {
+                source,
+                rollback_errors,
+            } => write_variant_error(f, source, rollback_errors),
             Self::CombineNeedsTwoParts => f.write_str("select at least two parts to combine"),
             Self::CombinedPartTooLong => f.write_str("the combined part has too many beats"),
             Self::LoadCombinationScore { name, source } => {
@@ -2532,11 +2619,33 @@ impl fmt::Display for PartChangeError {
     }
 }
 
+fn write_variant_error(
+    f: &mut fmt::Formatter<'_>,
+    source: &impl fmt::Display,
+    rollback_errors: &[part::PartFileRollbackError],
+) -> fmt::Result {
+    write!(f, "{source}")?;
+    if !rollback_errors.is_empty() {
+        let rollback_errors = rollback_errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        write!(
+            f,
+            "; also failed to remove incomplete variant files: {rollback_errors}"
+        )?;
+    }
+    Ok(())
+}
+
 impl std::error::Error for PartChangeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Recovery(error) => Some(error),
             Self::CreateFile(error) => Some(error),
+            Self::CreateVariants { source, .. } => Some(source),
+            Self::SaveVariants { source, .. } => Some(source),
             Self::LoadCombinationScore { source, .. } => Some(source),
             Self::SaveCombinedScore { source, .. } => Some(source),
             Self::ExportScore { source, .. } => Some(source),
@@ -2545,7 +2654,9 @@ impl std::error::Error for PartChangeError {
             Self::SaveCreated { source, .. }
             | Self::SaveDeleted { source, .. }
             | Self::SaveRenamed { source, .. } => Some(source),
-            Self::CombineNeedsTwoParts
+            Self::AppendVariantsNeedsPart
+            | Self::EmptyVariantSuffix
+            | Self::CombineNeedsTwoParts
             | Self::CombinedPartTooLong
             | Self::ExportSelectionOutOfBounds
             | Self::MissingPart(_)
@@ -2674,6 +2785,113 @@ fn duplicate_project_part(
     }
 
     Ok(created.commit())
+}
+
+fn append_project_variants(
+    project_directory: &Path,
+    project: &mut Project,
+    sources: &[PartName],
+    suffix: &str,
+) -> Result<AppendedVariants, PartChangeError> {
+    project::recover_pending_project_update(project_directory)
+        .map_err(PartChangeError::Recovery)?;
+    if sources.is_empty() {
+        return Err(PartChangeError::AppendVariantsNeedsPart);
+    }
+    let suffix = suffix.trim();
+    if suffix.is_empty() {
+        return Err(PartChangeError::EmptyVariantSuffix);
+    }
+
+    let mut mappings = Vec::<(part::Part, PartName)>::new();
+    for source_name in sources {
+        if mappings
+            .iter()
+            .any(|(source, _)| source.name.eq_ignore_ascii_case(source_name))
+        {
+            continue;
+        }
+        let source = project
+            .part(source_name)
+            .cloned()
+            .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))?;
+        let variant_name = parts::variant_part_name(&source.name, suffix);
+        mappings.push((source, variant_name));
+    }
+    let appended = sources
+        .iter()
+        .map(|source_name| {
+            mappings
+                .iter()
+                .find(|(source, _)| source.name.eq_ignore_ascii_case(source_name))
+                .map(|(_, variant_name)| variant_name.clone())
+                .ok_or_else(|| PartChangeError::MissingPart(source_name.as_str().to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut appended = appended.into_iter();
+    let Some(first_appended) = appended.next() else {
+        return Err(PartChangeError::AppendVariantsNeedsPart);
+    };
+    let appended = AppendedVariants {
+        first: first_appended,
+        remaining: appended.collect(),
+    };
+
+    let mut reserved_parts = project.parts().to_vec();
+    let mut created_files = Vec::new();
+    for (source, variant_name) in &mappings {
+        match part::duplicate_part_file(
+            project_directory,
+            &reserved_parts,
+            source,
+            variant_name.as_str(),
+        ) {
+            Ok(created) => {
+                reserved_parts.push(created.part().clone());
+                created_files.push(created);
+            }
+            Err(source) => {
+                return Err(PartChangeError::CreateVariants {
+                    source,
+                    rollback_errors: rollback_created_part_files(created_files),
+                });
+            }
+        }
+    }
+
+    let original_sequence = project.sequence().to_vec();
+    for created in &created_files {
+        project.add_part(created.part().clone());
+    }
+    let mut updated_sequence = original_sequence.clone();
+    updated_sequence.extend(appended.iter().cloned());
+    project.set_sequence(updated_sequence);
+
+    if let Err(source) = project::save_project(project_directory, project) {
+        project.set_sequence(original_sequence);
+        for (_, variant_name) in mappings.iter().rev() {
+            project.remove_part(variant_name);
+        }
+        return Err(PartChangeError::SaveVariants {
+            source,
+            rollback_errors: rollback_created_part_files(created_files),
+        });
+    }
+
+    for created in created_files {
+        created.commit();
+    }
+    Ok(appended)
+}
+
+fn rollback_created_part_files(
+    created_files: Vec<part::CreatedPartFile>,
+) -> Vec<part::PartFileRollbackError> {
+    created_files
+        .into_iter()
+        .rev()
+        .filter_map(|created| created.rollback().err())
+        .collect()
 }
 
 fn combine_project_parts(
@@ -2919,16 +3137,16 @@ mod tests {
 
     use super::score::{self, ScoreAction};
     use super::{
-        combine_project_parts, create_configured_project_part, create_project_part,
-        delete_project_part, duplicate_project_part, export_project_part_rows, loop_range_summary,
-        parts, playing_score_row, rename_project_part, update_project_sequence, voices,
-        BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
-        PartsWorkspace, ProjectOverlay, RowEditConfirmationMsg, RowEditRequested, StatusAction,
-        UiState, WorkspaceSection, WorkspaceSectionKind,
+        append_project_variants, combine_project_parts, create_configured_project_part,
+        create_project_part, delete_project_part, duplicate_project_part, export_project_part_rows,
+        loop_range_summary, parts, playing_score_row, rename_project_part, update_project_sequence,
+        voices, BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model,
+        PartChangeError, PartsWorkspace, ProjectOverlay, RowEditConfirmationMsg, RowEditRequested,
+        StatusAction, UiState, WorkspaceSection, WorkspaceSectionKind,
     };
     use crate::{
         audio_build::{planned_audio_files, BuildSampleRate},
-        part::{Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
+        part::{self, Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
@@ -3106,6 +3324,109 @@ mod tests {
         assert_eq!(
             project::load_project(&project_directory).unwrap().project,
             project
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn selected_parts_append_as_independent_variants_with_repetitions_preserved() {
+        let root = temp_root("append-project-variants");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let d1 = create_configured_project_part(
+            &project_directory,
+            &mut project,
+            "d1",
+            2,
+            Some(SubdivisionPattern::new([2]).unwrap()),
+        )
+        .unwrap();
+        let d2 = create_project_part(&project_directory, &mut project, "d2", 2).unwrap();
+        let d3 = create_project_part(&project_directory, &mut project, "d3", 1).unwrap();
+        let d1_score = PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]]);
+        let d2_score = PartScore::from_rows(vec![vec!["E4".to_string()], vec!["F4".to_string()]]);
+        d1_score.save(&project_directory, &d1, &project).unwrap();
+        d2_score.save(&project_directory, &d2, &project).unwrap();
+        update_project_sequence(&project_directory, &mut project, vec![d3.name.clone()]).unwrap();
+
+        let appended = append_project_variants(
+            &project_directory,
+            &mut project,
+            &[
+                d1.name.clone(),
+                d2.name.clone(),
+                d2.name.clone(),
+                d3.name.clone(),
+            ],
+            "v1",
+        )
+        .unwrap();
+
+        assert_eq!(
+            appended.iter().map(PartName::as_str).collect::<Vec<_>>(),
+            ["d1 v1", "d2 v1", "d2 v1", "d3 v1"]
+        );
+        assert_eq!(
+            project
+                .sequence()
+                .iter()
+                .map(PartName::as_str)
+                .collect::<Vec<_>>(),
+            ["d3", "d1 v1", "d2 v1", "d2 v1", "d3 v1"]
+        );
+        assert_eq!(
+            project.parts().len(),
+            6,
+            "each distinct source is copied once"
+        );
+        let d1_variant = project.part(&PartName::new("d1 v1")).unwrap();
+        let d2_variant = project.part(&PartName::new("d2 v1")).unwrap();
+        assert_eq!(d1_variant.subdivision_pattern(), d1.subdivision_pattern());
+        assert_eq!(
+            PartScore::load(&project_directory, d1_variant, project.voices()).unwrap(),
+            d1_score
+        );
+        assert_eq!(
+            PartScore::load(&project_directory, d2_variant, project.voices()).unwrap(),
+            d2_score
+        );
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn variant_creation_rolls_back_earlier_files_when_a_later_name_collides() {
+        let root = temp_root("append-project-variants-rollback");
+        let mut project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let d1 = create_project_part(&project_directory, &mut project, "d1", 2).unwrap();
+        let d2 = create_project_part(&project_directory, &mut project, "d2", 2).unwrap();
+        create_project_part(&project_directory, &mut project, "d2 v1", 2).unwrap();
+        let project_before = project.clone();
+
+        let error = append_project_variants(
+            &project_directory,
+            &mut project,
+            &[d1.name.clone(), d2.name.clone()],
+            "v1",
+        )
+        .unwrap_err();
+
+        let PartChangeError::CreateVariants { .. } = error else {
+            panic!("a colliding variant name should fail variant file creation");
+        };
+        assert_eq!(project, project_before);
+        let d1_variant_file = part::csv_file_name(&PartName::new("d1 v1")).unwrap();
+        assert!(!project_directory.join(d1_variant_file).exists());
+        assert_eq!(
+            project::load_project(&project_directory).unwrap().project,
+            project_before
         );
 
         fs::remove_dir_all(root).unwrap();

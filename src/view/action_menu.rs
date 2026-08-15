@@ -21,8 +21,15 @@ pub struct ActionMenu {
     id: ElementId,
     actions: Vec<Action>,
     expanded: bool,
+    direction: MenuDirection,
     trigger: Entity<Button>,
     trigger_bounds: Option<Bounds<Pixels>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MenuDirection {
+    Down,
+    Up,
 }
 
 pub struct Selected {
@@ -36,6 +43,25 @@ impl ActionMenu {
         id: impl Into<ElementId>,
         trigger_label: impl Into<SharedString>,
         actions: impl IntoIterator<Item = impl Into<SharedString>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_direction(id, trigger_label, actions, MenuDirection::Down, cx)
+    }
+
+    pub fn new_upward(
+        id: impl Into<ElementId>,
+        trigger_label: impl Into<SharedString>,
+        actions: impl IntoIterator<Item = impl Into<SharedString>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_direction(id, trigger_label, actions, MenuDirection::Up, cx)
+    }
+
+    fn new_with_direction(
+        id: impl Into<ElementId>,
+        trigger_label: impl Into<SharedString>,
+        actions: impl IntoIterator<Item = impl Into<SharedString>>,
+        direction: MenuDirection,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = id.into();
@@ -54,7 +80,11 @@ impl ActionMenu {
         let trigger = cx.new({
             let trigger_id = (id.clone(), "trigger");
             let label = trigger_label.into();
-            move |_| Button::new(trigger_id, label).trailing_label("▾")
+            let direction_label = match direction {
+                MenuDirection::Down => "▾",
+                MenuDirection::Up => "▴",
+            };
+            move |_| Button::new(trigger_id, label).trailing_label(direction_label)
         });
         cx.subscribe(&trigger, Self::on_trigger_clicked).detach();
 
@@ -62,6 +92,7 @@ impl ActionMenu {
             id,
             actions,
             expanded: false,
+            direction,
             trigger,
             trigger_bounds: None,
         }
@@ -165,7 +196,7 @@ impl ActionMenu {
             })
             .collect::<Vec<_>>();
 
-        gpui::div()
+        let menu = gpui::div()
             .id((self.id.clone(), "menu"))
             .flex()
             .flex_col()
@@ -174,7 +205,6 @@ impl ActionMenu {
             .border_color(s::GRAY1)
             .children(rows)
             .absolute()
-            .top(trigger_height())
             .right_0()
             .w(menu_width)
             .min_w_full()
@@ -183,7 +213,11 @@ impl ActionMenu {
             .overflow_y_scroll()
             .occlude()
             .debug_selector(move || menu_debug_id.clone())
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_menu_mouse_up_out))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_menu_mouse_up_out));
+        match self.direction {
+            MenuDirection::Down => menu.top(trigger_height()),
+            MenuDirection::Up => menu.bottom(trigger_height()),
+        }
     }
 
     fn menu_width(&self, window: &Window) -> Pixels {

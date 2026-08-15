@@ -7,9 +7,11 @@ use crate::{
     part::{Part, PartName, SubdivisionPattern},
     style as s,
     view::{
+        action_menu::{self, ActionMenu},
         button::{self, Button},
         dialog::{destructive_dialog, error_message},
         field_group::field_group,
+        range_selection_list::{self, RangeSelectionList, Row, SelectedRange},
         selection_list,
         text_input::TextInput,
         workspace,
@@ -38,9 +40,13 @@ pub enum Msg {
         sources: Vec<PartName>,
         name: String,
     },
+    AppendVariants {
+        sources: Vec<PartName>,
+        suffix: String,
+    },
     SequenceChange {
         sequence: Vec<PartName>,
-        selected_occurrence: Option<usize>,
+        selected_range: Option<SelectedRange>,
     },
 }
 
@@ -144,9 +150,31 @@ struct ListView {
     add_to_arrangement_button: Entity<Button>,
     move_earlier_button: Entity<Button>,
     move_later_button: Entity<Button>,
-    repeat_button: Entity<Button>,
-    remove_occurrence_button: Entity<Button>,
+    arrangement_action_menu: Entity<ActionMenu>,
     arrangement_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArrangementAction {
+    Repeat,
+    AppendVariants,
+    Remove,
+}
+
+impl ArrangementAction {
+    const ALL: [Self; 3] = [Self::Repeat, Self::AppendVariants, Self::Remove];
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Repeat => "repeat selected range",
+            Self::AppendVariants => "append as variants",
+            Self::Remove => "remove selected range",
+        }
+    }
 }
 
 enum View {
@@ -187,13 +215,20 @@ enum View {
         combine_button: Entity<Button>,
         form_error: Option<String>,
     },
+    AppendVariants {
+        sources: Vec<PartName>,
+        suffix: Entity<TextInput>,
+        cancel_button: Entity<Button>,
+        append_button: Entity<Button>,
+        form_error: Option<String>,
+    },
 }
 
 pub struct PartsWorkspace {
     parts: Vec<Part>,
     sequence: Vec<PartName>,
     selected_part: Option<PartName>,
-    selected_occurrence: Option<usize>,
+    arrangement_range: Entity<RangeSelectionList>,
     view: View,
 }
 
@@ -202,13 +237,25 @@ impl EventEmitter<Msg> for PartsWorkspace {}
 impl PartsWorkspace {
     pub fn new(parts: Vec<Part>, sequence: Vec<PartName>, cx: &mut Context<Self>) -> Self {
         let selected_part = parts.first().map(|part| part.name.clone());
-        let selected_occurrence = (!sequence.is_empty()).then_some(0);
+        let selected_range = SelectedRange::new(0, 0, sequence.len());
+        let arrangement_range = cx.new(|cx| {
+            RangeSelectionList::new(
+                "arrangement-list",
+                "no arranged parts yet",
+                arrangement_rows(&sequence),
+                selected_range,
+                cx,
+            )
+            .fill_height()
+        });
+        cx.subscribe(&arrangement_range, Self::on_arrangement_range_changed)
+            .detach();
 
         let workspace = Self {
             parts,
             sequence,
             selected_part,
-            selected_occurrence,
+            arrangement_range,
             view: Self::list_view(cx),
         };
         workspace.sync_button_states(cx);
@@ -221,7 +268,8 @@ impl PartsWorkspace {
             View::Add { .. }
             | View::Duplicate { .. }
             | View::Edit { .. }
-            | View::Combine { .. } => true,
+            | View::Combine { .. }
+            | View::AppendVariants { .. } => true,
         }
     }
 
@@ -270,8 +318,14 @@ impl PartsWorkspace {
             cx.new(|_| Button::square("move-arrangement-earlier", "↑").disabled(true));
         let move_later_button =
             cx.new(|_| Button::square("move-arrangement-later", "↓").disabled(true));
-        let repeat_button = cx.new(|_| Button::new("repeat-arrangement-part", "repeat"));
-        let remove_occurrence_button = cx.new(|_| Button::new("remove-arrangement-part", "remove"));
+        let arrangement_action_menu = cx.new(|cx| {
+            ActionMenu::new_upward(
+                "arrangement-action-menu",
+                "actions",
+                ArrangementAction::ALL.map(ArrangementAction::label),
+                cx,
+            )
+        });
 
         cx.subscribe(&add_new_button, Self::on_add_new_clicked)
             .detach();
@@ -291,11 +345,9 @@ impl PartsWorkspace {
             .detach();
         cx.subscribe(&move_later_button, Self::on_move_later_clicked)
             .detach();
-        cx.subscribe(&repeat_button, Self::on_repeat_clicked)
-            .detach();
         cx.subscribe(
-            &remove_occurrence_button,
-            Self::on_remove_occurrence_clicked,
+            &arrangement_action_menu,
+            Self::on_arrangement_action_selected,
         )
         .detach();
 
@@ -308,8 +360,7 @@ impl PartsWorkspace {
             add_to_arrangement_button,
             move_earlier_button,
             move_later_button,
-            repeat_button,
-            remove_occurrence_button,
+            arrangement_action_menu,
             arrangement_error: None,
         }))
     }
@@ -427,6 +478,30 @@ impl PartsWorkspace {
             remove_source_button,
             cancel_button,
             combine_button,
+            form_error: None,
+        }
+    }
+
+    fn append_variants_view(
+        parts: &[Part],
+        sources: Vec<PartName>,
+        cx: &mut Context<Self>,
+    ) -> View {
+        let suffix = next_variant_suffix(parts, &sources);
+        let suffix = cx.new(|cx| TextInput::new(suffix, "v1", cx));
+        let cancel_button = cx.new(|_| Button::new("cancel-append-variants", "cancel"));
+        let append_button = cx.new(|_| Button::new("confirm-append-variants", "append variants"));
+
+        cx.subscribe(&cancel_button, Self::on_cancel_clicked)
+            .detach();
+        cx.subscribe(&append_button, Self::on_append_variants_confirmed)
+            .detach();
+
+        View::AppendVariants {
+            sources,
+            suffix,
+            cancel_button,
+            append_button,
             form_error: None,
         }
     }
@@ -584,6 +659,32 @@ impl PartsWorkspace {
         });
     }
 
+    fn on_append_variants_confirmed(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let View::AppendVariants {
+            sources, suffix, ..
+        } = &self.view
+        else {
+            return;
+        };
+        let suffix = suffix.read(cx).value();
+        if suffix.trim().is_empty() {
+            if let View::AppendVariants { form_error, .. } = &mut self.view {
+                *form_error = Some("variant suffix cannot be empty".to_string());
+                cx.notify();
+            }
+            return;
+        }
+        cx.emit(Msg::AppendVariants {
+            sources: sources.clone(),
+            suffix,
+        });
+    }
+
     fn on_add_source_clicked(
         &mut self,
         _: Entity<Button>,
@@ -709,11 +810,14 @@ impl PartsWorkspace {
         let Some(part_name) = self.selected_part.clone() else {
             return;
         };
-        let (sequence, selected_occurrence) =
-            sequence_with_inserted_part(&self.sequence, part_name, self.selected_occurrence);
+        let (sequence, selected_range) = sequence_with_inserted_part(
+            &self.sequence,
+            part_name,
+            self.selected_arrangement_range(cx),
+        );
         cx.emit(Msg::SequenceChange {
             sequence,
-            selected_occurrence: Some(selected_occurrence),
+            selected_range: Some(selected_range),
         });
     }
 
@@ -723,17 +827,17 @@ impl PartsWorkspace {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_occurrence) = self.selected_occurrence else {
+        let Some(selected_range) = self.selected_arrangement_range(cx) else {
             return;
         };
-        let Some((sequence, selected_occurrence)) =
-            sequence_with_moved_part(&self.sequence, selected_occurrence, -1)
+        let Some((sequence, selected_range)) =
+            sequence_with_moved_range(&self.sequence, selected_range, -1)
         else {
             return;
         };
         cx.emit(Msg::SequenceChange {
             sequence,
-            selected_occurrence: Some(selected_occurrence),
+            selected_range: Some(selected_range),
         });
     }
 
@@ -743,58 +847,90 @@ impl PartsWorkspace {
         _: &button::Clicked,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_occurrence) = self.selected_occurrence else {
+        let Some(selected_range) = self.selected_arrangement_range(cx) else {
             return;
         };
-        let Some((sequence, selected_occurrence)) =
-            sequence_with_moved_part(&self.sequence, selected_occurrence, 1)
+        let Some((sequence, selected_range)) =
+            sequence_with_moved_range(&self.sequence, selected_range, 1)
         else {
             return;
         };
         cx.emit(Msg::SequenceChange {
             sequence,
-            selected_occurrence: Some(selected_occurrence),
+            selected_range: Some(selected_range),
         });
     }
 
-    fn on_repeat_clicked(
+    fn on_arrangement_action_selected(
         &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
+        _: Entity<ActionMenu>,
+        selected: &action_menu::Selected,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_occurrence) = self.selected_occurrence else {
+        match ArrangementAction::ALL.get(selected.index).copied() {
+            Some(ArrangementAction::Repeat) => self.repeat_selected_range(cx),
+            Some(ArrangementAction::AppendVariants) => self.begin_appending_variants(cx),
+            Some(ArrangementAction::Remove) => self.remove_selected_range(cx),
+            None => {}
+        }
+    }
+
+    fn repeat_selected_range(&self, cx: &mut Context<Self>) {
+        let Some(selected_range) = self.selected_arrangement_range(cx) else {
             return;
         };
-        let Some((sequence, selected_occurrence)) =
-            sequence_with_repeated_part(&self.sequence, selected_occurrence)
+        let Some((sequence, selected_range)) =
+            sequence_with_repeated_range(&self.sequence, selected_range)
         else {
             return;
         };
         cx.emit(Msg::SequenceChange {
             sequence,
-            selected_occurrence: Some(selected_occurrence),
+            selected_range: Some(selected_range),
         });
     }
 
-    fn on_remove_occurrence_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(selected_occurrence) = self.selected_occurrence else {
+    fn begin_appending_variants(&mut self, cx: &mut Context<Self>) {
+        let Some(selected_range) = self.selected_arrangement_range(cx) else {
             return;
         };
-        let Some((sequence, selected_occurrence)) =
-            sequence_with_removed_part(&self.sequence, selected_occurrence)
+        let Some(sources) = selected_sequence(&self.sequence, selected_range) else {
+            return;
+        };
+        self.view = Self::append_variants_view(&self.parts, sources.to_vec(), cx);
+        cx.notify();
+    }
+
+    fn remove_selected_range(&self, cx: &mut Context<Self>) {
+        let Some(selected_range) = self.selected_arrangement_range(cx) else {
+            return;
+        };
+        let Some((sequence, selected_range)) =
+            sequence_with_removed_range(&self.sequence, selected_range)
         else {
             return;
         };
         cx.emit(Msg::SequenceChange {
             sequence,
-            selected_occurrence,
+            selected_range,
         });
+    }
+
+    fn on_arrangement_range_changed(
+        &mut self,
+        _: Entity<RangeSelectionList>,
+        _: &range_selection_list::Changed,
+        cx: &mut Context<Self>,
+    ) {
+        if let View::List(view) = &mut self.view {
+            view.arrangement_error = None;
+        }
+        self.sync_button_states(cx);
+        cx.notify();
+    }
+
+    fn selected_arrangement_range(&self, cx: &Context<Self>) -> Option<SelectedRange> {
+        self.arrangement_range.read(cx).selected_range()
     }
 
     fn select_available_part(&mut self, name: &PartName, cx: &mut Context<Self>) {
@@ -853,27 +989,14 @@ impl PartsWorkspace {
         cx.notify();
     }
 
-    fn select_occurrence(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.sequence.len() || self.selected_occurrence == Some(index) {
-            return;
-        }
-
-        self.selected_occurrence = Some(index);
-        if let View::List(view) = &mut self.view {
-            view.arrangement_error = None;
-        }
-        self.sync_button_states(cx);
-        cx.notify();
-    }
-
     fn sync_button_states(&self, cx: &mut Context<Self>) {
         let View::List(view) = &self.view else {
             return;
         };
-        let can_move_earlier = self.selected_occurrence.is_some_and(|index| index > 0);
-        let can_move_later = self
-            .selected_occurrence
-            .is_some_and(|index| index + 1 < self.sequence.len());
+        let selected_range = self.selected_arrangement_range(cx);
+        let can_move_earlier = selected_range.is_some_and(|range| range.first() > 0);
+        let can_move_later =
+            selected_range.is_some_and(|range| range.last() + 1 < self.sequence.len());
         let can_delete = self.selected_part.as_ref().is_some_and(|selected| {
             !self
                 .sequence
@@ -888,6 +1011,11 @@ impl PartsWorkspace {
         });
         view.move_later_button.update(cx, |button, cx| {
             button.set_disabled(!can_move_later, cx);
+        });
+        view.arrangement_action_menu.update(cx, |menu, cx| {
+            for action in ArrangementAction::ALL {
+                menu.set_disabled(action.index(), selected_range.is_none(), cx);
+            }
         });
     }
 
@@ -1000,11 +1128,15 @@ impl PartsWorkspace {
     pub fn sequence_changed(
         &mut self,
         sequence: Vec<PartName>,
-        selected_occurrence: Option<usize>,
+        selected_range: Option<SelectedRange>,
         cx: &mut Context<Self>,
     ) {
         self.sequence = sequence;
-        self.selected_occurrence = selected_occurrence.filter(|index| *index < self.sequence.len());
+        let rows = arrangement_rows(&self.sequence);
+        self.arrangement_range.update(cx, |range, cx| {
+            range.sync_rows(rows, cx);
+            range.select_range(selected_range, cx);
+        });
         self.sync_button_states(cx);
         if let View::List(view) = &mut self.view {
             view.arrangement_error = None;
@@ -1014,6 +1146,34 @@ impl PartsWorkspace {
 
     pub fn combine_failed(&mut self, error: String, cx: &mut Context<Self>) {
         if let View::Combine { form_error, .. } = &mut self.view {
+            *form_error = Some(error);
+            cx.notify();
+        }
+    }
+
+    pub fn variants_appended(
+        &mut self,
+        parts: Vec<Part>,
+        sequence: Vec<PartName>,
+        first_variant: PartName,
+        selected_range: SelectedRange,
+        cx: &mut Context<Self>,
+    ) {
+        self.parts = parts;
+        self.sequence = sequence;
+        self.selected_part = Some(first_variant);
+        self.view = Self::list_view(cx);
+        let rows = arrangement_rows(&self.sequence);
+        self.arrangement_range.update(cx, |range, cx| {
+            range.sync_rows(rows, cx);
+            range.select_range(Some(selected_range), cx);
+        });
+        self.sync_button_states(cx);
+        cx.notify();
+    }
+
+    pub fn append_variants_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        if let View::AppendVariants { form_error, .. } = &mut self.view {
             *form_error = Some(error);
             cx.notify();
         }
@@ -1041,9 +1201,10 @@ impl PartsWorkspace {
         {
             self.selected_part = self.parts.first().map(|part| part.name.clone());
         }
-        self.selected_occurrence = self
-            .selected_occurrence
-            .and_then(|index| (index < self.sequence.len()).then_some(index));
+        let rows = arrangement_rows(&self.sequence);
+        self.arrangement_range.update(cx, |range, cx| {
+            range.sync_rows(rows, cx);
+        });
         self.sync_button_states(cx);
         cx.notify();
     }
@@ -1077,13 +1238,11 @@ impl Render for PartsWorkspace {
                     arrangement_panel(
                         &self.parts,
                         &self.sequence,
-                        self.selected_occurrence,
+                        self.arrangement_range.clone(),
                         view.move_earlier_button.clone(),
                         view.move_later_button.clone(),
-                        view.repeat_button.clone(),
-                        view.remove_occurrence_button.clone(),
+                        view.arrangement_action_menu.clone(),
                         view.arrangement_error.clone(),
-                        cx,
                     )
                     .into_any_element(),
                 ),
@@ -1255,6 +1414,56 @@ impl Render for PartsWorkspace {
                     button::action_group([cancel_button.clone(), combine_button.clone()])
                         .justify_end()
                         .debug_selector(|| "combine-workspace-actions".to_string()),
+                )
+            }
+            View::AppendVariants {
+                sources,
+                suffix,
+                cancel_button,
+                append_button,
+                form_error,
+            } => {
+                let occurrence_count = sources.len();
+                let distinct_count = distinct_part_names(sources).len();
+                let occurrence_label = if occurrence_count == 1 {
+                    "occurrence"
+                } else {
+                    "occurrences"
+                };
+                let part_label = if distinct_count == 1 { "part" } else { "parts" };
+                let selected_names = sources
+                    .iter()
+                    .map(PartName::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let form = div()
+                    .flex()
+                    .flex_col()
+                    .gap(s::CONTENT_PADDING)
+                    .child(div().text_color(s::TEXT_DEFAULT).child(format!(
+                        "append {occurrence_count} selected {occurrence_label} as variants of {distinct_count} distinct {part_label}"
+                    )))
+                    .child(
+                        div()
+                            .text_color(s::TEXT_DEFAULT)
+                            .child("each distinct part is copied once; repeated occurrences use the same variant"),
+                    )
+                    .child(
+                        div()
+                            .text_color(s::TEXT_DEFAULT)
+                            .child(format!("selected range: {selected_names}")),
+                    )
+                    .child(field_group("variant suffix", suffix.clone()));
+                let form = if let Some(error) = form_error {
+                    form.child(error_message(error.clone()))
+                } else {
+                    form
+                };
+
+                workspace::management_form(
+                    form,
+                    button::action_group([cancel_button.clone(), append_button.clone()])
+                        .justify_end(),
                 )
             }
         }
@@ -1555,25 +1764,15 @@ fn part_details(
         .child(details)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn arrangement_panel(
     parts: &[Part],
     sequence: &[PartName],
-    selected_occurrence: Option<usize>,
+    arrangement_range: Entity<RangeSelectionList>,
     move_earlier_button: Entity<Button>,
     move_later_button: Entity<Button>,
-    repeat_button: Entity<Button>,
-    remove_occurrence_button: Entity<Button>,
+    arrangement_action_menu: Entity<ActionMenu>,
     arrangement_error: Option<String>,
-    cx: &mut Context<PartsWorkspace>,
 ) -> gpui::Div {
-    let rows = sequence
-        .iter()
-        .enumerate()
-        .map(|(index, part_name)| {
-            arrangement_row(index, part_name, selected_occurrence == Some(index), cx)
-        })
-        .collect::<Vec<_>>();
     let total_beats = sequence
         .iter()
         .filter_map(|name| find_part(parts, name))
@@ -1581,19 +1780,18 @@ fn arrangement_panel(
         .sum::<u32>();
     let part_label = if sequence.len() == 1 { "part" } else { "parts" };
     let beat_label = if total_beats == 1 { "beat" } else { "beats" };
-    let has_selection = selected_occurrence.is_some_and(|index| index < sequence.len());
 
     let movement_actions =
         button::labeled_action_group("move", [move_earlier_button, move_later_button])
             .debug_selector(|| "arrangement-movement-actions".to_string());
-    let occurrence_actions = button::action_group([repeat_button, remove_occurrence_button])
-        .debug_selector(|| "arrangement-occurrence-actions".to_string());
+    let occurrence_actions = div().debug_selector(|| "arrangement-occurrence-actions".to_string());
     let action_row = div()
         .flex()
+        .items_start()
         .gap(s::S5)
         .debug_selector(|| "arrangement-actions".to_string())
         .child(movement_actions)
-        .when(has_selection, |actions| actions.child(occurrence_actions));
+        .child(occurrence_actions.child(arrangement_action_menu));
     let actions = div().flex().flex_col().gap_3().pt(s::S5).child(action_row);
     let actions = if let Some(error) = arrangement_error {
         actions.child(error_message(error))
@@ -1621,86 +1819,121 @@ fn arrangement_panel(
                     sequence.len()
                 ))),
         )
-        .child(
-            selection_list::list("arrangement-list-scroll", "no arranged parts yet", rows)
-                .w_full()
-                .debug_selector(|| "arrangement-list".to_string()),
-        )
+        .child(arrangement_range)
         .child(actions)
 }
 
-fn arrangement_row(
-    index: usize,
-    part_name: &PartName,
-    selected: bool,
-    cx: &mut Context<PartsWorkspace>,
-) -> gpui::Div {
-    selection_list::row(
-        index,
-        selected,
-        format!("{}. {}", index + 1, part_name.as_str()),
-    )
-    .debug_selector(move || format!("arrangement-occurrence-{index}"))
-    .on_mouse_down(
-        MouseButton::Left,
-        cx.listener(move |dialog, _: &MouseDownEvent, _: &mut Window, cx| {
-            dialog.select_occurrence(index, cx);
-        }),
-    )
+fn arrangement_rows(sequence: &[PartName]) -> Vec<Row> {
+    sequence
+        .iter()
+        .enumerate()
+        .map(|(index, part_name)| {
+            Row::new(format!("{}. {}", index + 1, part_name.as_str()), "", "")
+        })
+        .collect()
 }
 
 fn sequence_with_inserted_part(
     sequence: &[PartName],
     part_name: PartName,
-    selected_occurrence: Option<usize>,
-) -> (Vec<PartName>, usize) {
-    let insertion_index = selected_occurrence
-        .filter(|index| *index < sequence.len())
-        .map_or(sequence.len(), |index| index + 1);
+    selected_range: Option<SelectedRange>,
+) -> (Vec<PartName>, SelectedRange) {
+    let insertion_index = selected_range
+        .filter(|range| range.last() < sequence.len())
+        .map_or(sequence.len(), |range| range.last() + 1);
     let mut updated = sequence.to_vec();
     updated.insert(insertion_index, part_name);
-    (updated, insertion_index)
+    let selected = SelectedRange::new(insertion_index, insertion_index, updated.len())
+        .expect("the inserted part must be selectable");
+    (updated, selected)
 }
 
-fn sequence_with_moved_part(
+fn sequence_with_moved_range(
     sequence: &[PartName],
-    selected_occurrence: usize,
+    selected: SelectedRange,
     offset: isize,
-) -> Option<(Vec<PartName>, usize)> {
-    if selected_occurrence >= sequence.len() {
+) -> Option<(Vec<PartName>, SelectedRange)> {
+    if selected.last() >= sequence.len() {
         return None;
     }
-    let target = selected_occurrence.checked_add_signed(offset)?;
-    if target >= sequence.len() {
-        return None;
+    let mut updated = sequence.to_vec();
+    match offset {
+        -1 if selected.first() > 0 => {
+            updated[(selected.first() - 1)..=selected.last()].rotate_left(1);
+            let moved =
+                SelectedRange::new(selected.first() - 1, selected.last() - 1, updated.len())?;
+            Some((updated, moved))
+        }
+        1 if selected.last() + 1 < updated.len() => {
+            updated[selected.first()..=(selected.last() + 1)].rotate_right(1);
+            let moved =
+                SelectedRange::new(selected.first() + 1, selected.last() + 1, updated.len())?;
+            Some((updated, moved))
+        }
+        _ => None,
     }
-
-    let mut updated = sequence.to_vec();
-    updated.swap(selected_occurrence, target);
-    Some((updated, target))
 }
 
-fn sequence_with_repeated_part(
+fn sequence_with_repeated_range(
     sequence: &[PartName],
-    selected_occurrence: usize,
-) -> Option<(Vec<PartName>, usize)> {
-    let repeated = sequence.get(selected_occurrence)?.clone();
-    let repeated_index = selected_occurrence + 1;
+    selected: SelectedRange,
+) -> Option<(Vec<PartName>, SelectedRange)> {
+    let repeated = selected_sequence(sequence, selected)?.to_vec();
+    let repeated_first = selected.last() + 1;
     let mut updated = sequence.to_vec();
-    updated.insert(repeated_index, repeated);
-    Some((updated, repeated_index))
+    updated.splice(repeated_first..repeated_first, repeated);
+    let repeated_last = repeated_first + selected.last() - selected.first();
+    let selected = SelectedRange::new(repeated_first, repeated_last, updated.len())?;
+    Some((updated, selected))
 }
 
-fn sequence_with_removed_part(
+fn sequence_with_removed_range(
     sequence: &[PartName],
-    selected_occurrence: usize,
-) -> Option<(Vec<PartName>, Option<usize>)> {
-    sequence.get(selected_occurrence)?;
+    selected: SelectedRange,
+) -> Option<(Vec<PartName>, Option<SelectedRange>)> {
+    selected_sequence(sequence, selected)?;
     let mut updated = sequence.to_vec();
-    updated.remove(selected_occurrence);
-    let selected_occurrence =
-        (!updated.is_empty()).then(|| selected_occurrence.min(updated.len().saturating_sub(1)));
-    Some((updated, selected_occurrence))
+    updated.drain(selected.first()..=selected.last());
+    let selected_range = (!updated.is_empty()).then(|| {
+        let index = selected.first().min(updated.len() - 1);
+        SelectedRange::new(index, index, updated.len()).expect("the remaining part is selectable")
+    });
+    Some((updated, selected_range))
+}
+
+fn selected_sequence(sequence: &[PartName], selected: SelectedRange) -> Option<&[PartName]> {
+    sequence.get(selected.first()..=selected.last())
+}
+
+fn distinct_part_names(sources: &[PartName]) -> Vec<&PartName> {
+    let mut distinct = Vec::<&PartName>::new();
+    for source in sources {
+        if distinct
+            .iter()
+            .all(|existing| !existing.eq_ignore_ascii_case(source))
+        {
+            distinct.push(source);
+        }
+    }
+    distinct
+}
+
+fn next_variant_suffix(parts: &[Part], sources: &[PartName]) -> String {
+    for number in 1_u32.. {
+        let suffix = format!("v{number}");
+        let available = distinct_part_names(sources).into_iter().all(|source| {
+            let candidate = variant_part_name(source, &suffix);
+            find_part(parts, &candidate).is_none()
+        });
+        if available {
+            return suffix;
+        }
+    }
+    "variant".to_string()
+}
+
+pub(super) fn variant_part_name(source: &PartName, suffix: &str) -> PartName {
+    PartName::new(format!("{} {}", source.as_str(), suffix.trim()))
 }
 
 pub(super) fn combined_subdivision_pattern(parts: &[Part]) -> Option<SubdivisionPattern> {
@@ -1743,17 +1976,18 @@ fn parse_subdivision_pattern(value: &str) -> Result<Option<SubdivisionPattern>, 
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, size, ScrollDelta, ScrollWheelEvent, TestAppContext};
+    use gpui::{point, px, size, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
-        combined_subdivision_pattern, parse_part_length, parse_subdivision_pattern,
-        sequence_with_inserted_part, sequence_with_moved_part, sequence_with_removed_part,
-        sequence_with_repeated_part, DeleteDialog, PartsWorkspace, View,
+        combined_subdivision_pattern, next_variant_suffix, parse_part_length,
+        parse_subdivision_pattern, sequence_with_inserted_part, sequence_with_moved_range,
+        sequence_with_removed_range, sequence_with_repeated_range, ArrangementAction, DeleteDialog,
+        PartsWorkspace, View,
     };
     use crate::{
         part::{Part, PartName, SubdivisionPattern},
         style as s,
-        view::button,
+        view::{button, range_selection_list::SelectedRange},
     };
 
     #[test]
@@ -1799,45 +2033,78 @@ mod tests {
     }
 
     #[test]
-    fn selected_parts_are_inserted_after_the_selected_occurrence() {
+    fn selected_parts_are_inserted_after_the_selected_range() {
         let sequence = names(["part-a", "part-b", "part-b"]);
+        let selected_range = SelectedRange::new(0, 1, sequence.len());
 
-        let (updated, selected) = sequence_with_inserted_part(&sequence, "bridge".into(), Some(0));
+        let (updated, selected) =
+            sequence_with_inserted_part(&sequence, "bridge".into(), selected_range);
 
         assert_eq!(
             name_strings(&updated),
-            ["part-a", "bridge", "part-b", "part-b"]
+            ["part-a", "part-b", "bridge", "part-b"]
         );
-        assert_eq!(selected, 1);
+        assert_eq!(selected, SelectedRange::new(2, 2, 4).unwrap());
 
         let (updated, selected) = sequence_with_inserted_part(&sequence, "bridge".into(), None);
         assert_eq!(
             name_strings(&updated),
             ["part-a", "part-b", "part-b", "bridge"]
         );
-        assert_eq!(selected, 3);
+        assert_eq!(selected, SelectedRange::new(3, 3, 4).unwrap());
     }
 
     #[test]
-    fn arrangement_occurrences_can_move_repeat_and_be_removed() {
-        let sequence = names(["part-a", "part-b", "bridge"]);
+    fn arrangement_ranges_can_move_repeat_and_be_removed() {
+        let sequence = names(["part-a", "part-b", "bridge", "outro"]);
+        let selected = SelectedRange::new(1, 2, sequence.len()).unwrap();
 
-        let (moved, selected) = sequence_with_moved_part(&sequence, 1, -1).unwrap();
-        assert_eq!(name_strings(&moved), ["part-b", "part-a", "bridge"]);
-        assert_eq!(selected, 0);
-        assert!(sequence_with_moved_part(&sequence, 0, -1).is_none());
-        assert!(sequence_with_moved_part(&sequence, 2, 1).is_none());
+        let (moved, moved_selection) = sequence_with_moved_range(&sequence, selected, -1).unwrap();
+        assert_eq!(
+            name_strings(&moved),
+            ["part-b", "bridge", "part-a", "outro"]
+        );
+        assert_eq!(moved_selection, SelectedRange::new(0, 1, 4).unwrap());
+        let (moved, moved_selection) = sequence_with_moved_range(&sequence, selected, 1).unwrap();
+        assert_eq!(
+            name_strings(&moved),
+            ["part-a", "outro", "part-b", "bridge"]
+        );
+        assert_eq!(moved_selection, SelectedRange::new(2, 3, 4).unwrap());
+        assert!(
+            sequence_with_moved_range(&sequence, SelectedRange::new(0, 1, 4).unwrap(), -1)
+                .is_none()
+        );
+        assert!(
+            sequence_with_moved_range(&sequence, SelectedRange::new(2, 3, 4).unwrap(), 1).is_none()
+        );
 
-        let (repeated, selected) = sequence_with_repeated_part(&sequence, 1).unwrap();
+        let (repeated, repeated_selection) =
+            sequence_with_repeated_range(&sequence, selected).unwrap();
         assert_eq!(
             name_strings(&repeated),
-            ["part-a", "part-b", "part-b", "bridge"]
+            ["part-a", "part-b", "bridge", "part-b", "bridge", "outro"]
         );
-        assert_eq!(selected, 2);
+        assert_eq!(repeated_selection, SelectedRange::new(3, 4, 6).unwrap());
 
-        let (removed, selected) = sequence_with_removed_part(&sequence, 2).unwrap();
-        assert_eq!(name_strings(&removed), ["part-a", "part-b"]);
-        assert_eq!(selected, Some(1));
+        let (removed, remaining_selection) =
+            sequence_with_removed_range(&sequence, selected).unwrap();
+        assert_eq!(name_strings(&removed), ["part-a", "outro"]);
+        assert_eq!(remaining_selection, SelectedRange::new(1, 1, 2));
+    }
+
+    #[test]
+    fn variant_suffix_advances_past_existing_variant_names() {
+        let parts = vec![
+            Part::new("d1", 4),
+            Part::new("d2", 4),
+            Part::new("d1 v1", 4),
+            Part::new("d2 v1", 4),
+        ];
+        assert_eq!(
+            next_variant_suffix(&parts, &names(["d1", "d2", "d2"])),
+            "v2"
+        );
     }
 
     #[gpui::test]
@@ -1871,10 +2138,13 @@ mod tests {
         assert_eq!(part_list_actions.origin.x, part_list.origin.x);
         assert!(part_list.origin.y + part_list.size.height < part_list_actions.origin.y);
         assert_eq!(part_details_actions.origin.y, part_list_actions.origin.y);
-        assert_eq!(part_list_actions.origin.y, arrangement_actions.origin.y);
         assert_eq!(
             part_list_actions.origin.y + part_list_actions.size.height,
             part_details_actions.origin.y + part_details_actions.size.height
+        );
+        assert_eq!(
+            part_list_actions.origin.y + part_list_actions.size.height,
+            arrangement_actions.origin.y + arrangement_actions.size.height
         );
         assert_eq!(movement_actions.origin.y, occurrence_actions.origin.y);
         assert!(movement_actions.origin.x < occurrence_actions.origin.x);
@@ -1900,7 +2170,19 @@ mod tests {
             details.size.width,
             arrangement.size.width
         );
-        assert!(cx.debug_bounds("arrangement-occurrence-2").is_some());
+        assert!(cx.debug_bounds("arrangement-list-row-2").is_some());
+        let action_trigger = cx.debug_bounds("arrangement-action-menu-trigger").unwrap();
+        cx.simulate_click(action_trigger.center(), Default::default());
+        let action_menu = cx.debug_bounds("arrangement-action-menu-menu").unwrap();
+        assert!(
+            action_menu.origin.y + action_menu.size.height <= action_trigger.origin.y,
+            "arrangement action menu should open upward: trigger {action_trigger:?}, menu {action_menu:?}"
+        );
+        assert!(
+            action_menu.origin.y >= arrangement.origin.y,
+            "arrangement action menu should stay inside the workspace: arrangement {arrangement:?}, menu {action_menu:?}"
+        );
+        cx.simulate_click(action_trigger.center(), Default::default());
         let add_to_arrangement = cx.debug_bounds("add-to-arrangement-control").unwrap();
         let edit_part = cx.debug_bounds("edit-part-control").unwrap();
         let duplicate_part = cx.debug_bounds("duplicate-part-control").unwrap();
@@ -1954,7 +2236,7 @@ mod tests {
         assert!(cx.update(|_, cx| move_earlier.read(cx).is_disabled()));
         assert!(!cx.update(|_, cx| move_later.read(cx).is_disabled()));
 
-        let last_occurrence = cx.debug_bounds("arrangement-occurrence-2").unwrap();
+        let last_occurrence = cx.debug_bounds("arrangement-list-row-2").unwrap();
         cx.simulate_click(last_occurrence.center(), Default::default());
 
         assert!(!cx.update(|_, cx| move_earlier.read(cx).is_disabled()));
@@ -1978,6 +2260,44 @@ mod tests {
     }
 
     #[gpui::test]
+    fn selected_arrangement_range_opens_append_variants_form(cx: &mut TestAppContext) {
+        let parts = vec![Part::new("d1", 4), Part::new("d2", 4), Part::new("d3", 4)];
+        let sequence = names(["d1", "d2", "d2", "d3"]);
+        let (dialog, cx) = cx.add_window_view(|_, cx| PartsWorkspace::new(parts, sequence, cx));
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let last = cx.debug_bounds("arrangement-list-row-3").unwrap();
+        cx.simulate_click(
+            last.center(),
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        );
+        let action_menu = cx.update(|_, cx| {
+            let View::List(view) = &dialog.read(cx).view else {
+                panic!("parts workspace should show its list view");
+            };
+            view.arrangement_action_menu.clone()
+        });
+        action_menu.update(cx, |menu, cx| {
+            menu.activate(ArrangementAction::AppendVariants.index(), cx);
+        });
+
+        cx.update(|_, cx| {
+            let View::AppendVariants {
+                sources, suffix, ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("append as variants should open its form");
+            };
+            assert_eq!(name_strings(sources), ["d1", "d2", "d2", "d3"]);
+            assert_eq!(suffix.read(cx).value(), "v1");
+        });
+    }
+
+    #[gpui::test]
     fn part_and_arrangement_lists_scroll_independently(cx: &mut TestAppContext) {
         let parts = (0..24)
             .map(|index| Part::new(format!("part-{index}"), 16))
@@ -1990,7 +2310,7 @@ mod tests {
         let parts_list = cx.debug_bounds("parts-list-column").unwrap();
         let arrangement_list = cx.debug_bounds("arrangement-list").unwrap();
         let last_part_before = cx.debug_bounds("part-list-row-23").unwrap();
-        let last_occurrence_before = cx.debug_bounds("arrangement-occurrence-23").unwrap();
+        let last_occurrence_before = cx.debug_bounds("arrangement-list-row-23").unwrap();
 
         cx.simulate_event(ScrollWheelEvent {
             position: parts_list.center(),
@@ -2001,7 +2321,7 @@ mod tests {
         let last_part_after = cx.debug_bounds("part-list-row-23").unwrap();
         assert!(last_part_after.origin.y < last_part_before.origin.y);
         assert_eq!(
-            cx.debug_bounds("arrangement-occurrence-23").unwrap(),
+            cx.debug_bounds("arrangement-list-row-23").unwrap(),
             last_occurrence_before
         );
 
@@ -2012,10 +2332,7 @@ mod tests {
         });
 
         assert!(
-            cx.debug_bounds("arrangement-occurrence-23")
-                .unwrap()
-                .origin
-                .y
+            cx.debug_bounds("arrangement-list-row-23").unwrap().origin.y
                 < last_occurrence_before.origin.y
         );
     }
