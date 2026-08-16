@@ -1,6 +1,7 @@
 use gpui::{div, prelude::*, App, Context, Entity, EventEmitter, Window};
 
 use crate::{
+    part::PartName,
     playback::BeatRange,
     project::ArrangementOccurrence,
     style as s,
@@ -48,6 +49,7 @@ impl SelectionMode {
 pub struct LoopWorkspace {
     occurrences: Vec<ArrangementOccurrence>,
     arrangement_beat_count: u64,
+    active_part: Option<PartName>,
     selection_mode: SelectionMode,
     selection_mode_dropdown: Entity<Dropdown>,
     arrangement_range: Entity<RangeSelectionList>,
@@ -90,7 +92,7 @@ impl LoopWorkspace {
                 cx,
             )
         });
-        let rows = occurrence_rows(&occurrences);
+        let rows = occurrence_rows(&occurrences, None);
         let arrangement_range = cx.new(|cx| {
             RangeSelectionList::new(
                 "loop-arrangement-list",
@@ -128,6 +130,7 @@ impl LoopWorkspace {
         Self {
             occurrences,
             arrangement_beat_count,
+            active_part: None,
             selection_mode,
             selection_mode_dropdown,
             arrangement_range,
@@ -136,6 +139,28 @@ impl LoopWorkspace {
             to_beat,
             error: None,
         }
+    }
+
+    pub(crate) fn arrangement_range(&self) -> Entity<RangeSelectionList> {
+        self.arrangement_range.clone()
+    }
+
+    pub(crate) fn sync_active_part(
+        &mut self,
+        active_part: Option<PartName>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_part == active_part {
+            return;
+        }
+        self.active_part = active_part;
+        self.arrangement_range.update(cx, |range, cx| {
+            range.sync_rows(
+                occurrence_rows(&self.occurrences, self.active_part.as_ref()),
+                cx,
+            );
+        });
+        cx.notify();
     }
 
     pub(crate) fn sync_occurrences(
@@ -151,7 +176,7 @@ impl LoopWorkspace {
             .last()
             .map_or(0, ArrangementOccurrence::last_beat);
         self.arrangement_range.update(cx, |range, cx| {
-            range.sync_rows(occurrence_rows(&occurrences), cx);
+            range.sync_rows(occurrence_rows(&occurrences, self.active_part.as_ref()), cx);
         });
         self.entire_arrangement_button.update(cx, |button, cx| {
             button.set_disabled(occurrences.is_empty(), cx)
@@ -228,6 +253,12 @@ impl LoopWorkspace {
     fn apply_selected_range(&mut self, cx: &mut Context<Self>) {
         match self.selected_beat_range(cx) {
             Ok(range) => {
+                if self.selection_mode == SelectionMode::ExactBeats {
+                    let selected = selected_occurrence_range_covering(&self.occurrences, range);
+                    self.arrangement_range.update(cx, |list, cx| {
+                        list.sync_selected_range(selected, cx);
+                    });
+                }
                 self.error = None;
                 cx.emit(Msg::Applied(range));
                 cx.notify();
@@ -377,11 +408,17 @@ impl LoopWorkspace {
     }
 }
 
-fn occurrence_rows(occurrences: &[ArrangementOccurrence]) -> Vec<Row> {
+fn occurrence_rows(
+    occurrences: &[ArrangementOccurrence],
+    active_part: Option<&PartName>,
+) -> Vec<Row> {
     occurrences
         .iter()
         .map(|occurrence| {
             let beat_label = singular_or_plural(occurrence.length(), "beat", "beats");
+            let active = active_part.is_some_and(|active_part| {
+                occurrence.part_name().eq_ignore_ascii_case(active_part)
+            });
             Row::new(
                 format!(
                     "{}. {}",
@@ -395,6 +432,7 @@ fn occurrence_rows(occurrences: &[ArrangementOccurrence]) -> Vec<Row> {
                     occurrence.last_beat()
                 ),
             )
+            .with_indicator(if active { "→" } else { "" })
         })
         .collect()
 }
@@ -624,14 +662,42 @@ mod tests {
         let (dialog, cx) =
             cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
 
-        let (mode, selected_range) = dialog.update(cx, |dialog, cx| {
+        let (mode, selected_range, highlighted_occurrences) = dialog.update(cx, |dialog, cx| {
             (
                 dialog.selection_mode,
                 dialog.selected_beat_range(cx).unwrap(),
+                dialog.arrangement_range.read(cx).selected_range(),
             )
         });
         assert_eq!(mode, SelectionMode::ExactBeats);
         assert_eq!(selected_range, range);
+        assert_eq!(highlighted_occurrences, SelectedRange::new(1, 2, 3));
+    }
+
+    #[gpui::test]
+    fn editing_exact_beats_updates_the_covering_arrangement_range(cx: &mut TestAppContext) {
+        let range = BeatRange::new(10, 30, 32).unwrap();
+        let (workspace, cx) =
+            cx.add_window_view(|_, cx| LoopWorkspace::new(occurrences(), Some(range), cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.from_beat.update(cx, |input, cx| {
+                input.sync_value("2", cx);
+            });
+            workspace.to_beat.update(cx, |input, cx| {
+                input.sync_value("9", cx);
+            });
+            workspace.apply_selected_range(cx);
+        });
+
+        cx.update(|_, cx| {
+            let workspace = workspace.read(cx);
+            assert_eq!(workspace.selection_mode, SelectionMode::ExactBeats);
+            assert_eq!(
+                workspace.arrangement_range.read(cx).selected_range(),
+                SelectedRange::new(0, 1, 3)
+            );
+        });
     }
 
     #[gpui::test]

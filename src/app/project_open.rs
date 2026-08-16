@@ -12,8 +12,8 @@ use std::{
 };
 
 use gpui::{
-    deferred, div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
-    EventEmitter, MouseButton, MouseDownEvent, MouseUpEvent, Task, WeakEntity, Window,
+    div, prelude::*, AnyElement, App, AppContext, AsyncApp, Context, CursorStyle, Entity,
+    EventEmitter, MouseButton, MouseDownEvent, Task, WeakEntity, Window,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,11 +25,10 @@ use crate::{
     style as s,
     view::{
         button::{self, Button, ButtonVariant},
-        context_menu,
         dialog::destructive_dialog,
         dropdown::{self, Dropdown},
-        range_selection_list::SelectedRange,
-        selection_list, status_bar,
+        range_selection_list::{ContextActionSelected, RangeSelectionList, SelectedRange},
+        status_bar,
     },
     voice_name::VoiceName,
 };
@@ -108,7 +107,6 @@ pub struct Model {
     score_views: Vec<ScoreViewEntry>,
     active_score_view: usize,
     score_arrangement_visible: bool,
-    score_arrangement_context: Option<usize>,
     loop_range: Option<BeatRange>,
     playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
@@ -378,6 +376,12 @@ impl Model {
         let loop_workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, loop_range, cx));
         cx.subscribe(&loop_workspace, Self::on_loop_range_msg)
             .detach();
+        let loop_arrangement_range = loop_workspace.read(cx).arrangement_range();
+        cx.subscribe(
+            &loop_arrangement_range,
+            Self::on_score_arrangement_context_action_selected,
+        )
+        .detach();
 
         let settings_project = project.clone();
         let settings_project_directory = project_directory.clone();
@@ -427,7 +431,6 @@ impl Model {
             }],
             active_score_view: 0,
             score_arrangement_visible: default_score_arrangement_visible(),
-            score_arrangement_context: None,
             loop_range,
             playback: None,
             playhead_task: None,
@@ -436,6 +439,8 @@ impl Model {
             workspace_error: None,
         };
         model.restore_ui_state(ui_state, cx);
+        model.sync_score_arrangement_active_part(cx);
+        model.sync_score_arrangement_context_actions(cx);
         let part_names = model
             .project
             .parts()
@@ -609,9 +614,9 @@ impl Model {
         if self.has_active_overlay() || self.workspace.section.kind() == section.kind() {
             return;
         }
-        self.score_arrangement_context = None;
         self.workspace.section = section;
         self.sync_workspace_buttons(cx);
+        self.sync_score_arrangement_context_actions(cx);
         cx.emit(Msg::UiStateChanged);
         cx.notify();
     }
@@ -842,6 +847,7 @@ impl Model {
         }
 
         if self.assign_part_to_view(self.active_score_view, name, cx) {
+            self.sync_score_arrangement_active_part(cx);
             cx.emit(Msg::UiStateChanged);
         }
     }
@@ -1176,6 +1182,9 @@ impl Model {
         let changed = view.part_name.as_ref() != Some(&part_name) || view.editor.is_none();
         view.part_name = Some(part_name);
         view.editor = Some(editor);
+        if view_index == self.active_score_view {
+            self.sync_score_arrangement_active_part(cx);
+        }
         self.workspace_error = None;
         if self.playback.is_some() {
             self.sync_playhead_highlights(cx);
@@ -1585,6 +1594,7 @@ impl Model {
             return;
         }
         self.active_score_view = view_index;
+        self.sync_score_arrangement_active_part(cx);
         self.workspace_error = None;
         cx.emit(Msg::UiStateChanged);
         cx.notify();
@@ -1606,9 +1616,6 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         self.score_arrangement_visible = !self.score_arrangement_visible;
-        if !self.score_arrangement_visible {
-            self.score_arrangement_context = None;
-        }
         self.score_arrangement_button.update(cx, |button, cx| {
             button.set_depressed(self.score_arrangement_visible, cx);
         });
@@ -1616,53 +1623,23 @@ impl Model {
         cx.notify();
     }
 
-    fn on_score_arrangement_row_clicked(
+    fn on_score_arrangement_context_action_selected(
+        &mut self,
+        _: Entity<RangeSelectionList>,
+        selected: &ContextActionSelected,
+        cx: &mut Context<Self>,
+    ) {
+        if selected.action != 0 || self.workspace.section.kind() != WorkspaceSectionKind::Score {
+            return;
+        }
+        self.remove_score_arrangement_occurrence(selected.row, cx);
+    }
+
+    fn remove_score_arrangement_occurrence(
         &mut self,
         occurrence_index: usize,
-        _: &MouseDownEvent,
-        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if occurrence_index >= self.project.sequence().len() {
-            return;
-        }
-
-        cx.stop_propagation();
-        self.score_arrangement_context = Some(occurrence_index);
-        cx.notify();
-    }
-
-    fn on_score_arrangement_panel_clicked(
-        &mut self,
-        _: &MouseDownEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.score_arrangement_context.take().is_some() {
-            cx.notify();
-        }
-    }
-
-    fn on_score_arrangement_context_mouse_up_out(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.score_arrangement_context.take().is_some() {
-            cx.notify();
-        }
-    }
-
-    fn on_remove_score_arrangement_occurrence_clicked(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(occurrence_index) = self.score_arrangement_context.take() else {
-            return;
-        };
         let mut sequence = self.project.sequence().to_vec();
         if occurrence_index >= sequence.len() {
             cx.notify();
@@ -1711,6 +1688,7 @@ impl Model {
                 dropdown.set_selected_index(count - 1, cx);
             }
         });
+        self.sync_score_arrangement_active_part(cx);
         if self.ui_state() != previous_state {
             cx.emit(Msg::UiStateChanged);
         }
@@ -1724,6 +1702,25 @@ impl Model {
                 document.project_settings_changed(project, cx);
             });
         }
+    }
+
+    fn sync_score_arrangement_active_part(&self, cx: &mut Context<Self>) {
+        let active_part = self.active_part().cloned();
+        self.workspace.loop_editor.update(cx, |workspace, cx| {
+            workspace.sync_active_part(active_part, cx);
+        });
+    }
+
+    fn sync_score_arrangement_context_actions(&self, cx: &mut Context<Self>) {
+        let enabled = self.workspace.section.kind() == WorkspaceSectionKind::Score;
+        let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
+        arrangement_range.update(cx, |range, cx| {
+            if enabled {
+                range.set_context_actions(["remove from arrangement"], cx);
+            } else {
+                range.set_context_actions(std::iter::empty::<&str>(), cx);
+            }
+        });
     }
 
     fn sync_workspace_project(&self, cx: &mut Context<Self>) {
@@ -1741,8 +1738,10 @@ impl Model {
         });
 
         let occurrences = project.arrangement_occurrences();
+        let active_part = self.active_part().cloned();
         self.workspace.loop_editor.update(cx, |workspace, cx| {
             workspace.sync_occurrences(occurrences, cx);
+            workspace.sync_active_part(active_part, cx);
         });
 
         self.workspace.project_settings.update(cx, |workspace, cx| {
@@ -1865,7 +1864,15 @@ impl Model {
         let range = self.loop_range;
         let workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, range, cx));
         cx.subscribe(&workspace, Self::on_loop_range_msg).detach();
+        let arrangement_range = workspace.read(cx).arrangement_range();
+        cx.subscribe(
+            &arrangement_range,
+            Self::on_score_arrangement_context_action_selected,
+        )
+        .detach();
         self.workspace.loop_editor = workspace;
+        self.sync_score_arrangement_active_part(cx);
+        self.sync_score_arrangement_context_actions(cx);
     }
 
     fn reconcile_loop_range(
@@ -2549,12 +2556,13 @@ impl Render for Model {
         match &self.workspace.section {
             WorkspaceSection::Score { .. } => {
                 let project_status = self.project_status(cx);
+                let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
                 score_workspace(
                     &self.score_views,
-                    self.active_part(),
                     &self.project,
+                    self.loop_range,
+                    arrangement_range,
                     self.score_arrangement_visible,
-                    self.score_arrangement_context,
                     project_status,
                     cx,
                 )
@@ -2612,10 +2620,10 @@ fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartNa
 
 fn score_workspace(
     score_views: &[ScoreViewEntry],
-    active_part: Option<&PartName>,
     project: &Project,
+    loop_range: Option<BeatRange>,
+    arrangement_range: Entity<RangeSelectionList>,
     arrangement_visible: bool,
-    arrangement_context: Option<usize>,
     project_status: ProjectStatus,
     cx: &mut Context<Model>,
 ) -> gpui::Div {
@@ -2665,9 +2673,8 @@ fn score_workspace(
         .when(arrangement_visible, |editors| {
             editors.child(score_arrangement_panel(
                 project,
-                active_part,
-                arrangement_context,
-                cx,
+                loop_range,
+                arrangement_range,
             ))
         });
     let status_is_actionable = match &project_status {
@@ -2707,9 +2714,8 @@ fn score_workspace(
 
 fn score_arrangement_panel(
     project: &Project,
-    active_part: Option<&PartName>,
-    context_occurrence: Option<usize>,
-    cx: &mut Context<Model>,
+    loop_range: Option<BeatRange>,
+    arrangement_range: Entity<RangeSelectionList>,
 ) -> gpui::Div {
     let occurrences = project.arrangement_occurrences();
     let occurrence_label = if occurrences.len() == 1 {
@@ -2719,56 +2725,6 @@ fn score_arrangement_panel(
     };
     let beat_count = project.arrangement_beat_count();
     let beat_label = if beat_count == 1 { "beat" } else { "beats" };
-    let rows = occurrences
-        .iter()
-        .enumerate()
-        .map(|(index, occurrence)| {
-            let active = active_part.is_some_and(|active_part| {
-                occurrence.part_name().eq_ignore_ascii_case(active_part)
-            });
-            let row = selection_list::row(
-                index,
-                active,
-                format!("{}. {}", index + 1, occurrence.part_name().as_str()),
-            )
-            .relative()
-            .cursor(CursorStyle::Arrow)
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |model, event, window, cx| {
-                    model.on_score_arrangement_row_clicked(index, event, window, cx);
-                }),
-            )
-            .debug_selector(move || {
-                if active {
-                    format!("score-arrangement-active-row-{index}")
-                } else {
-                    format!("score-arrangement-row-{index}")
-                }
-            });
-            if context_occurrence == Some(index) {
-                let remove = context_menu::action(0, "remove from arrangement")
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(Model::on_remove_score_arrangement_occurrence_clicked),
-                    )
-                    .debug_selector(|| "score-arrangement-context-remove".to_string());
-                row.child(
-                    deferred(
-                        context_menu::menu(vec![remove])
-                            .debug_selector(|| "score-arrangement-context-menu".to_string())
-                            .on_mouse_up_out(
-                                MouseButton::Left,
-                                cx.listener(Model::on_score_arrangement_context_mouse_up_out),
-                            ),
-                    )
-                    .with_priority(1),
-                )
-            } else {
-                row
-            }
-        })
-        .collect::<Vec<_>>();
     let panel = div()
         .flex()
         .flex_col()
@@ -2777,10 +2733,6 @@ fn score_arrangement_panel(
         .overflow_hidden()
         .bg(s::GRAY2)
         .p(s::CONTENT_PADDING)
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(Model::on_score_arrangement_panel_clicked),
-        )
         .child(
             div()
                 .flex()
@@ -2795,9 +2747,28 @@ fn score_arrangement_panel(
                 ))),
         )
         .child(
-            selection_list::list("score-arrangement-list", "no arranged parts yet", rows)
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(s::S3)
+                .pb(s::S4)
+                .text_color(s::TEXT_DEFAULT)
+                .child(
+                    div()
+                        .debug_selector(|| "score-arrangement-loop-summary".to_string())
+                        .child(loop_range_summary(project, loop_range)),
+                )
+                .child("click or drag to change"),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .min_h(s::S0)
                 .w_full()
-                .debug_selector(|| "score-arrangement-list".to_string()),
+                .debug_selector(|| "score-arrangement-list".to_string())
+                .child(arrangement_range),
         );
 
     s::raised(panel)
@@ -4561,16 +4532,66 @@ mod tests {
         cx.simulate_resize(size(px(1_200.0), px(700.0)));
         cx.run_until_parked();
 
-        assert!(cx.debug_bounds("score-arrangement-active-row-0").is_some());
-        assert!(cx.debug_bounds("score-arrangement-row-1").is_some());
-        assert!(cx.debug_bounds("score-arrangement-row-2").is_some());
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-row-0-indicator")
+            .is_some());
 
         model.update(cx, |model, cx| model.activate_score_view(1, cx));
         cx.run_until_parked();
 
-        assert!(cx.debug_bounds("score-arrangement-row-0").is_some());
-        assert!(cx.debug_bounds("score-arrangement-active-row-1").is_some());
-        assert!(cx.debug_bounds("score-arrangement-active-row-2").is_some());
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-row-1-indicator")
+            .is_some());
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-row-2-indicator")
+            .is_some());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_arrangement_click_and_drag_updates_the_playback_loop(cx: &mut TestAppContext) {
+        let root = temp_root("score-arrangement-loop");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let verse = Part::new("verse", 4);
+        let outro = Part::new("outro", 2);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone(), verse.clone(), outro.clone()])
+            .with_sequence(vec![
+                intro.name.clone(),
+                verse.name.clone(),
+                outro.name.clone(),
+            ]);
+        for part in [&intro, &verse, &outro] {
+            PartScore::from_rows(vec![vec![String::new()]; part.length as usize])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        cx.simulate_resize(size(px(1_000.0), px(700.0)));
+        cx.run_until_parked();
+
+        let verse_row = cx.debug_bounds("loop-arrangement-list-row-1").unwrap();
+        let outro_row = cx.debug_bounds("loop-arrangement-list-row-2").unwrap();
+        cx.simulate_mouse_down(verse_row.center(), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            outro_row.center(),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(outro_row.center(), MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).loop_range),
+            BeatRange::new(3, 8, 8).ok()
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -4604,7 +4625,7 @@ mod tests {
         cx.simulate_resize(size(px(1_000.0), px(700.0)));
         cx.run_until_parked();
 
-        let first_occurrence = cx.debug_bounds("score-arrangement-active-row-0").unwrap();
+        let first_occurrence = cx.debug_bounds("loop-arrangement-list-row-0").unwrap();
         cx.simulate_mouse_down(
             first_occurrence.center(),
             MouseButton::Right,
@@ -4616,8 +4637,12 @@ mod tests {
             Modifiers::default(),
         );
 
-        assert!(cx.debug_bounds("score-arrangement-context-menu").is_some());
-        let remove = cx.debug_bounds("score-arrangement-context-remove").unwrap();
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-context-menu")
+            .is_some());
+        let remove = cx
+            .debug_bounds("loop-arrangement-list-context-action-0")
+            .unwrap();
         cx.simulate_click(remove.center(), Modifiers::default());
         cx.run_until_parked();
 
@@ -4633,8 +4658,22 @@ mod tests {
                 .sequence(),
             expected
         );
-        assert!(cx.debug_bounds("score-arrangement-context-menu").is_none());
-        assert!(cx.debug_bounds("score-arrangement-row-2").is_none());
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-context-menu")
+            .is_none());
+        assert_eq!(
+            cx.update(|_, cx| {
+                model
+                    .read(cx)
+                    .workspace
+                    .loop_editor
+                    .read(cx)
+                    .arrangement_range()
+                    .read(cx)
+                    .row_count()
+            }),
+            2
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

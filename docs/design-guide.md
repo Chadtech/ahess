@@ -159,6 +159,11 @@ or when it defines how a shared component is used.
 - a range selection starts with a single clicked row and extends by dragging,
   shift-clicking, or using shift with the up/down keys. Keep the entire
   selected span visible with the ordinary selection-list colors.
+- when a range list also identifies a current resource independently of its
+  selected range, use its fixed leading indicator so current and selected do
+  not compete for the same row color.
+- add row context actions through `RangeSelectionList` so secondary-click
+  behavior retains the component's range selection and scrolling state.
 - the component uses an `S8`-high viewport by default and scrolls vertically
   when its rows exceed that space. Use its fill-height mode only inside a
   parent with an explicit bounded height.

@@ -1,12 +1,16 @@
 use gpui::{
-    prelude::*, Context, ElementId, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
+    deferred, prelude::*, Context, ElementId, EventEmitter, FocusHandle, KeyDownEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Window,
 };
 
-use crate::{style as s, view::selection_list};
+use crate::{
+    style as s,
+    view::{context_menu, selection_list},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Row {
+    indicator: SharedString,
     primary: SharedString,
     secondary: SharedString,
     trailing: SharedString,
@@ -19,10 +23,16 @@ impl Row {
         trailing: impl Into<SharedString>,
     ) -> Self {
         Self {
+            indicator: "".into(),
             primary: primary.into(),
             secondary: secondary.into(),
             trailing: trailing.into(),
         }
+    }
+
+    pub fn with_indicator(mut self, indicator: impl Into<SharedString>) -> Self {
+        self.indicator = indicator.into();
+        self
     }
 }
 
@@ -70,12 +80,20 @@ pub struct Changed {
     pub range: SelectedRange,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContextActionSelected {
+    pub row: usize,
+    pub action: usize,
+}
+
 pub struct RangeSelectionList {
     id: ElementId,
     empty_message: SharedString,
     rows: Vec<Row>,
     selection: Option<AnchoredSelection>,
     drag_anchor: Option<usize>,
+    context_action_labels: Vec<SharedString>,
+    context_row: Option<usize>,
     focus_handle: FocusHandle,
     viewport: Viewport,
 }
@@ -87,6 +105,7 @@ enum Viewport {
 }
 
 impl EventEmitter<Changed> for RangeSelectionList {}
+impl EventEmitter<ContextActionSelected> for RangeSelectionList {}
 
 impl RangeSelectionList {
     pub fn new(
@@ -104,6 +123,8 @@ impl RangeSelectionList {
             rows,
             selection,
             drag_anchor: None,
+            context_action_labels: Vec::new(),
+            context_row: None,
             focus_handle: cx.focus_handle().tab_stop(true),
             viewport: Viewport::Compact,
         }
@@ -118,10 +139,40 @@ impl RangeSelectionList {
         self.selection.map(AnchoredSelection::range)
     }
 
+    #[cfg(test)]
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
     pub fn select_range(&mut self, selected: Option<SelectedRange>, cx: &mut Context<Self>) {
         let selection = selected
             .and_then(|range| AnchoredSelection::new(range.first(), range.last(), self.rows.len()));
         self.set_selection(selection, cx);
+    }
+
+    pub fn sync_selected_range(&mut self, selected: Option<SelectedRange>, cx: &mut Context<Self>) {
+        let selection = selected
+            .and_then(|range| AnchoredSelection::new(range.first(), range.last(), self.rows.len()));
+        if self.selection == selection {
+            return;
+        }
+        self.selection = selection;
+        self.drag_anchor = None;
+        cx.notify();
+    }
+
+    pub fn set_context_actions<I, L>(&mut self, labels: I, cx: &mut Context<Self>)
+    where
+        I: IntoIterator<Item = L>,
+        L: Into<SharedString>,
+    {
+        let labels = labels.into_iter().map(Into::into).collect::<Vec<_>>();
+        if self.context_action_labels == labels {
+            return;
+        }
+        self.context_action_labels = labels;
+        self.context_row = None;
+        cx.notify();
     }
 
     pub(crate) fn sync_rows(&mut self, rows: Vec<Row>, cx: &mut Context<Self>) {
@@ -131,6 +182,7 @@ impl RangeSelectionList {
 
         self.rows = rows;
         self.drag_anchor = None;
+        self.context_row = self.context_row.filter(|index| *index < self.rows.len());
         self.selection = self.selection.and_then(|selection| {
             AnchoredSelection::new(selection.anchor, selection.head, self.rows.len())
         });
@@ -182,6 +234,63 @@ impl RangeSelectionList {
         self.drag_anchor = None;
     }
 
+    fn on_row_context_requested(
+        &mut self,
+        index: usize,
+        _: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_action_labels.is_empty() || index >= self.rows.len() {
+            return;
+        }
+        cx.stop_propagation();
+        self.drag_anchor = None;
+        self.context_row = Some(index);
+        cx.notify();
+    }
+
+    fn on_context_action_selected(
+        &mut self,
+        action: usize,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.context_row.take() else {
+            return;
+        };
+        if action >= self.context_action_labels.len() {
+            cx.notify();
+            return;
+        }
+        cx.stop_propagation();
+        cx.emit(ContextActionSelected { row, action });
+        cx.notify();
+    }
+
+    fn on_context_mouse_up_out(
+        &mut self,
+        _: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_row.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn on_context_background_clicked(
+        &mut self,
+        _: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_row.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let offset = match event.keystroke.key.as_str() {
             "up" => -1,
@@ -230,6 +339,9 @@ impl Render for RangeSelectionList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let list_debug_id = self.id.to_string();
         let selected = self.selected_range();
+        let has_indicators = self.rows.iter().any(|row| !row.indicator.is_empty());
+        let context_action_labels = self.context_action_labels.clone();
+        let context_row = self.context_row;
         let rows = self
             .rows
             .iter()
@@ -244,6 +356,20 @@ impl Render for RangeSelectionList {
                     .justify_between()
                     .gap(s::S4)
                     .w_full()
+                    .when(has_indicators, |content| {
+                        let has_indicator = !row.indicator.is_empty();
+                        content.child(gpui::div().flex_none().w(s::S4).when(
+                            has_indicator,
+                            |indicator| {
+                                indicator
+                                    .debug_selector({
+                                        let id = self.id.clone();
+                                        move || format!("{id}-row-{index}-indicator")
+                                    })
+                                    .child(row.indicator.clone())
+                            },
+                        ))
+                    })
                     .child(gpui::div().flex_1().child(row.primary))
                     .when(!row.secondary.is_empty(), |content| {
                         content.child(gpui::div().w(s::S8).child(row.secondary))
@@ -251,7 +377,8 @@ impl Render for RangeSelectionList {
                     .when(!row.trailing.is_empty(), |content| {
                         content.child(gpui::div().w(s::S8).child(row.trailing))
                     });
-                selection_list::row_content(index, is_selected, content)
+                let row = selection_list::row_content(index, is_selected, content)
+                    .relative()
                     .debug_selector({
                         let id = self.id.clone();
                         move || format!("{id}-row-{index}")
@@ -262,10 +389,52 @@ impl Render for RangeSelectionList {
                             list.on_row_mouse_down(index, event, window, cx);
                         }),
                     )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |list, event, window, cx| {
+                            list.on_row_context_requested(index, event, window, cx);
+                        }),
+                    )
                     .on_mouse_move(cx.listener(move |list, event, window, cx| {
                         list.on_row_mouse_move(index, event, window, cx);
                     }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up));
+                if context_row == Some(index) {
+                    let actions = context_action_labels
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .map(|(action, label)| {
+                            context_menu::action(action, label)
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(move |list, event, window, cx| {
+                                        list.on_context_action_selected(action, event, window, cx);
+                                    }),
+                                )
+                                .debug_selector({
+                                    let id = self.id.clone();
+                                    move || format!("{id}-context-action-{action}")
+                                })
+                        })
+                        .collect();
+                    row.child(
+                        deferred(
+                            context_menu::menu(actions)
+                                .debug_selector({
+                                    let id = self.id.clone();
+                                    move || format!("{id}-context-menu")
+                                })
+                                .on_mouse_up_out(
+                                    MouseButton::Left,
+                                    cx.listener(Self::on_context_mouse_up_out),
+                                ),
+                        )
+                        .with_priority(1),
+                    )
+                } else {
+                    row
+                }
             })
             .collect();
 
@@ -274,6 +443,10 @@ impl Render for RangeSelectionList {
             .debug_selector(move || list_debug_id.clone())
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(Self::on_context_background_clicked),
+            )
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up));
         match self.viewport {
             Viewport::Compact => list.flex_none().flex_basis(s::S8).h(s::S8).max_h(s::S8),
