@@ -326,7 +326,27 @@ impl ProjectSettingsWorkspace {
     }
 
     pub fn sync_project(&mut self, project: Project, cx: &mut Context<Self>) {
-        self.original_project = project;
+        let preserve_draft = self.is_dirty(cx);
+        self.original_project = project.clone();
+        if !preserve_draft {
+            let (tuning_options, original_tuning_index, tuning_error) =
+                project_tuning_options(&self.workspace_root, &project);
+            let fields = ProjectSettingsFields::new(
+                &project,
+                &self.project_directory,
+                tuning_options.iter().map(ProjectTuningOption::name),
+                original_tuning_index,
+                cx,
+            );
+            let room_kind = fields.room.kind();
+            cx.subscribe(&room_kind, Self::on_room_kind_selected)
+                .detach();
+            self.fields = fields;
+            self.tuning_options = tuning_options;
+            self.original_tuning_index = original_tuning_index;
+            self.save_error = tuning_error;
+            self.sync_impulse_response_buttons(cx);
+        }
         cx.notify();
     }
 }

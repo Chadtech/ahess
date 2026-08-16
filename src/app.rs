@@ -31,7 +31,7 @@ use crate::{
 
 use self::{new_project::NewProjectDialog, open_project::OpenProjectDialog};
 
-actions!(ahess, [TogglePlayback]);
+actions!(ahess, [TogglePlayback, Undo, Redo]);
 
 const AHESS_IMAGE_HEIGHT_RATIO: f32 = 1086.0 / 1448.0;
 const APP_STATE_FILE: &str = ".ahess-ui-state.toml";
@@ -162,6 +162,20 @@ impl AhessApp {
             return;
         };
         model.update(cx, |model, cx| model.toggle_playback(cx));
+    }
+
+    fn undo(&mut self, cx: &mut Context<Self>) {
+        let AppMode::ProjectOpen(model) = &self.app_mode else {
+            return;
+        };
+        model.update(cx, |model, cx| model.undo(cx));
+    }
+
+    fn redo(&mut self, cx: &mut Context<Self>) {
+        let AppMode::ProjectOpen(model) = &self.app_mode else {
+            return;
+        };
+        model.update(cx, |model, cx| model.redo(cx));
     }
 
     fn on_new_project_opened(
@@ -563,14 +577,26 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("secondary-p", TogglePlayback, None),
+        KeyBinding::new("secondary-z", Undo, None),
+        KeyBinding::new("secondary-shift-z", Redo, None),
+    ]);
     view::text_input::bind_keys(cx);
-    cx.bind_keys([KeyBinding::new("secondary-p", TogglePlayback, None)]);
 }
 
 fn register_actions(app: Entity<AhessApp>, cx: &mut App) {
+    let undo_app = app.downgrade();
+    let redo_app = app.downgrade();
     let app = app.downgrade();
     cx.on_action(move |_: &TogglePlayback, cx| {
         app.update(cx, |app, cx| app.toggle_playback(cx)).ok();
+    });
+    cx.on_action(move |_: &Undo, cx| {
+        undo_app.update(cx, |app, cx| app.undo(cx)).ok();
+    });
+    cx.on_action(move |_: &Redo, cx| {
+        redo_app.update(cx, |app, cx| app.redo(cx)).ok();
     });
 }
 
@@ -796,16 +822,17 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use gpui::{div, prelude::*, Context, FocusHandle, TestAppContext, Window};
+    use gpui::{div, prelude::*, Context, Entity, FocusHandle, TestAppContext, Window};
 
     use super::project_open::{UiState, WorkspaceSectionKind};
     use super::{
         bind_keys, load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
-        Storage, StoredAppMode, TogglePlayback,
+        Redo, Storage, StoredAppMode, TogglePlayback, Undo,
     };
     use crate::{
         project::{self, Project},
         seed::Seed,
+        view::text_input::TextInput,
     };
 
     #[test]
@@ -957,6 +984,43 @@ mod tests {
 
         cx.simulate_keystrokes("space");
         assert_eq!(cx.update(|_, cx| host.read(cx).toggle_count), 3);
+    }
+
+    struct HistoryShortcutHost {
+        input: Entity<TextInput>,
+        undo_count: usize,
+        redo_count: usize,
+    }
+
+    impl Render for HistoryShortcutHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.input.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn command_z_reaches_global_history_while_a_text_input_is_focused(cx: &mut TestAppContext) {
+        cx.update(bind_keys);
+        let (host, cx) = cx.add_window_view(|_, cx| HistoryShortcutHost {
+            input: cx.new(|cx| TextInput::new("score", "", cx)),
+            undo_count: 0,
+            redo_count: 0,
+        });
+        let undo_host = host.downgrade();
+        let redo_host = host.downgrade();
+        cx.update(move |_, cx| {
+            cx.on_action(move |_: &Undo, cx| {
+                undo_host.update(cx, |host, _| host.undo_count += 1).ok();
+            });
+            cx.on_action(move |_: &Redo, cx| {
+                redo_host.update(cx, |host, _| host.redo_count += 1).ok();
+            });
+        });
+
+        cx.update(|window, cx| host.read(cx).input.read(cx).focus(window));
+        cx.simulate_keystrokes("secondary-z secondary-shift-z");
+        assert_eq!(cx.update(|_, cx| host.read(cx).undo_count), 1);
+        assert_eq!(cx.update(|_, cx| host.read(cx).redo_count), 1);
     }
 
     fn temp_root(test_name: &str) -> PathBuf {

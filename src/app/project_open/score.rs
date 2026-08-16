@@ -125,9 +125,7 @@ impl ParseIssueCache {
 pub enum DocumentEvent {
     CellChanged {
         source_editor: u64,
-        row: usize,
-        column: usize,
-        value: String,
+        edit: ScoreCellEdit,
     },
     Saved,
     RecoverySaved,
@@ -138,11 +136,33 @@ pub enum DocumentEvent {
         selected_rows: ScoreRowRange,
     },
     Reset,
+    HistoryRestored {
+        structure_changed: bool,
+    },
     ProjectChanged,
     PartSettingsChanged,
 }
 
 impl EventEmitter<DocumentEvent> for ScoreDocument {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ScoreCellEdit {
+    pub(super) row: usize,
+    pub(super) column: usize,
+    pub(super) before: String,
+    pub(super) after: String,
+}
+
+impl ScoreCellEdit {
+    pub(super) fn reversed(&self) -> Self {
+        Self {
+            row: self.row,
+            column: self.column,
+            before: self.after.clone(),
+            after: self.before.clone(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartSelected {
@@ -271,16 +291,20 @@ impl ScoreDocument {
             return;
         }
 
-        *cell = value.clone();
+        let edit = ScoreCellEdit {
+            row,
+            column,
+            before: cell.clone(),
+            after: value,
+        };
+        *cell = edit.after.clone();
         self.set_score(PartScore::from_rows(rows));
         self.dirty = true;
         self.last_save_error = None;
         self.schedule_autosave(cx);
         cx.emit(DocumentEvent::CellChanged {
             source_editor,
-            row,
-            column,
-            value,
+            edit,
         });
         cx.notify();
     }
@@ -434,6 +458,35 @@ impl ScoreDocument {
         self.pending_autosave_since = None;
         self.autosave_task.take();
         cx.emit(DocumentEvent::Reset);
+        cx.notify();
+    }
+
+    pub fn restore_history_content(
+        &mut self,
+        project: Project,
+        part: Part,
+        score: PartScore,
+        has_recovery: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let structure_changed = self.score.rows().len() != score.rows().len()
+            || self
+                .score
+                .rows()
+                .iter()
+                .zip(score.rows())
+                .any(|(current, restored)| current.len() != restored.len());
+        self.replace_content(project, part, score);
+        self.dirty = has_recovery;
+        self.last_save_error = None;
+        self.save_state = if has_recovery {
+            SaveState::RecoverySaved
+        } else {
+            SaveState::Saved
+        };
+        self.pending_autosave_since = None;
+        self.autosave_task.take();
+        cx.emit(DocumentEvent::HistoryRestored { structure_changed });
         cx.notify();
     }
 
@@ -1237,13 +1290,15 @@ impl ScoreEditor {
         match event {
             DocumentEvent::CellChanged {
                 source_editor,
-                row,
-                column,
-                value,
+                edit,
             } => {
                 if *source_editor != self.editor_id {
-                    if let Some(cell) = self.cells.get(*row).and_then(|row| row.get(*column)) {
-                        let value: SharedString = value.clone().into();
+                    if let Some(cell) = self
+                        .cells
+                        .get(edit.row)
+                        .and_then(|row| row.get(edit.column))
+                    {
+                        let value: SharedString = edit.after.clone().into();
                         cell.update(cx, |cell, cx| cell.sync_value(value, cx));
                     }
                 }
@@ -1282,6 +1337,40 @@ impl ScoreEditor {
                 self.drag_anchor = None;
                 self.row_selection = None;
                 self.sync_actions(cx);
+            }
+            DocumentEvent::HistoryRestored { structure_changed } => {
+                let (score, part) = {
+                    let document = self.document.read(cx);
+                    (document.score().clone(), document.part().clone())
+                };
+                if *structure_changed {
+                    self.cells = Self::build_cells(self.editor_id, &score, &part, cx);
+                    self.drag_anchor = None;
+                    self.row_selection = self.row_selection.and_then(|selection| {
+                        AnchoredRowSelection::new(
+                            selection.anchor.min(self.cells.len().saturating_sub(1)),
+                            selection.head.min(self.cells.len().saturating_sub(1)),
+                            self.cells.len(),
+                        )
+                    });
+                    self.sync_actions(cx);
+                } else {
+                    for (row_index, row) in self.cells.iter().enumerate() {
+                        let background = if part.beat_is_highlighted(row_index) {
+                            s::GREEN4
+                        } else {
+                            s::GREEN3
+                        };
+                        for (column_index, cell) in row.iter().enumerate() {
+                            let value: SharedString =
+                                score.rows()[row_index][column_index].clone().into();
+                            cell.update(cx, |cell, cx| {
+                                cell.sync_value(value, cx);
+                                cell.set_background(background, cx);
+                            });
+                        }
+                    }
+                }
             }
             DocumentEvent::PartSettingsChanged => {
                 let part = self.document.read(cx).part().clone();
@@ -1461,7 +1550,10 @@ mod tests {
         ScrollWheelEvent, TestAppContext, Window,
     };
 
-    use super::{parse_optional_subdivision_pattern, ScoreAction, ScoreDocument, ScoreEditor};
+    use super::{
+        parse_optional_subdivision_pattern, DocumentEvent, ScoreAction, ScoreCellEdit,
+        ScoreDocument, ScoreEditor,
+    };
     use crate::{
         part::{Part, PartScore, ScoreRowRange},
         pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
@@ -1517,6 +1609,66 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             div().flex().size_full().child(self.editor.clone())
         }
+    }
+
+    struct DocumentEventHost {
+        document: Entity<ScoreDocument>,
+        last_cell_edit: Option<ScoreCellEdit>,
+    }
+
+    impl DocumentEventHost {
+        fn new(document: Entity<ScoreDocument>, cx: &mut Context<Self>) -> Self {
+            cx.subscribe(&document, Self::on_document_event).detach();
+            Self {
+                document,
+                last_cell_edit: None,
+            }
+        }
+
+        fn on_document_event(
+            &mut self,
+            _: Entity<ScoreDocument>,
+            event: &DocumentEvent,
+            _: &mut Context<Self>,
+        ) {
+            if let DocumentEvent::CellChanged { edit, .. } = event {
+                self.last_cell_edit = Some(edit.clone());
+            }
+        }
+    }
+
+    impl Render for DocumentEventHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui::test]
+    fn cell_changes_emit_the_exact_domain_edit(cx: &mut TestAppContext) {
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let score = PartScore::from_rows(vec![vec!["C4".to_string()]]);
+        let (host, cx) = cx.add_window_view(|_, cx| {
+            let document = cx.new(|_| ScoreDocument::new(project, PathBuf::new(), part, score));
+            DocumentEventHost::new(document, cx)
+        });
+        let document = cx.update(|_, cx| host.read(cx).document.clone());
+
+        document.update(cx, |document, cx| {
+            document.update_cell(7, 0, 0, "D4".to_string(), cx);
+        });
+
+        assert_eq!(
+            cx.update(|_, cx| host.read(cx).last_cell_edit.clone()),
+            Some(ScoreCellEdit {
+                row: 0,
+                column: 0,
+                before: "C4".to_string(),
+                after: "D4".to_string(),
+            })
+        );
     }
 
     #[test]

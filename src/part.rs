@@ -235,6 +235,10 @@ pub fn csv_file_name(name: &PartName) -> Result<String, InvalidPartName> {
     Ok(format!("{file_stem}.csv"))
 }
 
+pub(crate) fn recovery_file_name(name: &PartName) -> Result<String, InvalidPartName> {
+    csv_file_name(name).map(|file_name| format!(".{file_name}.recovery"))
+}
+
 pub struct CreatedPartFile {
     part: Part,
     path: PathBuf,
@@ -749,7 +753,17 @@ impl PartScore {
         project: &Project,
     ) -> Result<Vec<u8>, ScoreError> {
         self.resolved_rows(part, project)?;
-        serialize_part_table(project.voices(), &self.rows).map_err(|source| ScoreError::Csv {
+        self.score_file_contents(project_directory, part, project.voices())
+    }
+
+    pub(crate) fn score_file_contents(
+        &self,
+        project_directory: &Path,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<Vec<u8>, ScoreError> {
+        self.validate_shape(part, voices)?;
+        serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv {
             path: part_file_path(project_directory, part),
             source,
         })
@@ -761,15 +775,21 @@ impl PartScore {
         part: &Part,
         voices: &[Voice],
     ) -> Result<(), ScoreError> {
-        self.validate_shape(part, voices)?;
         let project_directory = project_directory.as_ref();
         let path = part_recovery_path(project_directory, part);
-        let contents =
-            serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv {
-                path: path.clone(),
-                source,
-            })?;
+        let contents = self.recovery_contents(project_directory, part, voices)?;
         atomic_write_score(project_directory, &path, &contents)
+    }
+
+    pub(crate) fn recovery_contents(
+        &self,
+        project_directory: &Path,
+        part: &Part,
+        voices: &[Voice],
+    ) -> Result<Vec<u8>, ScoreError> {
+        self.validate_shape(part, voices)?;
+        let path = part_recovery_path(project_directory, part);
+        serialize_part_table(voices, &self.rows).map_err(|source| ScoreError::Csv { path, source })
     }
 
     pub fn clear_recovery(
@@ -1324,9 +1344,9 @@ fn part_file_path(project_directory: &Path, part: &Part) -> PathBuf {
 }
 
 fn part_recovery_path(project_directory: &Path, part: &Part) -> PathBuf {
-    let file_name = csv_file_name(&part.name)
+    let file_name = recovery_file_name(&part.name)
         .expect("validated project part names always produce CSV filenames");
-    project_directory.join(format!(".{file_name}.recovery"))
+    project_directory.join(file_name)
 }
 
 fn atomic_write_part_score(

@@ -26,6 +26,7 @@ pub const PROJECT_CONFIG_FILE: &str = "project.toml";
 const PROJECT_TRANSACTION_DIRECTORY: &str = ".project-transaction";
 const TRANSACTION_NEW_DIRECTORY: &str = "new";
 const TRANSACTION_OLD_DIRECTORY: &str = "old";
+const TRANSACTION_CREATED_DIRECTORY: &str = "created";
 const TRANSACTION_COMMITTING_FILE: &str = "committing";
 const TRANSACTION_COMMITTED_FILE: &str = "committed";
 
@@ -1219,9 +1220,18 @@ fn commit_project_files(
     project_directory: &Path,
     files: &[(String, Vec<u8>)],
 ) -> Result<(), ProjectTransactionError> {
+    commit_project_file_changes(project_directory, files, &[])
+}
+
+fn commit_project_file_changes(
+    project_directory: &Path,
+    files: &[(String, Vec<u8>)],
+    deleted_file_names: &[String],
+) -> Result<(), ProjectTransactionError> {
     let transaction_directory = project_directory.join(PROJECT_TRANSACTION_DIRECTORY);
     let new_directory = transaction_directory.join(TRANSACTION_NEW_DIRECTORY);
     let old_directory = transaction_directory.join(TRANSACTION_OLD_DIRECTORY);
+    let created_directory = transaction_directory.join(TRANSACTION_CREATED_DIRECTORY);
     fs::create_dir(&transaction_directory).map_err(|source| ProjectTransactionError::Io {
         path: transaction_directory.clone(),
         source,
@@ -1234,19 +1244,49 @@ fn commit_project_files(
         path: old_directory.clone(),
         source,
     })?;
+    fs::create_dir(&created_directory).map_err(|source| ProjectTransactionError::Io {
+        path: created_directory.clone(),
+        source,
+    })?;
 
     for (file_name, contents) in files {
         write_synced(&new_directory.join(file_name), contents, true)?;
         let source_path = project_directory.join(file_name);
-        let backup_path = old_directory.join(file_name);
-        let original = fs::read(&source_path).map_err(|source| ProjectTransactionError::Io {
-            path: source_path,
-            source,
-        })?;
-        write_synced(&backup_path, &original, true)?;
+        match fs::read(&source_path) {
+            Ok(original) => write_synced(&old_directory.join(file_name), &original, true)?,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                write_synced(&created_directory.join(file_name), b"", true)?;
+            }
+            Err(source) => {
+                return Err(ProjectTransactionError::Io {
+                    path: source_path,
+                    source,
+                });
+            }
+        }
+    }
+    for file_name in deleted_file_names {
+        if files.iter().any(|(written, _)| written == file_name) {
+            return Err(ProjectTransactionError::Invalid {
+                path: project_directory.join(file_name),
+                message: "one transaction cannot write and delete the same file".to_string(),
+            });
+        }
+        let source_path = project_directory.join(file_name);
+        match fs::read(&source_path) {
+            Ok(original) => write_synced(&old_directory.join(file_name), &original, true)?,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(ProjectTransactionError::Io {
+                    path: source_path,
+                    source,
+                });
+            }
+        }
     }
     sync_directory(&new_directory)?;
     sync_directory(&old_directory)?;
+    sync_directory(&created_directory)?;
 
     write_synced(
         &transaction_directory.join(TRANSACTION_COMMITTING_FILE),
@@ -1262,6 +1302,19 @@ fn commit_project_files(
             path: target_path,
             source,
         })?;
+    }
+    for file_name in deleted_file_names {
+        let target_path = project_directory.join(file_name);
+        match fs::remove_file(&target_path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(ProjectTransactionError::Io {
+                    path: target_path,
+                    source,
+                });
+            }
+        }
     }
     sync_directory(project_directory)?;
 
@@ -1332,6 +1385,38 @@ fn recover_project_transaction(project_directory: &Path) -> Result<(), ProjectTr
             source,
         })?;
     }
+
+    let created_directory = transaction_directory.join(TRANSACTION_CREATED_DIRECTORY);
+    if created_directory.is_dir() {
+        let entries =
+            fs::read_dir(&created_directory).map_err(|source| ProjectTransactionError::Io {
+                path: created_directory.clone(),
+                source,
+            })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| ProjectTransactionError::Io {
+                path: created_directory.clone(),
+                source,
+            })?;
+            if !entry.path().is_file() {
+                return Err(ProjectTransactionError::Invalid {
+                    path: entry.path(),
+                    message: "created-file marker is not a file".to_string(),
+                });
+            }
+            let target_path = project_directory.join(entry.file_name());
+            match fs::remove_file(&target_path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(ProjectTransactionError::Io {
+                        path: target_path,
+                        source,
+                    });
+                }
+            }
+        }
+    }
     sync_directory(project_directory)?;
 
     fs::remove_dir_all(&transaction_directory).map_err(|source| ProjectTransactionError::Io {
@@ -1399,6 +1484,159 @@ pub fn save_project(
         path: config_path,
         source,
     })
+}
+
+#[derive(Debug)]
+pub enum RestoreProjectStateError {
+    MissingScore(String),
+    Score {
+        part_name: String,
+        source: part::ScoreError,
+    },
+    Recovery(ProjectTransactionError),
+    Commit {
+        source: ProjectTransactionError,
+        rollback_error: Option<ProjectTransactionError>,
+    },
+}
+
+impl fmt::Display for RestoreProjectStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingScore(part_name) => {
+                write!(formatter, "history has no score for part {part_name:?}")
+            }
+            Self::Score { part_name, source } => {
+                write!(formatter, "couldn't restore score {part_name:?}: {source}")
+            }
+            Self::Recovery(source) => {
+                write!(formatter, "failed to recover a project update: {source}")
+            }
+            Self::Commit {
+                source,
+                rollback_error: None,
+            } => write!(formatter, "{source}"),
+            Self::Commit {
+                source,
+                rollback_error: Some(rollback_error),
+            } => write!(
+                formatter,
+                "{source}; also failed to restore the current project files: {rollback_error}"
+            ),
+        }
+    }
+}
+
+impl Error for RestoreProjectStateError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Score { source, .. } => Some(source),
+            Self::Recovery(source) | Self::Commit { source, .. } => Some(source),
+            Self::MissingScore(_) => None,
+        }
+    }
+}
+
+pub fn restore_project_state(
+    project_directory: impl AsRef<Path>,
+    current_project: &Project,
+    target_project: &Project,
+    scores: &[(&PartName, &part::PartScore, &part::PartScore)],
+    project_changed: bool,
+    affected_parts: &[PartName],
+) -> Result<(), RestoreProjectStateError> {
+    let project_directory = project_directory.as_ref();
+    recover_project_transaction(project_directory).map_err(RestoreProjectStateError::Recovery)?;
+
+    let mut files = Vec::with_capacity(affected_parts.len() + usize::from(project_changed));
+    let mut target_file_names = BTreeSet::new();
+    let mut recovery_file_names_to_keep = BTreeSet::new();
+    for project_part in &target_project.parts {
+        let file_name = part::csv_file_name(&project_part.name)
+            .expect("validated project part names always produce CSV filenames");
+        target_file_names.insert(file_name.clone());
+        if !affected_parts
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&project_part.name))
+        {
+            continue;
+        }
+        let (score, saved_score) = scores
+            .iter()
+            .find(|(part_name, _, _)| part_name.eq_ignore_ascii_case(&project_part.name))
+            .map(|(_, score, saved_score)| (*score, *saved_score))
+            .ok_or_else(|| {
+                RestoreProjectStateError::MissingScore(project_part.name.as_str().to_string())
+            })?;
+        let saved_contents = saved_score
+            .score_file_contents(project_directory, project_part, target_project.voices())
+            .map_err(|source| RestoreProjectStateError::Score {
+                part_name: project_part.name.as_str().to_string(),
+                source,
+            })?;
+        files.push((file_name, saved_contents));
+        if score != saved_score {
+            let recovery_file_name = part::recovery_file_name(&project_part.name)
+                .expect("validated project part names always produce recovery filenames");
+            let contents = score
+                .recovery_contents(project_directory, project_part, target_project.voices())
+                .map_err(|source| RestoreProjectStateError::Score {
+                    part_name: project_part.name.as_str().to_string(),
+                    source,
+                })?;
+            recovery_file_names_to_keep.insert(recovery_file_name.clone());
+            files.push((recovery_file_name, contents));
+        }
+    }
+    if project_changed {
+        files.push((
+            PROJECT_CONFIG_FILE.to_string(),
+            target_project.config_file_contents().into_bytes(),
+        ));
+    }
+
+    let mut deleted_file_names = current_project
+        .parts
+        .iter()
+        .filter(|project_part| {
+            affected_parts
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&project_part.name))
+        })
+        .map(|project_part| {
+            part::csv_file_name(&project_part.name)
+                .expect("validated project part names always produce CSV filenames")
+        })
+        .filter(|file_name| !target_file_names.contains(file_name))
+        .collect::<Vec<_>>();
+    deleted_file_names.extend(
+        current_project
+            .parts
+            .iter()
+            .chain(target_project.parts.iter())
+            .filter(|project_part| {
+                affected_parts
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&project_part.name))
+            })
+            .map(|project_part| {
+                part::recovery_file_name(&project_part.name)
+                    .expect("validated project part names always produce recovery filenames")
+            })
+            .filter(|file_name| !recovery_file_names_to_keep.contains(file_name)),
+    );
+    deleted_file_names.sort();
+    deleted_file_names.dedup();
+
+    if let Err(source) = commit_project_file_changes(project_directory, &files, &deleted_file_names)
+    {
+        let rollback_error = recover_project_transaction(project_directory).err();
+        return Err(RestoreProjectStateError::Commit {
+            source,
+            rollback_error,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1710,10 +1948,11 @@ mod tests {
     use super::{
         add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_part_rows,
         edit_voice, edit_voice_at, list_projects, load_project, project_directory_name,
-        save_project, save_project_with_voice_convolution, CreateProjectError,
-        DuplicateProjectError, FrequencyVariance, LoadProjectError, Project, ProjectEntry, Voice,
-        VoiceConvolutionChange, VoiceType, PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY,
-        TRANSACTION_COMMITTING_FILE, TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
+        restore_project_state, save_project, save_project_with_voice_convolution,
+        CreateProjectError, DuplicateProjectError, FrequencyVariance, LoadProjectError, Project,
+        ProjectEntry, Voice, VoiceConvolutionChange, VoiceType, PROJECT_CONFIG_FILE,
+        PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE, TRANSACTION_CREATED_DIRECTORY,
+        TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
@@ -2727,6 +2966,82 @@ mod tests {
             original_part
         );
         assert!(!transaction_directory.exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_project_rolls_back_created_and_deleted_files() {
+        let root = temp_root("recover-file-set-transaction");
+        let project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        let mut project = add_voice(&project_directory, &project, "lead", VoiceType::Saw).unwrap();
+        add_test_part(&project_directory, &mut project, "intro", 2);
+        let intro_path = project_directory.join("intro.csv");
+        fs::write(&intro_path, "lead\nC4\nD4\n").unwrap();
+        let original_part = fs::read(&intro_path).unwrap();
+
+        let transaction_directory = project_directory.join(PROJECT_TRANSACTION_DIRECTORY);
+        let old_directory = transaction_directory.join(TRANSACTION_OLD_DIRECTORY);
+        let created_directory = transaction_directory.join(TRANSACTION_CREATED_DIRECTORY);
+        fs::create_dir_all(&old_directory).unwrap();
+        fs::create_dir(&created_directory).unwrap();
+        fs::write(old_directory.join("intro.csv"), &original_part).unwrap();
+        fs::write(created_directory.join("new-part.csv"), "").unwrap();
+        fs::write(transaction_directory.join(TRANSACTION_COMMITTING_FILE), "").unwrap();
+        fs::remove_file(&intro_path).unwrap();
+        fs::write(project_directory.join("new-part.csv"), "lead\nA4\n").unwrap();
+
+        let recovered = load_project(&project_directory).unwrap().project;
+
+        assert_eq!(recovered, project);
+        assert_eq!(fs::read(&intro_path).unwrap(), original_part);
+        assert!(!project_directory.join("new-part.csv").exists());
+        assert!(!transaction_directory.exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_restoration_writes_only_affected_score_files() {
+        let root = temp_root("restore-affected-score");
+        let project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        let mut project = add_voice(&project_directory, &project, "lead", VoiceType::Saw).unwrap();
+        add_test_part(&project_directory, &mut project, "first", 1);
+        add_test_part(&project_directory, &mut project, "second", 1);
+        let first = project.part(&PartName::new("first")).unwrap().clone();
+        let second = project.part(&PartName::new("second")).unwrap().clone();
+        PartScore::from_rows(vec![vec!["C4".to_string()]])
+            .save(&project_directory, &first, &project)
+            .unwrap();
+        PartScore::from_rows(vec![vec!["E4".to_string()]])
+            .save(&project_directory, &second, &project)
+            .unwrap();
+        let restored_first = PartScore::from_rows(vec![vec!["D4".to_string()]]);
+
+        restore_project_state(
+            &project_directory,
+            &project,
+            &project,
+            &[(&first.name, &restored_first, &restored_first)],
+            false,
+            std::slice::from_ref(&first.name),
+        )
+        .unwrap();
+
+        assert_eq!(
+            PartScore::load(&project_directory, &first, project.voices())
+                .unwrap()
+                .rows()[0][0],
+            "D4"
+        );
+        assert_eq!(
+            PartScore::load(&project_directory, &second, project.voices())
+                .unwrap()
+                .rows()[0][0],
+            "E4"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -1,4 +1,5 @@
 mod build_workspace;
+mod history;
 mod loop_range;
 mod parts;
 mod project_settings;
@@ -8,6 +9,7 @@ mod voices;
 use std::{
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -35,6 +37,7 @@ use crate::{
 
 use self::{
     build_workspace::{BuildWorkspace, Msg as BuildWorkspaceMsg},
+    history::{ProjectHistory, ProjectState as HistoryState},
     loop_range::{LoopWorkspace, Msg as LoopWorkspaceMsg},
     parts::PartsWorkspace,
     project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
@@ -42,7 +45,7 @@ use self::{
         DocumentEvent, EditPartRequested, EditSubdivisionRequested, ExportRowsConfirmed,
         ExportRowsDialog, ExportRowsDialogMsg, ExportRowsRequested, PartLoopRequested,
         PartSelected, RowEditConfirmation, RowEditConfirmationMsg, RowEditRequested, SaveState,
-        ScoreDocument, ScoreEditor, SubdivisionDialog, SubdivisionDialogMsg,
+        ScoreCellEdit, ScoreDocument, ScoreEditor, SubdivisionDialog, SubdivisionDialogMsg,
     },
     voices::VoicesWorkspace,
 };
@@ -102,6 +105,8 @@ pub struct Model {
     score_arrangement_button: Entity<Button>,
     loop_button: Entity<Button>,
     transport_button: Entity<Button>,
+    undo_button: Entity<Button>,
+    redo_button: Entity<Button>,
     project_overlay: Option<ProjectOverlay>,
     score_documents: Vec<ScoreDocumentEntry>,
     score_views: Vec<ScoreViewEntry>,
@@ -113,6 +118,15 @@ pub struct Model {
     build_task: Option<Task<()>>,
     transport_error: Option<String>,
     workspace_error: Option<String>,
+    history: ProjectHistory,
+    history_activity: HistoryActivity,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum HistoryActivity {
+    #[default]
+    Recording,
+    Restoring,
 }
 
 struct ScoreDocumentEntry {
@@ -123,6 +137,28 @@ struct ScoreDocumentEntry {
 struct ScoreViewEntry {
     part_name: Option<PartName>,
     editor: Option<Entity<ScoreEditor>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScoreArrangementContextAction {
+    OpenInPanel(usize),
+    Remove,
+}
+
+impl ScoreArrangementContextAction {
+    fn available(panel_count: usize) -> Vec<Self> {
+        (0..panel_count)
+            .map(Self::OpenInPanel)
+            .chain([Self::Remove])
+            .collect()
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::OpenInPanel(panel_index) => format!("open in panel {}", panel_index + 1),
+            Self::Remove => "remove from arrangement".to_string(),
+        }
+    }
 }
 
 struct ActivePlayback {
@@ -341,6 +377,8 @@ impl Model {
         let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
         let transport_button =
             cx.new(|_| Button::new("toggle-playback", "play").variant(ButtonVariant::Primary));
+        let undo_button = cx.new(|_| Button::new("undo-project-change", "undo").disabled(true));
+        let redo_button = cx.new(|_| Button::new("redo-project-change", "redo").disabled(true));
 
         cx.subscribe(&score_button, Self::on_score_clicked).detach();
         cx.subscribe(&settings_button, Self::on_settings_clicked)
@@ -360,6 +398,8 @@ impl Model {
         cx.subscribe(&loop_button, Self::on_loop_clicked).detach();
         cx.subscribe(&transport_button, Self::on_transport_clicked)
             .detach();
+        cx.subscribe(&undo_button, Self::on_undo_clicked).detach();
+        cx.subscribe(&redo_button, Self::on_redo_clicked).detach();
 
         let parts = project.parts.clone();
         let sequence = project.sequence().to_vec();
@@ -402,6 +442,7 @@ impl Model {
         cx.subscribe(&audio_build, Self::on_build_workspace_msg)
             .detach();
 
+        let initial_history = ProjectHistory::new(HistoryState::new(Arc::new(project.clone()), []));
         let mut model = Self {
             project,
             project_directory,
@@ -423,6 +464,8 @@ impl Model {
             score_arrangement_button,
             loop_button,
             transport_button,
+            undo_button,
+            redo_button,
             project_overlay: None,
             score_documents: Vec::new(),
             score_views: vec![ScoreViewEntry {
@@ -437,6 +480,8 @@ impl Model {
             build_task: None,
             transport_error: None,
             workspace_error: None,
+            history: initial_history,
+            history_activity: HistoryActivity::Recording,
         };
         model.restore_ui_state(ui_state, cx);
         model.sync_score_arrangement_active_part(cx);
@@ -453,6 +498,11 @@ impl Model {
                 break;
             }
         }
+        match model.collect_project_state_for_history_diff(cx) {
+            Ok(initial_state) => model.history.reset(initial_state),
+            Err(error) => model.workspace_error = Some(error),
+        }
+        model.sync_history_buttons(cx);
         model
     }
 
@@ -514,7 +564,11 @@ impl Model {
     }
 
     pub fn bar_actions(&self) -> Vec<AnyElement> {
-        let mut actions = vec![self.transport_button.clone().into_any_element()];
+        let mut actions = vec![
+            self.transport_button.clone().into_any_element(),
+            button::action_group([self.undo_button.clone(), self.redo_button.clone()])
+                .into_any_element(),
+        ];
         if self.workspace.section.kind() == WorkspaceSectionKind::Score {
             actions.push(
                 div()
@@ -573,6 +627,374 @@ impl Model {
         self.start_playback(target, playback_loop, cx);
     }
 
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_overlay() || self.history_activity == HistoryActivity::Restoring {
+            return;
+        }
+        let target = match self.history.undo_target() {
+            Ok(Some(target)) => target,
+            Ok(None) => return,
+            Err(error) => {
+                self.workspace_error = Some(format!("couldn't undo: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        match self.restore_history_state(
+            &target.state,
+            target.project_changed,
+            &target.affected_parts,
+            cx,
+        ) {
+            Ok(()) => {
+                self.history.commit_undo(target.state);
+                self.workspace_error = None;
+            }
+            Err(error) => self.workspace_error = Some(format!("couldn't undo: {error}")),
+        }
+        self.sync_history_buttons(cx);
+        cx.notify();
+    }
+
+    pub fn redo(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_overlay() || self.history_activity == HistoryActivity::Restoring {
+            return;
+        }
+        let target = match self.history.redo_target() {
+            Ok(Some(target)) => target,
+            Ok(None) => return,
+            Err(error) => {
+                self.workspace_error = Some(format!("couldn't redo: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        match self.restore_history_state(
+            &target.state,
+            target.project_changed,
+            &target.affected_parts,
+            cx,
+        ) {
+            Ok(()) => {
+                self.history.commit_redo(target.state);
+                self.workspace_error = None;
+            }
+            Err(error) => self.workspace_error = Some(format!("couldn't redo: {error}")),
+        }
+        self.sync_history_buttons(cx);
+        cx.notify();
+    }
+
+    fn on_undo_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        self.undo(cx);
+    }
+
+    fn on_redo_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
+        self.redo(cx);
+    }
+
+    fn sync_history_buttons(&self, cx: &mut Context<Self>) {
+        let blocked =
+            self.has_active_overlay() || self.history_activity == HistoryActivity::Restoring;
+        self.undo_button.update(cx, |button, cx| {
+            button.set_disabled(blocked || !self.history.can_undo(), cx);
+        });
+        self.redo_button.update(cx, |button, cx| {
+            button.set_disabled(blocked || !self.history.can_redo(), cx);
+        });
+    }
+
+    // Broad project operations can affect an unknown set of score files. Collect
+    // their resulting state once so ProjectHistory can retain only the delta.
+    fn collect_project_state_for_history_diff(&self, cx: &App) -> Result<HistoryState, String> {
+        let current = self.history.current();
+        let project = if current.project.as_ref() == &self.project {
+            current.project.clone()
+        } else {
+            Arc::new(self.project.clone())
+        };
+        let mut scores = Vec::with_capacity(self.project.parts().len());
+        for project_part in self.project.parts() {
+            let score = if let Some(entry) = self
+                .score_documents
+                .iter()
+                .find(|entry| entry.part_name.eq_ignore_ascii_case(&project_part.name))
+            {
+                let document = entry.document.read(cx);
+                if let Some(current_score) = current.score(&project_part.name) {
+                    if current_score.as_ref() == document.score() {
+                        current_score.clone()
+                    } else {
+                        Arc::new(document.score().clone())
+                    }
+                } else {
+                    Arc::new(document.score().clone())
+                }
+            } else {
+                let loaded =
+                    PartScore::load(&self.project_directory, project_part, self.project.voices())
+                        .map_err(|error| {
+                        format!(
+                            "couldn't capture score {:?} for undo: {error}",
+                            project_part.name.as_str()
+                        )
+                    })?;
+                if let Some(current_score) = current.score(&project_part.name) {
+                    if current_score.as_ref() == &loaded {
+                        current_score.clone()
+                    } else {
+                        Arc::new(loaded)
+                    }
+                } else {
+                    Arc::new(loaded)
+                }
+            };
+            let saved_score = match score.resolved_rows(project_part, &self.project) {
+                Ok(_) => score.clone(),
+                Err(crate::part::ScoreError::InvalidPitch { .. }) => {
+                    let current_saved = (current.project.as_ref() == &self.project)
+                        .then(|| current.saved_score(&project_part.name).cloned())
+                        .flatten();
+                    match current_saved {
+                        Some(saved_score) => saved_score,
+                        None => PartScore::load(
+                            &self.project_directory,
+                            project_part,
+                            self.project.voices(),
+                        )
+                        .map(Arc::new)
+                        .map_err(|error| {
+                            format!(
+                                "couldn't capture the saved score {:?} for undo: {error}",
+                                project_part.name.as_str()
+                            )
+                        })?,
+                    }
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "couldn't capture score {:?} for undo: {error}",
+                        project_part.name.as_str()
+                    ));
+                }
+            };
+            scores.push((project_part.name.clone(), score, saved_score));
+        }
+        Ok(HistoryState::new(project, scores))
+    }
+
+    fn record_project_history_change(&mut self, cx: &mut Context<Self>) {
+        if self.history_activity == HistoryActivity::Restoring {
+            return;
+        }
+        match self.collect_project_state_for_history_diff(cx) {
+            Ok(state) => {
+                self.history.record_project(state);
+                self.sync_history_buttons(cx);
+            }
+            Err(error) => self.workspace_error = Some(error),
+        }
+    }
+
+    fn record_score_cell_history(
+        &mut self,
+        part_name: PartName,
+        edit: ScoreCellEdit,
+        cx: &mut Context<Self>,
+    ) {
+        match self.history.record_score_cell(part_name, edit) {
+            Ok(_) => self.sync_history_buttons(cx),
+            Err(error) => self.workspace_error = Some(error),
+        }
+    }
+
+    fn record_score_rows_history(
+        &mut self,
+        part_name: PartName,
+        score: PartScore,
+        cx: &mut Context<Self>,
+    ) {
+        match self.history.record_score_rows(part_name, score) {
+            Ok(_) => self.sync_history_buttons(cx),
+            Err(error) => self.workspace_error = Some(error),
+        }
+    }
+
+    fn restore_history_state(
+        &mut self,
+        target: &HistoryState,
+        project_changed: bool,
+        affected_parts: &[PartName],
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let scores = target
+            .scores()
+            .map(|(part_name, score, saved_score)| {
+                (part_name, score.as_ref(), saved_score.as_ref())
+            })
+            .collect::<Vec<_>>();
+        project::restore_project_state(
+            &self.project_directory,
+            &self.project,
+            target.project.as_ref(),
+            &scores,
+            project_changed,
+            affected_parts,
+        )
+        .map_err(|error| error.to_string())?;
+
+        self.history_activity = HistoryActivity::Restoring;
+        self.apply_history_state(target, cx);
+        self.history_activity = HistoryActivity::Recording;
+        Ok(())
+    }
+
+    fn apply_history_state(&mut self, target: &HistoryState, cx: &mut Context<Self>) {
+        let current_project = self.project.clone();
+        let previous_arrangement_beat_count = current_project.arrangement_beat_count();
+        let previous_ui_state = self.ui_state();
+        let target_project = target.project.as_ref().clone();
+        let mut remaining_documents = std::mem::take(&mut self.score_documents);
+        let mut document_name_changes = Vec::new();
+        let mut restored_documents = Vec::with_capacity(target_project.parts().len());
+
+        self.project = target_project.clone();
+        for (target_index, target_part) in target_project.parts().iter().enumerate() {
+            let exact = remaining_documents
+                .iter()
+                .position(|entry| entry.part_name.eq_ignore_ascii_case(&target_part.name));
+            let renamed = exact.or_else(|| {
+                remaining_documents.iter().position(|entry| {
+                    target_project.part(&entry.part_name).is_none()
+                        && current_project
+                            .parts()
+                            .iter()
+                            .position(|part| part.name.eq_ignore_ascii_case(&entry.part_name))
+                            == Some(target_index)
+                })
+            });
+            let score = target
+                .score(&target_part.name)
+                .expect("every history project part must have a score")
+                .as_ref()
+                .clone();
+            let has_recovery = target
+                .saved_score(&target_part.name)
+                .expect("every history project part must have a saved score")
+                .as_ref()
+                != &score;
+
+            let (old_name, document) = if let Some(index) = renamed {
+                let entry = remaining_documents.remove(index);
+                (entry.part_name, entry.document)
+            } else {
+                let project = target_project.clone();
+                let project_directory = self.project_directory.clone();
+                let part = target_part.clone();
+                let initial_score = score.clone();
+                let document = cx.new(move |_| {
+                    ScoreDocument::new(project, project_directory, part, initial_score)
+                });
+                cx.subscribe(&document, Self::on_score_document_event)
+                    .detach();
+                (target_part.name.clone(), document)
+            };
+            document.update(cx, |document, cx| {
+                document.restore_history_content(
+                    target_project.clone(),
+                    target_part.clone(),
+                    score,
+                    has_recovery,
+                    cx,
+                );
+            });
+            document_name_changes.push((
+                old_name.clone(),
+                target_part.name.clone(),
+                document.clone(),
+            ));
+            restored_documents.push(ScoreDocumentEntry {
+                part_name: target_part.name.clone(),
+                document,
+            });
+        }
+        self.score_documents = restored_documents;
+
+        for view_index in 0..self.score_views.len() {
+            let current_name = self.score_views[view_index].part_name.clone();
+            let desired_name = current_name.as_ref().and_then(|name| {
+                target_project
+                    .part(name)
+                    .map(|part| part.name.clone())
+                    .or_else(|| {
+                        document_name_changes
+                            .iter()
+                            .find(|(old_name, _, _)| old_name.eq_ignore_ascii_case(name))
+                            .map(|(_, new_name, _)| new_name.clone())
+                    })
+                    .or_else(|| {
+                        current_project
+                            .parts()
+                            .iter()
+                            .position(|part| part.name.eq_ignore_ascii_case(name))
+                            .and_then(|index| target_project.parts().get(index))
+                            .map(|part| part.name.clone())
+                    })
+            });
+            let desired_name = desired_name
+                .or_else(|| target_project.parts().first().map(|part| part.name.clone()));
+            let can_keep_editor = match (current_name.as_ref(), desired_name.as_ref()) {
+                (Some(current_name), Some(desired_name)) => {
+                    document_name_changes.iter().any(|(old_name, new_name, _)| {
+                        old_name.eq_ignore_ascii_case(current_name)
+                            && new_name.eq_ignore_ascii_case(desired_name)
+                    })
+                }
+                _ => false,
+            };
+            if can_keep_editor {
+                self.score_views[view_index].part_name = desired_name;
+            } else {
+                self.score_views[view_index].part_name = None;
+                self.score_views[view_index].editor = None;
+                if let Some(part_name) = desired_name {
+                    self.assign_part_to_view(view_index, part_name, cx);
+                }
+            }
+        }
+
+        self.reconcile_history_loop_range(previous_arrangement_beat_count);
+        self.sync_score_editor_parts(cx);
+        self.sync_workspace_project(cx);
+        self.sync_score_arrangement_active_part(cx);
+        self.sync_score_arrangement_context_actions(cx);
+        if self.playback.is_some() {
+            self.update_live_playback(cx);
+        }
+        if self.ui_state() != previous_ui_state {
+            cx.emit(Msg::UiStateChanged);
+        }
+    }
+
+    fn reconcile_history_loop_range(&mut self, previous_arrangement_beat_count: u64) {
+        let arrangement_beat_count = self.project.arrangement_beat_count();
+        let followed_entire_arrangement = self.loop_range.is_none_or(|range| {
+            previous_arrangement_beat_count == 0
+                || (range.first() == 1 && range.last() == previous_arrangement_beat_count)
+        });
+        self.loop_range = if arrangement_beat_count == 0 {
+            None
+        } else if followed_entire_arrangement {
+            BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok()
+        } else {
+            self.loop_range.and_then(|range| {
+                let first = range.first().min(arrangement_beat_count);
+                let last = range.last().max(first).min(arrangement_beat_count);
+                BeatRange::new(first, last, arrangement_beat_count).ok()
+            })
+        };
+    }
+
     fn has_active_overlay(&self) -> bool {
         self.project_overlay.is_some() || self.workspace.section.has_overlay()
     }
@@ -585,6 +1007,7 @@ impl Model {
             return;
         };
         *active_overlay = overlay;
+        self.sync_history_buttons(cx);
         cx.notify();
     }
 
@@ -596,6 +1019,7 @@ impl Model {
             return;
         };
         *active_overlay = overlay;
+        self.sync_history_buttons(cx);
         cx.notify();
     }
 
@@ -607,6 +1031,7 @@ impl Model {
             return;
         };
         *active_overlay = overlay;
+        self.sync_history_buttons(cx);
         cx.notify();
     }
 
@@ -898,7 +1323,7 @@ impl Model {
 
     fn on_score_document_event(
         &mut self,
-        _: Entity<ScoreDocument>,
+        document: Entity<ScoreDocument>,
         event: &DocumentEvent,
         cx: &mut Context<Self>,
     ) {
@@ -910,6 +1335,7 @@ impl Model {
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
             | DocumentEvent::Reset
+            | DocumentEvent::HistoryRestored { .. }
             | DocumentEvent::ProjectChanged
             | DocumentEvent::PartSettingsChanged => false,
         };
@@ -926,6 +1352,7 @@ impl Model {
             | DocumentEvent::RowsCleared
             | DocumentEvent::StructureChanged { .. }
             | DocumentEvent::Reset
+            | DocumentEvent::HistoryRestored { .. }
             | DocumentEvent::ProjectChanged => true,
             DocumentEvent::Saved
             | DocumentEvent::RecoverySaved
@@ -939,6 +1366,24 @@ impl Model {
         }
         if self.playback.is_some() && changes_playback {
             self.update_live_playback(cx);
+        }
+        if self.history_activity == HistoryActivity::Recording {
+            let part_name = self
+                .score_documents
+                .iter()
+                .find(|entry| entry.document == document)
+                .map(|entry| entry.part_name.clone())
+                .unwrap_or_else(|| document.read(cx).part().name.clone());
+            match event {
+                DocumentEvent::CellChanged { edit, .. } => {
+                    self.record_score_cell_history(part_name, edit.clone(), cx);
+                }
+                DocumentEvent::RowsCleared => {
+                    let score = document.read(cx).score().clone();
+                    self.record_score_rows_history(part_name, score, cx);
+                }
+                _ => {}
+            }
         }
         cx.notify();
     }
@@ -1340,6 +1785,7 @@ impl Model {
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
                 self.set_score_overlay(None, cx);
+                self.record_project_history_change(cx);
             }
             Err(error) => {
                 dialog.update(cx, |dialog, cx| {
@@ -1453,6 +1899,7 @@ impl Model {
                 self.sync_score_editor_parts(cx);
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
+                self.record_project_history_change(cx);
             }
             Err(error) => {
                 dialog.update(cx, |dialog, cx| {
@@ -1564,6 +2011,7 @@ impl Model {
                 self.reconcile_loop_range(previous_arrangement_beat_count, cx);
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
+                self.record_project_history_change(cx);
             }
             Err(error) => self.workspace_error = Some(error.to_string()),
         }
@@ -1629,10 +2077,46 @@ impl Model {
         selected: &ContextActionSelected,
         cx: &mut Context<Self>,
     ) {
-        if selected.action != 0 || self.workspace.section.kind() != WorkspaceSectionKind::Score {
+        if self.workspace.section.kind() != WorkspaceSectionKind::Score {
             return;
         }
-        self.remove_score_arrangement_occurrence(selected.row, cx);
+        let actions = ScoreArrangementContextAction::available(self.score_views.len());
+        let Some(action) = actions.get(selected.action).copied() else {
+            return;
+        };
+        match action {
+            ScoreArrangementContextAction::OpenInPanel(panel_index) => {
+                self.open_arrangement_part_in_score_panel(selected.row, panel_index, cx);
+            }
+            ScoreArrangementContextAction::Remove => {
+                self.remove_score_arrangement_occurrence(selected.row, cx);
+            }
+        }
+    }
+
+    fn open_arrangement_part_in_score_panel(
+        &mut self,
+        occurrence_index: usize,
+        panel_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(part_name) = self.project.sequence().get(occurrence_index).cloned() else {
+            return;
+        };
+        let already_open = self.score_views.get(panel_index).is_some_and(|view| {
+            view.part_name
+                .as_ref()
+                .is_some_and(|open_part| open_part.eq_ignore_ascii_case(&part_name))
+                && view.editor.is_some()
+        });
+        if panel_index >= self.score_views.len() {
+            return;
+        }
+
+        self.activate_score_view(panel_index, cx);
+        if !already_open && self.assign_part_to_view(panel_index, part_name, cx) {
+            cx.emit(Msg::UiStateChanged);
+        }
     }
 
     fn remove_score_arrangement_occurrence(
@@ -1654,6 +2138,7 @@ impl Model {
                 self.update_score_documents_for_project_settings(cx);
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
+                self.record_project_history_change(cx);
             }
             Err(error) => {
                 self.workspace_error =
@@ -1689,6 +2174,7 @@ impl Model {
             }
         });
         self.sync_score_arrangement_active_part(cx);
+        self.sync_score_arrangement_context_actions(cx);
         if self.ui_state() != previous_state {
             cx.emit(Msg::UiStateChanged);
         }
@@ -1713,10 +2199,14 @@ impl Model {
 
     fn sync_score_arrangement_context_actions(&self, cx: &mut Context<Self>) {
         let enabled = self.workspace.section.kind() == WorkspaceSectionKind::Score;
+        let panel_count = self.score_views.len();
         let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
         arrangement_range.update(cx, |range, cx| {
             if enabled {
-                range.set_context_actions(["remove from arrangement"], cx);
+                let labels = ScoreArrangementContextAction::available(panel_count)
+                    .into_iter()
+                    .map(ScoreArrangementContextAction::label);
+                range.set_context_actions(labels, cx);
             } else {
                 range.set_context_actions(std::iter::empty::<&str>(), cx);
             }
@@ -1942,6 +2432,7 @@ impl Model {
                 if self.playback.is_some() {
                     self.update_live_playback(cx);
                 }
+                self.record_project_history_change(cx);
             }
         }
         cx.notify();
@@ -2004,6 +2495,7 @@ impl Model {
                         });
                         self.refresh_score_documents_after_voice_change(cx);
                         self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         workspace.update(cx, |workspace, cx| {
@@ -2045,6 +2537,7 @@ impl Model {
                         });
                         self.refresh_score_documents_after_voice_change(cx);
                         self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         workspace.update(cx, |workspace, cx| {
@@ -2105,6 +2598,7 @@ impl Model {
                 self.refresh_score_documents_after_voice_change(cx);
                 self.sync_workspace_project(cx);
                 self.set_voices_overlay(None, cx);
+                self.record_project_history_change(cx);
             }
             Err(error) => {
                 confirmation.update(cx, |dialog, cx| {
@@ -2143,6 +2637,7 @@ impl Model {
                         self.select_part(added_name, cx);
                         self.sync_score_editor_parts(cx);
                         self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2174,6 +2669,7 @@ impl Model {
                         self.select_part(duplicated_name, cx);
                         self.sync_score_editor_parts(cx);
                         self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2240,6 +2736,7 @@ impl Model {
                         if self.playback.is_some() {
                             self.update_live_playback(cx);
                         }
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2278,6 +2775,7 @@ impl Model {
                         self.sync_score_editor_parts(cx);
                         self.sync_workspace_project(cx);
                         self.workspace_error = None;
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2326,6 +2824,7 @@ impl Model {
                         self.sync_score_editor_parts(cx);
                         self.sync_workspace_project(cx);
                         self.workspace_error = None;
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2351,6 +2850,7 @@ impl Model {
                         self.reconcile_loop_range(previous_arrangement_beat_count, cx);
                         self.update_score_documents_for_project_settings(cx);
                         self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
                     }
                     Err(error) => {
                         dialog.update(cx, |dialog, cx| {
@@ -2433,6 +2933,7 @@ impl Model {
                 self.sync_score_editor_parts(cx);
                 self.sync_workspace_project(cx);
                 self.set_parts_overlay(None, cx);
+                self.record_project_history_change(cx);
             }
             Err(error) => {
                 confirmation.update(cx, |dialog, cx| {
@@ -2521,6 +3022,7 @@ impl Model {
             let overlay = cx.new(CloseProjectDialog::new);
             cx.subscribe(&overlay, Self::on_close_project_msg).detach();
             self.project_overlay = Some(ProjectOverlay::ConfirmClose(overlay));
+            self.sync_history_buttons(cx);
             cx.notify();
             return;
         }
@@ -2535,6 +3037,7 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         self.project_overlay = None;
+        self.sync_history_buttons(cx);
         match msg {
             CloseProjectMsg::Cancelled => cx.notify(),
             CloseProjectMsg::Confirmed => self.finish_close(cx),
@@ -3455,6 +3958,7 @@ fn delete_project_part(
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
         path::{Path, PathBuf},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -3468,12 +3972,15 @@ mod tests {
         create_project_part, delete_project_part, duplicate_project_part, export_project_part_rows,
         loop_range_summary, parts, playing_score_row, rename_project_part, update_project_sequence,
         voices, BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model,
-        PartChangeError, PartsWorkspace, ProjectOverlay, RowEditConfirmationMsg, RowEditRequested,
-        StatusAction, UiState, WorkspaceSection, WorkspaceSectionKind,
+        PartChangeError, PartsWorkspace, ProjectOverlay, ProjectSettingsMsg,
+        RowEditConfirmationMsg, RowEditRequested, StatusAction, UiState, WorkspaceSection,
+        WorkspaceSectionKind,
     };
     use crate::{
+        acoustics::Point3Meters,
         audio_build::{planned_audio_files, BuildSampleRate},
         part::{self, Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
+        pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
         seed::Seed,
@@ -4018,6 +4525,8 @@ mod tests {
         let (model, cx) = cx.add_window_view(|_, cx| {
             Model::new(project, project_directory.clone(), root.clone(), cx)
         });
+        let original_document =
+            cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
         let dialog = cx.new(|cx| PartsWorkspace::new(dialog_parts, dialog_sequence, cx));
 
         model.update(cx, |model, cx| {
@@ -4079,6 +4588,36 @@ mod tests {
             [4, 3, 3]
         );
 
+        model.update(cx, |model, cx| model.undo(cx));
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.project.parts()[0].name.as_str(), "intro");
+            assert_eq!(model.score_documents[0].document, original_document);
+            assert_eq!(
+                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                "intro"
+            );
+            assert_eq!(
+                model.workspace.loop_editor.read(cx).occurrence_names(),
+                ["intro", "intro"]
+            );
+        });
+        assert!(project_directory.join("intro.csv").is_file());
+        assert!(!project_directory.join("opening-theme.csv").exists());
+
+        model.update(cx, |model, cx| model.redo(cx));
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.project.parts()[0].name.as_str(), "opening theme");
+            assert_eq!(model.score_documents[0].document, original_document);
+            assert_eq!(
+                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                "opening theme"
+            );
+        });
+        assert!(!project_directory.join("intro.csv").exists());
+        assert!(project_directory.join("opening-theme.csv").is_file());
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4130,6 +4669,24 @@ mod tests {
                 .rows()
                 .len(),
             4
+        );
+
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.parts()[0].length),
+            3
+        );
+        assert_eq!(cx.update(|_, cx| document.read(cx).score().rows().len()), 3);
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.parts()[0].length),
+            2
+        );
+        assert_eq!(cx.update(|_, cx| document.read(cx).score().rows().len()), 2);
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.parts()[0].length),
+            3
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -4455,7 +5012,7 @@ mod tests {
 
         let pane_with_arrangement = cx.debug_bounds("score-view-0").unwrap();
         assert!(cx.debug_bounds("score-arrangement-panel").is_some());
-        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 4);
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 5);
 
         let arrangement_button = cx.update(|_, cx| model.read(cx).score_arrangement_button.clone());
         model.update(cx, |model, cx| {
@@ -4471,14 +5028,14 @@ mod tests {
         model.update(cx, |model, cx| {
             model.on_parts_clicked(parts_button, &button::Clicked, cx);
         });
-        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 3);
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 4);
 
         let score_button = cx.update(|_, cx| model.read(cx).score_button.clone());
         model.update(cx, |model, cx| {
             model.on_score_clicked(score_button, &button::Clicked, cx);
         });
         cx.run_until_parked();
-        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 4);
+        assert_eq!(cx.update(|_, cx| model.read(cx).bar_actions().len()), 5);
         assert!(!cx.update(|_, cx| model.read(cx).ui_state().score_arrangement_visible));
         assert_eq!(
             cx.debug_bounds("score-view-0").unwrap().size.width,
@@ -4597,6 +5154,72 @@ mod tests {
     }
 
     #[gpui::test]
+    fn score_arrangement_context_menu_opens_the_clicked_part_in_a_specific_panel(
+        cx: &mut TestAppContext,
+    ) {
+        let root = temp_root("score-arrangement-context-open-panel");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+
+        let intro = Part::new("intro", 2);
+        let verse = Part::new("verse", 4);
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone(), verse.clone()])
+            .with_sequence(vec![intro.name.clone(), verse.name.clone()]);
+        for part in [&intro, &verse] {
+            PartScore::from_rows(vec![vec![String::new()]; part.length as usize])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+        let ui_state = UiState {
+            workspace: WorkspaceSectionKind::Score,
+            score_pane_count: 2,
+            open_score_parts: vec!["intro".to_string(), "intro".to_string()],
+            active_score_pane: 0,
+            score_arrangement_visible: true,
+        };
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new_with_ui_state(project, project_directory, root.clone(), ui_state, cx)
+        });
+        cx.simulate_resize(size(px(1_200.0), px(700.0)));
+        cx.run_until_parked();
+
+        let verse_occurrence = cx.debug_bounds("loop-arrangement-list-row-1").unwrap();
+        cx.simulate_mouse_down(
+            verse_occurrence.center(),
+            MouseButton::Right,
+            Modifiers::default(),
+        );
+        let open_in_panel_2 = cx
+            .debug_bounds("loop-arrangement-list-context-action-1")
+            .unwrap();
+        cx.simulate_click(open_in_panel_2.center(), Modifiers::default());
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(model.active_score_view, 1);
+            assert_eq!(
+                model.score_views[1]
+                    .part_name
+                    .as_ref()
+                    .map(PartName::as_str),
+                Some("verse")
+            );
+            assert_eq!(
+                model.ui_state().open_score_parts,
+                vec!["intro".to_string(), "verse".to_string()]
+            );
+        });
+        assert!(cx
+            .debug_bounds("loop-arrangement-list-context-menu")
+            .is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
     fn score_arrangement_context_menu_removes_only_the_clicked_occurrence(cx: &mut TestAppContext) {
         let root = temp_root("score-arrangement-context-remove");
         let project_directory = root.join("project");
@@ -4641,7 +5264,7 @@ mod tests {
             .debug_bounds("loop-arrangement-list-context-menu")
             .is_some());
         let remove = cx
-            .debug_bounds("loop-arrangement-list-context-action-0")
+            .debug_bounds("loop-arrangement-list-context-action-1")
             .unwrap();
         cx.simulate_click(remove.center(), Modifiers::default());
         cx.run_until_parked();
@@ -5394,6 +6017,334 @@ mod tests {
             "half-typed"
         );
         assert!(cx.update(|_, cx| restored_document.read(cx).is_dirty()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_history_undoes_and_redoes_score_edits_in_order(cx: &mut TestAppContext) {
+        let root = temp_root("score-history");
+        let part = Part::new("part-a", 2);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        PartScore::from_rows(vec![vec![String::new()], vec![String::new()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "C4".to_string(), cx);
+            document.update_cell(u64::MAX, 0, 0, "D4".to_string(), cx);
+        });
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 1, 0, "E4".to_string(), cx);
+        });
+
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows().to_vec()),
+            vec![vec!["D4".to_string()], vec![String::new()]]
+        );
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows().to_vec()),
+            vec![vec![String::new()], vec![String::new()]]
+        );
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\n\"\"\n\"\"\n"
+        );
+
+        model.update(cx, |model, cx| model.redo(cx));
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows().to_vec()),
+            vec![vec!["D4".to_string()], vec!["E4".to_string()]]
+        );
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nD4\nE4\n"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_history_restores_added_part_files(cx: &mut TestAppContext) {
+        let root = temp_root("part-file-history");
+        let intro = Part::new("intro", 1);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![intro.clone()]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        PartScore::from_rows(vec![vec![String::new()]])
+            .save(&project_directory, &intro, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let parts_workspace = cx.update(|_, cx| model.read(cx).workspace.parts.clone());
+
+        model.update(cx, |model, cx| {
+            model.on_parts_msg(
+                parts_workspace,
+                &parts::Msg::Add {
+                    name: "verse".to_string(),
+                    length: 2,
+                    subdivision_pattern: None,
+                },
+                cx,
+            );
+        });
+        assert!(project_directory.join("verse.csv").is_file());
+        assert!(cx.update(|_, cx| {
+            model
+                .read(cx)
+                .project
+                .part(&PartName::new("verse"))
+                .is_some()
+        }));
+
+        model.update(cx, |model, cx| model.undo(cx));
+        let undo_error = cx.update(|_, cx| model.read(cx).workspace_error.clone());
+        assert!(
+            !project_directory.join("verse.csv").exists(),
+            "undo error: {undo_error:?}"
+        );
+        assert!(cx.update(|_, cx| {
+            model
+                .read(cx)
+                .project
+                .part(&PartName::new("verse"))
+                .is_none()
+        }));
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert!(project_directory.join("verse.csv").is_file());
+        let (restored_part, voices) = cx.update(|_, cx| {
+            let model = model.read(cx);
+            (
+                model.project.part(&PartName::new("verse")).unwrap().clone(),
+                model.project.voices().to_vec(),
+            )
+        });
+        assert_eq!(
+            PartScore::load(&project_directory, &restored_part, &voices)
+                .unwrap()
+                .rows()
+                .len(),
+            2
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_history_redoes_invalid_score_edits_through_recovery(cx: &mut TestAppContext) {
+        let root = temp_root("invalid-score-history");
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        PartScore::from_rows(vec![vec!["C4".to_string()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "half-typed".to_string(), cx);
+        });
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "C4"
+        );
+        assert!(!project_directory.join(".part-a.csv.recovery").exists());
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "half-typed"
+        );
+        assert!(project_directory.join(".part-a.csv.recovery").is_file());
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
+
+        let mut updated_project = cx.update(|_, cx| model.read(cx).project.clone());
+        updated_project.beat_length = 1_200;
+        project::save_project(&project_directory, &updated_project).unwrap();
+        let settings_workspace =
+            cx.update(|_, cx| model.read(cx).workspace.project_settings.clone());
+        model.update(cx, |model, cx| {
+            model.on_settings_msg(
+                settings_workspace,
+                &ProjectSettingsMsg::Saved(Box::new(updated_project)),
+                cx,
+            );
+        });
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 1_200);
+
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 800);
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "half-typed"
+        );
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(project_directory.join(".part-a.csv.recovery").is_file());
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 1_200);
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "half-typed"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_history_undoes_score_edits_after_tuning_invalidates_the_saved_score(
+        cx: &mut TestAppContext,
+    ) {
+        let root = temp_root("tuning-invalid-score-history");
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        PartScore::from_rows(vec![vec!["C4".to_string()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let document = cx.update(|_, cx| model.read(cx).score_documents[0].document.clone());
+
+        let incompatible_tuning = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "embers",
+                BTreeMap::from([("ember".to_string(), FrequencyHz::new(197.3).unwrap())]),
+            )
+            .unwrap(),
+        );
+        let updated_project = cx
+            .update(|_, cx| model.read(cx).project.clone())
+            .with_pitch_system(incompatible_tuning);
+        project::save_project(&project_directory, &updated_project).unwrap();
+        let settings_workspace =
+            cx.update(|_, cx| model.read(cx).workspace.project_settings.clone());
+        model.update(cx, |model, cx| {
+            model.on_settings_msg(
+                settings_workspace,
+                &ProjectSettingsMsg::Saved(Box::new(updated_project)),
+                cx,
+            );
+        });
+        assert_eq!(cx.update(|_, cx| document.read(cx).parse_issues().len()), 1);
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+
+        document.update(cx, |document, cx| {
+            document.update_cell(u64::MAX, 0, 0, "half-typed".to_string(), cx);
+        });
+        model.update(cx, |model, cx| model.undo(cx));
+
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "C4"
+        );
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(!project_directory.join(".part-a.csv.recovery").exists());
+
+        model.update(cx, |model, cx| model.undo(cx));
+        assert!(cx.update(|_, cx| document.read(cx).parse_issues().is_empty()));
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(cx.update(|_, cx| document.read(cx).parse_issues().len()), 1);
+        assert!(!cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert!(!project_directory.join(".part-a.csv.recovery").exists());
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(
+            cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
+            "half-typed"
+        );
+        assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+        assert!(project_directory.join(".part-a.csv.recovery").is_file());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_history_restores_voice_schema_changes(cx: &mut TestAppContext) {
+        let root = temp_root("voice-history");
+        let part = Part::new("part-a", 1);
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![part.clone()]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        PartScore::from_rows(vec![vec!["C4".to_string()]])
+            .save(&project_directory, &part, &project)
+            .unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+        let voices_workspace = cx.update(|_, cx| model.read(cx).workspace.voices.clone());
+
+        model.update(cx, |model, cx| {
+            model.on_voices_msg(
+                voices_workspace,
+                &voices::Msg::Change(voices::Change::Add {
+                    name: "harmony".to_string(),
+                    voice_type: VoiceType::Sin,
+                    position: Point3Meters::default(),
+                }),
+                cx,
+            );
+        });
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.voices().len()), 2);
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead,harmony\nC4,\n"
+        );
+
+        model.update(cx, |model, cx| model.undo(cx));
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.voices().len()), 1);
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead\nC4\n"
+        );
+
+        model.update(cx, |model, cx| model.redo(cx));
+        assert_eq!(cx.update(|_, cx| model.read(cx).project.voices().len()), 2);
+        assert_eq!(
+            fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
+            "lead,harmony\nC4,\n"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
