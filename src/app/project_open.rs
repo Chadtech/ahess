@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     audio_build,
-    part::{self, PartName, PartScore, SubdivisionPattern},
+    part::{self, MajorSubdivision, PartName, PartScore, SubdivisionPattern},
     playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
     style as s,
@@ -1753,7 +1753,14 @@ impl Model {
             SubdivisionDialogMsg::Confirmed {
                 part_name,
                 subdivision_pattern,
-            } => self.save_score_subdivision(dialog, part_name, subdivision_pattern.clone(), cx),
+                major_subdivision,
+            } => self.save_score_subdivision(
+                dialog,
+                part_name,
+                subdivision_pattern.clone(),
+                *major_subdivision,
+                cx,
+            ),
         }
     }
 
@@ -1762,6 +1769,7 @@ impl Model {
         dialog: Entity<SubdivisionDialog>,
         part_name: &PartName,
         subdivision_pattern: Option<SubdivisionPattern>,
+        major_subdivision: Option<MajorSubdivision>,
         cx: &mut Context<Self>,
     ) {
         let Some(current_part) = self.project.part(part_name) else {
@@ -1773,18 +1781,21 @@ impl Model {
             });
             return;
         };
-        if current_part.subdivision_pattern() == subdivision_pattern.as_ref() {
+        if current_part.subdivision_pattern() == subdivision_pattern.as_ref()
+            && current_part.major_subdivision() == major_subdivision
+        {
             self.set_score_overlay(None, cx);
             return;
         }
 
         let unchanged_name = current_part.name.as_str().to_string();
-        match update_project_part(
+        match update_project_part_settings(
             &self.project_directory,
             &mut self.project,
             part_name,
             &unchanged_name,
             subdivision_pattern,
+            major_subdivision,
         ) {
             Ok(part) => {
                 let project = self.project.clone();
@@ -2640,13 +2651,15 @@ impl Model {
                 name,
                 length,
                 subdivision_pattern,
+                major_subdivision,
             } => {
-                match create_configured_project_part(
+                match create_configured_project_part_with_major(
                     &self.project_directory,
                     &mut self.project,
                     name,
                     *length,
                     subdivision_pattern.clone(),
+                    *major_subdivision,
                 ) {
                     Ok(part) => {
                         let added_name = part.name.clone();
@@ -2702,6 +2715,7 @@ impl Model {
                 source,
                 name,
                 subdivision_pattern,
+                major_subdivision,
             } => {
                 if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
@@ -2709,12 +2723,13 @@ impl Model {
                     });
                     return;
                 }
-                match update_project_part(
+                match update_project_part_settings(
                     &self.project_directory,
                     &mut self.project,
                     source,
                     name,
                     subdivision_pattern.clone(),
+                    *major_subdivision,
                 ) {
                     Ok(part) => {
                         let updated_name = part.name.clone();
@@ -3585,12 +3600,31 @@ fn create_project_part(
     create_configured_project_part(project_directory, project, name, length, None)
 }
 
+#[cfg(test)]
 fn create_configured_project_part(
     project_directory: &Path,
     project: &mut Project,
     name: &str,
     length: u32,
     subdivision_pattern: Option<SubdivisionPattern>,
+) -> Result<part::Part, PartChangeError> {
+    create_configured_project_part_with_major(
+        project_directory,
+        project,
+        name,
+        length,
+        subdivision_pattern,
+        None,
+    )
+}
+
+fn create_configured_project_part_with_major(
+    project_directory: &Path,
+    project: &mut Project,
+    name: &str,
+    length: u32,
+    subdivision_pattern: Option<SubdivisionPattern>,
+    major_subdivision: Option<MajorSubdivision>,
 ) -> Result<part::Part, PartChangeError> {
     project::recover_pending_project_update(project_directory)
         .map_err(PartChangeError::Recovery)?;
@@ -3605,7 +3639,8 @@ fn create_configured_project_part(
     let part = created
         .part()
         .clone()
-        .with_subdivision_pattern(subdivision_pattern);
+        .with_subdivision_pattern(subdivision_pattern)
+        .with_major_subdivision(major_subdivision);
     project.add_part(part.clone());
 
     if let Err(source) = project::save_project(project_directory, project) {
@@ -3807,7 +3842,8 @@ fn combine_project_parts(
     let combined_part = created
         .part()
         .clone()
-        .with_subdivision_pattern(parts::combined_subdivision_pattern(&source_parts));
+        .with_subdivision_pattern(parts::combined_subdivision_pattern(&source_parts))
+        .with_major_subdivision(parts::combined_major_subdivision(&source_parts));
     if let Err(source) = combined_score.save(project_directory, &combined_part, project) {
         return Err(PartChangeError::SaveCombinedScore {
             source,
@@ -3859,7 +3895,8 @@ fn export_project_part_rows(
     let exported_part = created
         .part()
         .clone()
-        .with_subdivision_pattern(source_part.subdivision_pattern().cloned());
+        .with_subdivision_pattern(source_part.subdivision_pattern().cloned())
+        .with_major_subdivision(source_part.major_subdivision());
 
     if let Err(source) = exported_score.save(project_directory, &exported_part, project) {
         return Err(PartChangeError::ExportScore {
@@ -3900,12 +3937,34 @@ fn rename_project_part(
     )
 }
 
+#[cfg(test)]
 fn update_project_part(
     project_directory: &Path,
     project: &mut Project,
     source_name: &PartName,
     name: &str,
     subdivision_pattern: Option<SubdivisionPattern>,
+) -> Result<part::Part, PartChangeError> {
+    let major_subdivision = project
+        .part(source_name)
+        .and_then(part::Part::major_subdivision);
+    update_project_part_settings(
+        project_directory,
+        project,
+        source_name,
+        name,
+        subdivision_pattern,
+        major_subdivision,
+    )
+}
+
+fn update_project_part_settings(
+    project_directory: &Path,
+    project: &mut Project,
+    source_name: &PartName,
+    name: &str,
+    subdivision_pattern: Option<SubdivisionPattern>,
+    major_subdivision: Option<MajorSubdivision>,
 ) -> Result<part::Part, PartChangeError> {
     project::recover_pending_project_update(project_directory)
         .map_err(PartChangeError::Recovery)?;
@@ -3920,7 +3979,8 @@ fn update_project_part(
     let renamed_part = renamed
         .part()
         .clone()
-        .with_subdivision_pattern(subdivision_pattern);
+        .with_subdivision_pattern(subdivision_pattern)
+        .with_major_subdivision(major_subdivision);
     let original_sequence = project.sequence().to_vec();
     let updated_sequence = original_sequence
         .iter()
@@ -4010,7 +4070,10 @@ mod tests {
     use crate::{
         acoustics::Point3Meters,
         audio_build::{planned_audio_files, BuildSampleRate},
-        part::{self, Part, PartName, PartRowEdit, PartScore, ScoreRowRange, SubdivisionPattern},
+        part::{
+            self, MajorSubdivision, Part, PartName, PartRowEdit, PartScore, ScoreRowRange,
+            SubdivisionPattern,
+        },
         pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
         playback::BeatRange,
         project::{self, Project, Voice, VoiceType},
@@ -4578,6 +4641,7 @@ mod tests {
                     source: intro.name,
                     name: "opening theme".to_string(),
                     subdivision_pattern: Some(SubdivisionPattern::new([4, 3, 3]).unwrap()),
+                    major_subdivision: None,
                 },
                 cx,
             );
@@ -5533,6 +5597,7 @@ mod tests {
                 &score::SubdivisionDialogMsg::Confirmed {
                     part_name: part.name.clone(),
                     subdivision_pattern: Some(SubdivisionPattern::new([2, 3]).unwrap()),
+                    major_subdivision: Some(MajorSubdivision::new(12).unwrap()),
                 },
                 cx,
             );
@@ -5549,6 +5614,15 @@ mod tests {
                     .subdivisions()
                     .collect::<Vec<_>>(),
                 [2, 3]
+            );
+            assert_eq!(
+                document
+                    .read(cx)
+                    .part()
+                    .major_subdivision()
+                    .unwrap()
+                    .beats(),
+                12
             );
             assert!(document.read(cx).is_dirty());
             assert_eq!(document.read(cx).score().rows()[0][0], "C4");
@@ -5573,6 +5647,16 @@ mod tests {
                 .subdivisions()
                 .collect::<Vec<_>>(),
             [2, 3]
+        );
+        assert_eq!(
+            project::load_project(&project_directory)
+                .unwrap()
+                .project
+                .parts()[0]
+                .major_subdivision()
+                .unwrap()
+                .beats(),
+            12
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -6139,6 +6223,7 @@ mod tests {
                     name: "verse".to_string(),
                     length: 2,
                     subdivision_pattern: None,
+                    major_subdivision: None,
                 },
                 cx,
             );

@@ -405,6 +405,11 @@ impl Project {
                 }
                 contents.push_str("]\n");
             }
+            if let Some(major_subdivision) = part.major_subdivision() {
+                contents.push_str("major_subdivision = ");
+                contents.push_str(&major_subdivision.to_string());
+                contents.push('\n');
+            }
         }
 
         contents
@@ -2195,14 +2200,15 @@ mod tests {
     }
 
     #[test]
-    fn subdivision_patterns_round_trip_through_project_config() {
+    fn subdivision_levels_round_trip_through_project_config() {
         let root = temp_root("subdivision-pattern-round-trip");
         let mut project = Project::new("test", 800, 0, Seed::new(1));
         let project_directory = create_project(&root, &project).unwrap();
         add_test_part(&project_directory, &mut project, "intro", 8);
         project.parts[0] = project.parts[0]
             .clone()
-            .with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()));
+            .with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()))
+            .with_major_subdivision(Some("16".parse().unwrap()));
         save_project(&project_directory, &project).unwrap();
 
         assert_eq!(load_project(&project_directory).unwrap().project, project);

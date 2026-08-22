@@ -53,6 +53,8 @@ pub struct Part {
     pub length: u32,
     #[serde(default)]
     subdivision_pattern: Option<SubdivisionPattern>,
+    #[serde(default)]
+    major_subdivision: Option<MajorSubdivision>,
 }
 
 impl Part {
@@ -61,6 +63,7 @@ impl Part {
             name: name.into(),
             length,
             subdivision_pattern: None,
+            major_subdivision: None,
         }
     }
 
@@ -76,17 +79,117 @@ impl Part {
         self.subdivision_pattern.as_ref()
     }
 
+    pub fn with_major_subdivision(mut self, major_subdivision: Option<MajorSubdivision>) -> Self {
+        self.major_subdivision = major_subdivision;
+        self
+    }
+
+    pub fn major_subdivision(&self) -> Option<MajorSubdivision> {
+        self.major_subdivision
+    }
+
     pub fn beat_label(&self, beat_index: usize) -> String {
-        self.subdivision_pattern.as_ref().map_or_else(
-            || (beat_index + 1).to_string(),
-            |pattern| pattern.beat_position(beat_index).label(),
-        )
+        match (self.major_subdivision, self.subdivision_pattern.as_ref()) {
+            (Some(major), Some(pattern)) => {
+                let position = major.beat_position(beat_index);
+                pattern
+                    .beat_position(position.beat_index)
+                    .label_in_major(position.group_index)
+            }
+            (Some(major), None) => major.beat_position(beat_index).label(),
+            (None, Some(pattern)) => pattern.beat_position(beat_index).label(),
+            (None, None) => (beat_index + 1).to_string(),
+        }
     }
 
     pub fn beat_is_highlighted(&self, beat_index: usize) -> bool {
-        self.subdivision_pattern
-            .as_ref()
-            .is_some_and(|pattern| pattern.beat_position(beat_index).group_index % 2 == 1)
+        self.subdivision_pattern.as_ref().is_some_and(|pattern| {
+            let beat_index = self.major_subdivision.map_or(beat_index, |major| {
+                major.beat_position(beat_index).beat_index
+            });
+            pattern.beat_position(beat_index).group_index % 2 == 1
+        })
+    }
+
+    pub fn beat_starts_major_subdivision(&self, beat_index: usize) -> bool {
+        self.major_subdivision
+            .is_some_and(|major| beat_index % major.beats() as usize == 0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(transparent)]
+pub struct MajorSubdivision(NonZeroU32);
+
+impl MajorSubdivision {
+    pub fn new(beats: u32) -> Result<Self, InvalidMajorSubdivision> {
+        NonZeroU32::new(beats)
+            .map(Self)
+            .ok_or(InvalidMajorSubdivision::Zero)
+    }
+
+    pub fn beats(self) -> u32 {
+        self.0.get()
+    }
+
+    fn beat_position(self, beat_index: usize) -> MajorSubdivisionPosition {
+        let beats = self.0.get() as usize;
+        MajorSubdivisionPosition {
+            group_index: beat_index / beats,
+            beat_index: beat_index % beats,
+        }
+    }
+}
+
+impl fmt::Display for MajorSubdivision {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl FromStr for MajorSubdivision {
+    type Err = InvalidMajorSubdivision;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| InvalidMajorSubdivision::NotWholeNumber(value.trim().to_string()))
+            .and_then(Self::new)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvalidMajorSubdivision {
+    NotWholeNumber(String),
+    Zero,
+}
+
+impl fmt::Display for InvalidMajorSubdivision {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotWholeNumber(value) => {
+                write!(
+                    formatter,
+                    "major subdivision {value:?} must be a whole number"
+                )
+            }
+            Self::Zero => formatter.write_str("major subdivision must be at least one beat"),
+        }
+    }
+}
+
+impl Error for InvalidMajorSubdivision {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MajorSubdivisionPosition {
+    group_index: usize,
+    beat_index: usize,
+}
+
+impl MajorSubdivisionPosition {
+    fn label(self) -> String {
+        format!("{}.{}", self.group_index + 1, self.beat_index + 1)
     }
 }
 
@@ -216,6 +319,15 @@ struct SubdivisionPosition {
 impl SubdivisionPosition {
     fn label(self) -> String {
         format!("{}.{}", self.group_index + 1, self.subdivision_index + 1)
+    }
+
+    fn label_in_major(self, major_group_index: usize) -> String {
+        format!(
+            "{}.{}.{}",
+            major_group_index + 1,
+            self.group_index + 1,
+            self.subdivision_index + 1
+        )
     }
 }
 
@@ -1003,7 +1115,8 @@ pub fn duplicate_part_file(
 
     Ok(CreatedPartFile {
         part: Part::new(part_name, source_part.length)
-            .with_subdivision_pattern(source_part.subdivision_pattern().cloned()),
+            .with_subdivision_pattern(source_part.subdivision_pattern().cloned())
+            .with_major_subdivision(source_part.major_subdivision()),
         path,
     })
 }
@@ -1052,7 +1165,8 @@ pub fn rename_part_file(
 
     Ok(RenamedPartFile {
         part: Part::new(part_name, source_part.length)
-            .with_subdivision_pattern(source_part.subdivision_pattern().cloned()),
+            .with_subdivision_pattern(source_part.subdivision_pattern().cloned())
+            .with_major_subdivision(source_part.major_subdivision()),
         original_path,
         renamed_path,
     })
@@ -1467,9 +1581,9 @@ mod tests {
 
     use super::{
         available_deleted_path, create_part_file, csv_file_name, duplicate_part_file,
-        rename_part_file, soft_delete_part_file, DeletedPartPathError, Part, PartName, PartRowEdit,
-        PartRowEditError, PartScore, ScoreRowIndex, ScoreRowRange, SubdivisionPattern,
-        DELETED_PARTS_DIRECTORY,
+        rename_part_file, soft_delete_part_file, DeletedPartPathError, MajorSubdivision, Part,
+        PartName, PartRowEdit, PartRowEditError, PartScore, ScoreRowIndex, ScoreRowRange,
+        SubdivisionPattern, DELETED_PARTS_DIRECTORY,
     };
     use crate::{
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
@@ -1516,6 +1630,24 @@ mod tests {
         assert!(SubdivisionPattern::new([4, 0, 3]).is_err());
         assert!("4,,3".parse::<SubdivisionPattern>().is_err());
         assert!("4, 1.5".parse::<SubdivisionPattern>().is_err());
+    }
+
+    #[test]
+    fn major_subdivisions_restart_labels_and_smaller_group_highlights() {
+        let part = Part::new("long part", 21)
+            .with_subdivision_pattern(Some(SubdivisionPattern::new([4]).unwrap()))
+            .with_major_subdivision(Some(MajorSubdivision::new(16).unwrap()));
+
+        assert_eq!(part.beat_label(0), "1.1.1");
+        assert_eq!(part.beat_label(15), "1.4.4");
+        assert_eq!(part.beat_label(16), "2.1.1");
+        assert!(part.beat_starts_major_subdivision(0));
+        assert!(!part.beat_starts_major_subdivision(15));
+        assert!(part.beat_starts_major_subdivision(16));
+        assert!(!part.beat_is_highlighted(16));
+        assert!(part.beat_is_highlighted(20));
+        assert!("0".parse::<MajorSubdivision>().is_err());
+        assert!("1.5".parse::<MajorSubdivision>().is_err());
     }
 
     #[test]

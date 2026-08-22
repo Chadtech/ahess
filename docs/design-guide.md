@@ -118,6 +118,9 @@ or when it defines how a shared component is used.
 - use the data grid's custom row-label input when the domain gives rows a
   structured position such as a beat subdivision; keep row labels concise and
   derived from domain state.
+- identify a structural downbeat within a long score by tinting its full data
+  row without changing row geometry. Keep that tint independent of selection,
+  validation, and playback outlines.
 - give each independently scrollable grid view its own `DataGridScrollHandle`;
   grid rows have a uniform height and the component renders only the visible
   rows.

@@ -11,8 +11,8 @@ use gpui::{
 
 use crate::{
     part::{
-        Part, PartRowEdit, PartRowEditError, PartScore, ScoreError, ScoreRowIndex, ScoreRowRange,
-        SubdivisionPattern,
+        MajorSubdivision, Part, PartRowEdit, PartRowEditError, PartScore, ScoreError,
+        ScoreRowIndex, ScoreRowRange, SubdivisionPattern,
     },
     project::Project,
     style as s,
@@ -631,6 +631,7 @@ pub enum SubdivisionDialogMsg {
     Confirmed {
         part_name: crate::part::PartName,
         subdivision_pattern: Option<SubdivisionPattern>,
+        major_subdivision: Option<MajorSubdivision>,
     },
     Cancelled,
 }
@@ -638,6 +639,7 @@ pub enum SubdivisionDialogMsg {
 pub struct SubdivisionDialog {
     part_name: crate::part::PartName,
     subdivision_pattern: Entity<TextInput>,
+    major_subdivision: Entity<TextInput>,
     close_button: Entity<Button>,
     cancel_button: Entity<Button>,
     save_button: Entity<Button>,
@@ -653,9 +655,14 @@ impl SubdivisionDialog {
             .map(ToString::to_string)
             .unwrap_or_default();
         let subdivision_pattern = cx.new(|cx| TextInput::new(value, "4 or 4, 3, 3", cx));
+        let major_value = part
+            .major_subdivision()
+            .map(|major| major.to_string())
+            .unwrap_or_default();
+        let major_subdivision = cx.new(|cx| TextInput::new(major_value, "12 or 16", cx));
         let close_button = cx.new(|_| Button::x("close-score-subdivision"));
         let cancel_button = cx.new(|_| Button::new("cancel-score-subdivision", "cancel"));
-        let save_button = cx.new(|_| Button::new("save-score-subdivision", "save pattern"));
+        let save_button = cx.new(|_| Button::new("save-score-subdivision", "save subdivisions"));
 
         cx.subscribe(&close_button, Self::on_cancel_clicked)
             .detach();
@@ -666,6 +673,7 @@ impl SubdivisionDialog {
         Self {
             part_name: part.name.clone(),
             subdivision_pattern,
+            major_subdivision,
             close_button,
             cancel_button,
             save_button,
@@ -683,12 +691,18 @@ impl SubdivisionDialog {
     }
 
     fn on_save_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        match parse_optional_subdivision_pattern(&self.subdivision_pattern.read(cx).value()) {
-            Ok(subdivision_pattern) => cx.emit(SubdivisionDialogMsg::Confirmed {
-                part_name: self.part_name.clone(),
-                subdivision_pattern,
-            }),
-            Err(error) => {
+        match (
+            parse_optional_subdivision_pattern(&self.subdivision_pattern.read(cx).value()),
+            parse_optional_major_subdivision(&self.major_subdivision.read(cx).value()),
+        ) {
+            (Ok(subdivision_pattern), Ok(major_subdivision)) => {
+                cx.emit(SubdivisionDialogMsg::Confirmed {
+                    part_name: self.part_name.clone(),
+                    subdivision_pattern,
+                    major_subdivision,
+                })
+            }
+            (Err(error), _) | (_, Err(error)) => {
                 self.error = Some(error);
                 cx.notify();
             }
@@ -718,8 +732,12 @@ impl Render for SubdivisionDialog {
                     "subdivision pattern (optional)",
                     self.subdivision_pattern.clone(),
                 ))
+                .child(field_group(
+                    "major subdivision in beats (optional)",
+                    self.major_subdivision.clone(),
+                ))
                 .child(div().text_color(s::TEXT_DEFAULT).child(
-                    "use comma-separated beat groups; leave blank for sequential beat numbers",
+                    "major subdivisions restart the smaller beat groups, such as 4 within 16",
                 ))
                 .children(self.error.clone().map(error_message))
                 .child(
@@ -734,7 +752,7 @@ impl Render for SubdivisionDialog {
                 .w(s::S10)
                 .bg(s::GRAY2)
                 .child(title_bar(
-                    "edit subdivision pattern",
+                    "edit subdivisions",
                     Some(self.close_button.clone()),
                 ))
                 .child(content),
@@ -752,6 +770,28 @@ fn parse_optional_subdivision_pattern(value: &str) -> Result<Option<SubdivisionP
         .parse::<SubdivisionPattern>()
         .map(Some)
         .map_err(|error| error.to_string())
+}
+
+fn parse_optional_major_subdivision(value: &str) -> Result<Option<MajorSubdivision>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse::<MajorSubdivision>()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn score_cell_background(part: &Part, row: usize) -> gpui::Rgba {
+    if part.beat_starts_major_subdivision(row) {
+        s::GREEN5
+    } else if part.beat_is_highlighted(row) {
+        s::GREEN4
+    } else {
+        s::GREEN3
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -908,7 +948,7 @@ impl ScoreAction {
     fn label(self) -> &'static str {
         match self {
             Self::EditPart => "edit part",
-            Self::EditSubdivision => "edit subdivision pattern",
+            Self::EditSubdivision => "edit subdivisions",
             Self::LoopPart => "loop part",
             Self::ExportRows => "export selected rows as part",
             Self::ClearRows => "clear selected rows",
@@ -1060,11 +1100,7 @@ impl ScoreEditor {
                 row.iter()
                     .enumerate()
                     .map(|(column_index, value)| {
-                        let background = if part.beat_is_highlighted(row_index) {
-                            s::GREEN4
-                        } else {
-                            s::GREEN3
-                        };
+                        let background = score_cell_background(part, row_index);
                         let input = cx.new(|cx| {
                             TextInput::new(value.clone(), "", cx).with_background(background)
                         });
@@ -1356,11 +1392,7 @@ impl ScoreEditor {
                     self.sync_actions(cx);
                 } else {
                     for (row_index, row) in self.cells.iter().enumerate() {
-                        let background = if part.beat_is_highlighted(row_index) {
-                            s::GREEN4
-                        } else {
-                            s::GREEN3
-                        };
+                        let background = score_cell_background(&part, row_index);
                         for (column_index, cell) in row.iter().enumerate() {
                             let value: SharedString =
                                 score.rows()[row_index][column_index].clone().into();
@@ -1375,11 +1407,7 @@ impl ScoreEditor {
             DocumentEvent::PartSettingsChanged => {
                 let part = self.document.read(cx).part().clone();
                 for (row_index, row) in self.cells.iter().enumerate() {
-                    let background = if part.beat_is_highlighted(row_index) {
-                        s::GREEN4
-                    } else {
-                        s::GREEN3
-                    };
+                    let background = score_cell_background(&part, row_index);
                     for cell in row {
                         cell.update(cx, |cell, cx| cell.set_background(background, cx));
                     }
@@ -1551,8 +1579,8 @@ mod tests {
     };
 
     use super::{
-        parse_optional_subdivision_pattern, DocumentEvent, ScoreAction, ScoreCellEdit,
-        ScoreDocument, ScoreEditor,
+        parse_optional_major_subdivision, parse_optional_subdivision_pattern, DocumentEvent,
+        ScoreAction, ScoreCellEdit, ScoreDocument, ScoreEditor,
     };
     use crate::{
         part::{Part, PartScore, ScoreRowRange},
@@ -1576,18 +1604,30 @@ mod tests {
         assert!(parse_optional_subdivision_pattern("4,,3").is_err());
         assert!(parse_optional_subdivision_pattern("4, 0").is_err());
         assert!(parse_optional_subdivision_pattern("4, 1.5").is_err());
+        assert!(parse_optional_major_subdivision(" ").unwrap().is_none());
+        assert_eq!(
+            parse_optional_major_subdivision("16")
+                .unwrap()
+                .unwrap()
+                .beats(),
+            16
+        );
+        assert!(parse_optional_major_subdivision("0").is_err());
+        assert!(parse_optional_major_subdivision("4.5").is_err());
     }
 
     #[gpui::test]
     fn subdivision_dialog_starts_with_the_current_pattern_and_keeps_invalid_input_open(
         cx: &mut TestAppContext,
     ) {
-        let part =
-            Part::new("intro", 10).with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()));
+        let part = Part::new("intro", 10)
+            .with_subdivision_pattern(Some("4, 3, 3".parse().unwrap()))
+            .with_major_subdivision(Some("16".parse().unwrap()));
         let (dialog, cx) = cx.add_window_view(|_, cx| super::SubdivisionDialog::new(&part, cx));
         let (input, save_button) = cx.update(|_, cx| {
             let dialog = dialog.read(cx);
             assert_eq!(dialog.subdivision_pattern.read(cx).value(), "4, 3, 3");
+            assert_eq!(dialog.major_subdivision.read(cx).value(), "16");
             (
                 dialog.subdivision_pattern.clone(),
                 dialog.save_button.clone(),
@@ -1719,7 +1759,9 @@ mod tests {
 
     #[gpui::test]
     fn score_cells_alternate_backgrounds_by_subdivision_group(cx: &mut TestAppContext) {
-        let part = Part::new("part-a", 6).with_subdivision_pattern(Some("2".parse().unwrap()));
+        let part = Part::new("part-a", 6)
+            .with_subdivision_pattern(Some("2".parse().unwrap()))
+            .with_major_subdivision(Some("4".parse().unwrap()));
         let project = Project::new("test project", 20_000, 32, Seed::new(12))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
@@ -1742,11 +1784,11 @@ mod tests {
         assert_eq!(
             backgrounds,
             [
-                crate::style::GREEN3,
+                crate::style::GREEN5,
                 crate::style::GREEN3,
                 crate::style::GREEN4,
                 crate::style::GREEN4,
-                crate::style::GREEN3,
+                crate::style::GREEN5,
                 crate::style::GREEN3,
             ]
         );

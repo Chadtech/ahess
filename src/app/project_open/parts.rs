@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use crate::{
-    part::{Part, PartName, SubdivisionPattern},
+    part::{MajorSubdivision, Part, PartName, SubdivisionPattern},
     style as s,
     view::{
         action_menu::{self, ActionMenu},
@@ -23,6 +23,7 @@ pub enum Msg {
         name: String,
         length: u32,
         subdivision_pattern: Option<SubdivisionPattern>,
+        major_subdivision: Option<MajorSubdivision>,
     },
     Duplicate {
         source: PartName,
@@ -32,6 +33,7 @@ pub enum Msg {
         source: PartName,
         name: String,
         subdivision_pattern: Option<SubdivisionPattern>,
+        major_subdivision: Option<MajorSubdivision>,
     },
     DeleteRequested {
         name: PartName,
@@ -183,6 +185,7 @@ enum View {
         name: Entity<TextInput>,
         length: Entity<TextInput>,
         subdivision_pattern: Entity<TextInput>,
+        major_subdivision: Entity<TextInput>,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
         form_error: Option<String>,
@@ -198,6 +201,7 @@ enum View {
         source: PartName,
         name: Entity<TextInput>,
         subdivision_pattern: Entity<TextInput>,
+        major_subdivision: Entity<TextInput>,
         cancel_button: Entity<Button>,
         save_button: Entity<Button>,
         form_error: Option<String>,
@@ -394,6 +398,11 @@ impl PartsWorkspace {
             .unwrap_or_default();
         let subdivision_pattern =
             cx.new(|cx| TextInput::new(subdivision_pattern, "4 or 4, 3, 3", cx));
+        let major_subdivision = part
+            .major_subdivision()
+            .map(|major| major.to_string())
+            .unwrap_or_default();
+        let major_subdivision = cx.new(|cx| TextInput::new(major_subdivision, "12 or 16", cx));
         let cancel_button = cx.new(|_| Button::new("cancel-edit-part", "cancel"));
         let save_button = cx.new(|_| Button::new("confirm-edit-part", "save part"));
 
@@ -405,6 +414,7 @@ impl PartsWorkspace {
             source,
             name,
             subdivision_pattern,
+            major_subdivision,
             cancel_button,
             save_button,
             form_error: None,
@@ -415,6 +425,7 @@ impl PartsWorkspace {
         let name = cx.new(|cx| TextInput::new("", "intro", cx));
         let length = cx.new(|cx| TextInput::new("16", "16", cx));
         let subdivision_pattern = cx.new(|cx| TextInput::new("", "4 or 4, 3, 3", cx));
+        let major_subdivision = cx.new(|cx| TextInput::new("", "12 or 16", cx));
         let cancel_button = cx.new(|_| Button::new("cancel-add-part", "cancel"));
         let add_button = cx.new(|_| Button::new("confirm-add-part", "add part"));
 
@@ -426,6 +437,7 @@ impl PartsWorkspace {
             name,
             length,
             subdivision_pattern,
+            major_subdivision,
             cancel_button,
             add_button,
             form_error: None,
@@ -569,6 +581,7 @@ impl PartsWorkspace {
             name,
             length,
             subdivision_pattern,
+            major_subdivision,
             ..
         } = &self.view
         else {
@@ -577,16 +590,19 @@ impl PartsWorkspace {
         let name = name.read(cx).value();
         let length = length.read(cx).value();
         let subdivision_pattern = subdivision_pattern.read(cx).value();
+        let major_subdivision = major_subdivision.read(cx).value();
         match (
             parse_part_length(&length),
             parse_subdivision_pattern(&subdivision_pattern),
+            parse_major_subdivision(&major_subdivision),
         ) {
-            (Ok(length), Ok(subdivision_pattern)) => cx.emit(Msg::Add {
+            (Ok(length), Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Msg::Add {
                 name,
                 length,
                 subdivision_pattern,
+                major_subdivision,
             }),
-            (Err(error), _) | (_, Err(error)) => {
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
                 if let View::Add { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
@@ -605,19 +621,25 @@ impl PartsWorkspace {
             source,
             name,
             subdivision_pattern,
+            major_subdivision,
             ..
         } = &self.view
         else {
             return;
         };
         let subdivision_pattern = subdivision_pattern.read(cx).value();
-        match parse_subdivision_pattern(&subdivision_pattern) {
-            Ok(subdivision_pattern) => cx.emit(Msg::Update {
+        let major_subdivision = major_subdivision.read(cx).value();
+        match (
+            parse_subdivision_pattern(&subdivision_pattern),
+            parse_major_subdivision(&major_subdivision),
+        ) {
+            (Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Msg::Update {
                 source: source.clone(),
                 name: name.read(cx).value(),
                 subdivision_pattern,
+                major_subdivision,
             }),
-            Err(error) => {
+            (Err(error), _) | (_, Err(error)) => {
                 if let View::Edit { form_error, .. } = &mut self.view {
                     *form_error = Some(error);
                     cx.notify();
@@ -1252,6 +1274,7 @@ impl Render for PartsWorkspace {
                 name,
                 length,
                 subdivision_pattern,
+                major_subdivision,
                 cancel_button,
                 add_button,
                 form_error,
@@ -1265,6 +1288,10 @@ impl Render for PartsWorkspace {
                     .child(field_group(
                         "subdivision pattern (optional)",
                         subdivision_pattern.clone(),
+                    ))
+                    .child(field_group(
+                        "major subdivision in beats (optional)",
+                        major_subdivision.clone(),
                     ));
                 let form = if let Some(error) = form_error {
                     form.child(error_message(error.clone()))
@@ -1310,6 +1337,7 @@ impl Render for PartsWorkspace {
                 source,
                 name,
                 subdivision_pattern,
+                major_subdivision,
                 cancel_button,
                 save_button,
                 form_error,
@@ -1327,6 +1355,10 @@ impl Render for PartsWorkspace {
                     .child(field_group(
                         "subdivision pattern (optional)",
                         subdivision_pattern.clone(),
+                    ))
+                    .child(field_group(
+                        "major subdivision in beats (optional)",
+                        major_subdivision.clone(),
                     ));
                 let form = if let Some(error) = form_error {
                     form.child(error_message(error.clone()))
@@ -1714,6 +1746,20 @@ fn part_details(
                                 .flex()
                                 .flex_col()
                                 .gap_1()
+                                .child(div().text_color(s::TEXT_HEADER).child("major subdivision"))
+                                .child(
+                                    div().text_color(s::TEXT_DEFAULT).child(
+                                        part.major_subdivision()
+                                            .map(|major| format!("{} beats", major.beats()))
+                                            .unwrap_or_else(|| "none".to_string()),
+                                    ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
                                 .child(
                                     div()
                                         .text_color(s::TEXT_HEADER)
@@ -1944,6 +1990,14 @@ pub(super) fn combined_subdivision_pattern(parts: &[Part]) -> Option<Subdivision
         .then(|| first.clone())
 }
 
+pub(super) fn combined_major_subdivision(parts: &[Part]) -> Option<MajorSubdivision> {
+    let first = parts.first()?.major_subdivision()?;
+    parts
+        .iter()
+        .all(|part| part.major_subdivision() == Some(first))
+        .then_some(first)
+}
+
 fn find_part<'a>(parts: &'a [Part], name: &PartName) -> Option<&'a Part> {
     parts
         .iter()
@@ -1970,6 +2024,18 @@ fn parse_subdivision_pattern(value: &str) -> Result<Option<SubdivisionPattern>, 
 
     value
         .parse::<SubdivisionPattern>()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn parse_major_subdivision(value: &str) -> Result<Option<MajorSubdivision>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse::<MajorSubdivision>()
         .map(Some)
         .map_err(|error| error.to_string())
 }
