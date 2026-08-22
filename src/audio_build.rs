@@ -468,9 +468,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.file_count, 3);
-        assert_eq!(result.frame_count, 16);
+        assert_eq!(result.frame_count, 768);
         assert_eq!(result.sample_rate, 48_000);
-        assert_eq!(result.duration_seconds(), 16.0 / 48_000.0);
+        assert_eq!(result.duration_seconds(), 0.016);
         let plans = planned_audio_files(&project);
         assert_eq!(plans[0].file_name, "arc-light-mix.wav");
         assert_eq!(plans[1].file_name, "arc-light-voice-01-lead-voice.wav");
@@ -480,7 +480,7 @@ mod tests {
             .collect::<Vec<_>>();
         for file in &files {
             assert_eq!(file.sample_rate, 48_000);
-            assert_eq!(file.samples.len(), 32);
+            assert_eq!(file.samples.len(), 1_536);
         }
         for sample_index in 0..files[0].samples.len() {
             let stem_sum = files[1].samples[sample_index] + files[2].samples[sample_index];

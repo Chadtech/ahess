@@ -455,8 +455,8 @@ fn selected_project_details(project: &ProjectEntry) -> gpui::Div {
         .child(div().flex().flex_col().gap_4().children([
             metric(
                 "open-project-beat-length",
-                "beat length",
-                project.project.beat_length.to_string(),
+                "beat duration (ms)",
+                project.project.beat_duration_millis.get().to_string(),
             ),
             metric(
                 "open-project-timing-variance",

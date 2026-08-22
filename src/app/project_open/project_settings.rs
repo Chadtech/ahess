@@ -6,7 +6,7 @@ use crate::{
     app::room_form::RoomFields,
     convolution::{self, WavMetadata},
     pitch_system::PitchSystem,
-    project::{self, FrequencyVariance, Project, VoiceConvolutionChange},
+    project::{self, BeatDurationMillis, FrequencyVariance, Project, VoiceConvolutionChange},
     seed::Seed,
     style as s,
     tuning_system::{self, TuningSystem},
@@ -254,13 +254,11 @@ impl ProjectSettingsWorkspace {
             ));
         }
 
-        let beat_length =
-            parse_u32_field("beat length", &self.fields.beat_length.read(cx).value())?;
-        if beat_length == 0 {
-            return Err(ProjectSettingsFormError::InvalidField(
-                "beat length must be greater than zero".to_string(),
-            ));
-        }
+        let beat_duration_millis = BeatDurationMillis::new(parse_u32_field(
+            "beat duration",
+            &self.fields.beat_duration.read(cx).value(),
+        )?)
+        .map_err(|error| ProjectSettingsFormError::InvalidField(error.to_string()))?;
 
         let timing_variance =
             parse_u32_field("timing variance", &self.fields.variance.read(cx).value())?;
@@ -271,7 +269,7 @@ impl ProjectSettingsWorkspace {
 
         let mut project = self.original_project.clone();
         project.name = name;
-        project.beat_length = beat_length;
+        project.beat_duration_millis = beat_duration_millis;
         project.timing_variance = timing_variance;
         project.set_frequency_variance(frequency_variance);
         project.seed = seed;
@@ -303,8 +301,8 @@ impl ProjectSettingsWorkspace {
     pub fn is_dirty(&self, cx: &App) -> bool {
         self.fields.project_name.read(cx).value() != self.original_project.name
             || self.fields.description.read(cx).value() != self.original_project.description
-            || self.fields.beat_length.read(cx).value()
-                != self.original_project.beat_length.to_string()
+            || self.fields.beat_duration.read(cx).value()
+                != self.original_project.beat_duration_millis.get().to_string()
             || self.fields.variance.read(cx).value()
                 != self.original_project.timing_variance.to_string()
             || self.fields.frequency_variance.read(cx).value()
@@ -518,7 +516,7 @@ impl ImpulseResponseSelection {
 struct ProjectSettingsFields {
     project_name: Entity<TextInput>,
     description: Entity<TextInput>,
-    beat_length: Entity<TextInput>,
+    beat_duration: Entity<TextInput>,
     variance: Entity<TextInput>,
     frequency_variance: Entity<TextInput>,
     seed: Entity<TextInput>,
@@ -538,7 +536,8 @@ impl ProjectSettingsFields {
         Self {
             project_name: cx.new(|cx| TextInput::new(project.name.clone(), "", cx)),
             description: cx.new(|cx| TextInput::new(project.description.clone(), "", cx)),
-            beat_length: cx.new(|cx| TextInput::new(project.beat_length.to_string(), "", cx)),
+            beat_duration: cx
+                .new(|cx| TextInput::new(project.beat_duration_millis.get().to_string(), "", cx)),
             variance: cx.new(|cx| TextInput::new(project.timing_variance.to_string(), "", cx)),
             frequency_variance: cx
                 .new(|cx| TextInput::new(project.frequency_variance().ratio().to_string(), "", cx)),
@@ -580,7 +579,7 @@ fn project_settings_workspace(
         .child(control_group("tuning system", fields.tuning.clone()))
         .child(section_label("generation settings"))
         .child(div().flex().gap_4().children([
-            field_group("beat length (samples)", fields.beat_length.clone()),
+            field_group("beat duration (ms)", fields.beat_duration.clone()),
             field_group("timing variance (samples)", fields.variance.clone()),
         ]))
         .child(div().flex().gap_4().children([

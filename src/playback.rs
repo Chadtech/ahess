@@ -17,7 +17,7 @@ use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
-    project::{FrequencyVariance, Project, VoiceId, VoiceType},
+    project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
     seed::{standard_normal, Seed},
 };
 
@@ -71,7 +71,7 @@ impl Playback {
 
 #[derive(Clone, Debug)]
 pub struct PlaybackLoop {
-    beat_length: u32,
+    beat_duration_millis: BeatDurationMillis,
     voices: Vec<PlaybackVoice>,
     acoustic_scene: AcousticScene,
     beat_count: usize,
@@ -173,11 +173,6 @@ impl PlaybackLoop {
         rows: Vec<Vec<Option<FrequencyHz>>>,
         first_arrangement_beat: u64,
     ) -> Result<Self, PlaybackError> {
-        if project.beat_length == 0 {
-            return Err(PlaybackError::new(
-                "beat length must be at least one sample",
-            ));
-        }
         if project.voices().is_empty() {
             return Err(PlaybackError::new(
                 "add a sin or saw voice before starting playback",
@@ -187,9 +182,7 @@ impl PlaybackLoop {
             return Err(PlaybackError::new("a loop must contain at least one beat"));
         }
 
-        let maximum_delay = project
-            .timing_variance
-            .min(project.beat_length.saturating_sub(1));
+        let maximum_delay = project.timing_variance;
         let voices = project
             .voices()
             .iter()
@@ -230,7 +223,7 @@ impl PlaybackLoop {
             .collect::<Result<Vec<_>, PlaybackError>>()?;
 
         Ok(Self {
-            beat_length: project.beat_length,
+            beat_duration_millis: project.beat_duration_millis,
             voices,
             acoustic_scene: project.acoustic_scene().clone(),
             beat_count: rows.len(),
@@ -388,6 +381,7 @@ where
 
 struct AudioEngine {
     sample_rate: f32,
+    beat_length_samples: u32,
     voice_runtimes: Vec<VoiceRuntime>,
     mix_gain: GainRamp,
     beat_index: usize,
@@ -412,9 +406,12 @@ impl AudioEngine {
             .iter()
             .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
             .collect();
+        let beat_length_samples =
+            beat_length_samples(playback_loop.beat_duration_millis, sample_rate);
 
         Self {
             sample_rate,
+            beat_length_samples,
             voice_runtimes,
             mix_gain: GainRamp::new(MASTER_GAIN),
             beat_index: 0,
@@ -482,13 +479,15 @@ impl AudioEngine {
             })
             .collect();
         self.playback_loop = playback_loop;
+        self.beat_length_samples =
+            beat_length_samples(self.playback_loop.beat_duration_millis, self.sample_rate);
         if range_changed {
             self.beat_index = 0;
             self.sample_in_beat = 0;
             self.publish_playhead();
         } else {
             self.beat_index %= self.playback_loop.beat_count;
-            self.sample_in_beat %= self.playback_loop.beat_length;
+            self.sample_in_beat %= self.beat_length_samples;
         }
     }
 
@@ -502,7 +501,7 @@ impl AudioEngine {
                 voice,
                 Some(self.beat_index),
                 self.sample_in_beat,
-                self.playback_loop.beat_length,
+                self.beat_length_samples,
                 self.sample_rate,
             );
             mixed.add(contribution);
@@ -523,7 +522,7 @@ impl AudioEngine {
 
     fn advance_playhead(&mut self) {
         self.sample_in_beat += 1;
-        if self.sample_in_beat >= self.playback_loop.beat_length {
+        if self.sample_in_beat >= self.beat_length_samples {
             self.sample_in_beat = 0;
             self.beat_index = (self.beat_index + 1) % self.playback_loop.beat_count;
             self.publish_playhead();
@@ -540,6 +539,7 @@ impl AudioEngine {
 
 pub(crate) struct OfflineRenderer {
     sample_rate: f32,
+    beat_length_samples: u32,
     voice_runtimes: Vec<VoiceRuntime>,
     voice_frames: Vec<StereoFrame>,
     mix_gain: GainRamp,
@@ -557,9 +557,12 @@ impl OfflineRenderer {
             .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
             .collect();
         let voice_frames = vec![StereoFrame::SILENCE; playback_loop.voices.len()];
+        let beat_length_samples =
+            beat_length_samples(playback_loop.beat_duration_millis, sample_rate);
 
         Self {
             sample_rate,
+            beat_length_samples,
             voice_runtimes,
             voice_frames,
             mix_gain: GainRamp::new(MASTER_GAIN),
@@ -574,7 +577,7 @@ impl OfflineRenderer {
     }
 
     pub(crate) fn score_frame_count(&self) -> u64 {
-        self.playback_loop.beat_count as u64 * u64::from(self.playback_loop.beat_length)
+        self.playback_loop.beat_count as u64 * u64::from(self.beat_length_samples)
     }
 
     pub(crate) fn next_frame(&mut self) -> Option<(StereoFrame, &[StereoFrame])> {
@@ -587,7 +590,7 @@ impl OfflineRenderer {
                 voice,
                 beat_index,
                 self.sample_in_beat,
-                self.playback_loop.beat_length,
+                self.beat_length_samples,
                 self.sample_rate,
             );
             self.voice_frames[voice_index] = contribution;
@@ -617,11 +620,17 @@ impl OfflineRenderer {
         }
 
         self.sample_in_beat += 1;
-        if self.sample_in_beat >= self.playback_loop.beat_length {
+        if self.sample_in_beat >= self.beat_length_samples {
             self.sample_in_beat = 0;
             self.beat_index += 1;
         }
     }
+}
+
+fn beat_length_samples(duration: BeatDurationMillis, sample_rate: f32) -> u32 {
+    let sample_rate = sample_rate.round().max(1.0) as u64;
+    let samples = (u64::from(duration.get()) * sample_rate + 500) / 1_000;
+    u32::try_from(samples.max(1)).unwrap_or(u32::MAX)
 }
 
 fn mix_gain_target(sounding_voice_count: u32) -> f32 {
@@ -699,7 +708,7 @@ impl VoiceRuntime {
         let mut source_is_active = false;
         if let Some(beat_index) = beat_index {
             if let Some(frequency) = voice.frequencies[beat_index] {
-                let delay = voice.delays[beat_index];
+                let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
                 if sample_in_beat >= delay {
                     let note_sample = sample_in_beat - delay;
                     let note_length = beat_length - delay;
@@ -910,9 +919,10 @@ mod tests {
     };
 
     use super::{
-        frequency_variance_seed, normally_distributed_delay, timing_seed, varied_frequency,
-        write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial, HarmonicSawRuntime,
-        OfflineRenderer, PlaybackLoop, HARMONIC_SAW_PARTIAL_COUNT, MIX_GAIN_RAMP_SAMPLES,
+        beat_length_samples, frequency_variance_seed, normally_distributed_delay, timing_seed,
+        varied_frequency, write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial,
+        HarmonicSawRuntime, OfflineRenderer, PlaybackLoop, HARMONIC_SAW_PARTIAL_COUNT,
+        MIX_GAIN_RAMP_SAMPLES,
     };
     use crate::{
         acoustics::{Point3Meters, StereoFrame},
@@ -1316,7 +1326,7 @@ mod tests {
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(1));
-        let mut engine = AudioEngine::new(44_100.0, shared, playhead);
+        let mut engine = AudioEngine::new(1_000.0, shared, playhead);
 
         let frames = (0..24).map(|_| engine.next_frame()).collect::<Vec<_>>();
 
@@ -1341,7 +1351,7 @@ mod tests {
             let mut live = AudioEngine::new(48_000.0, shared, playhead);
             let mut offline = OfflineRenderer::new(playback_loop, 48_000);
 
-            for _ in 0..8 {
+            for _ in 0..384 {
                 let live_frame = live.next_frame();
                 let (offline_frame, voice_frames) = offline.next_frame().unwrap();
                 assert_eq!(offline_frame, live_frame);
@@ -1449,7 +1459,7 @@ mod tests {
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 4).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(4));
-        let mut engine = AudioEngine::new(44_100.0, shared, Arc::clone(&playhead));
+        let mut engine = AudioEngine::new(1_000.0, shared, Arc::clone(&playhead));
 
         engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 4);
@@ -1461,5 +1471,14 @@ mod tests {
         engine.next_frame();
         engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn beat_duration_keeps_the_same_time_at_different_sample_rates() {
+        let duration = crate::project::BeatDurationMillis::new(250).unwrap();
+
+        assert_eq!(beat_length_samples(duration, 44_100.0), 11_025);
+        assert_eq!(beat_length_samples(duration, 48_000.0), 12_000);
+        assert_eq!(beat_length_samples(duration, 96_000.0), 24_000);
     }
 }

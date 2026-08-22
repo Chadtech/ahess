@@ -4180,8 +4180,8 @@ mod tests {
                 .expect("the background build should publish every planned WAV");
             assert_eq!(
                 u32::from_le_bytes(bytes[46..50].try_into().unwrap()),
-                16,
-                "two eight-sample beats should be rendered even when playback loops one beat"
+                768,
+                "two eight-millisecond beats should be rendered even when playback loops one beat"
             );
         }
 
@@ -6310,7 +6310,7 @@ mod tests {
         assert!(cx.update(|_, cx| document.read(cx).is_dirty()));
 
         let mut updated_project = cx.update(|_, cx| model.read(cx).project.clone());
-        updated_project.beat_length = 1_200;
+        updated_project.beat_duration_millis = 1_200.into();
         project::save_project(&project_directory, &updated_project).unwrap();
         let settings_workspace =
             cx.update(|_, cx| model.read(cx).workspace.project_settings.clone());
@@ -6321,10 +6321,16 @@ mod tests {
                 cx,
             );
         });
-        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 1_200);
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.beat_duration_millis.get()),
+            1_200
+        );
 
         model.update(cx, |model, cx| model.undo(cx));
-        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 800);
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.beat_duration_millis.get()),
+            800
+        );
         assert_eq!(
             cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
             "half-typed"
@@ -6336,7 +6342,10 @@ mod tests {
         assert!(project_directory.join(".part-a.csv.recovery").is_file());
 
         model.update(cx, |model, cx| model.redo(cx));
-        assert_eq!(cx.update(|_, cx| model.read(cx).project.beat_length), 1_200);
+        assert_eq!(
+            cx.update(|_, cx| model.read(cx).project.beat_duration_millis.get()),
+            1_200
+        );
         assert_eq!(
             cx.update(|_, cx| document.read(cx).score().rows()[0][0].clone()),
             "half-typed"

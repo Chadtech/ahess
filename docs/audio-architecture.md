@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-07-29
+Last updated: 2026-08-22
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -141,7 +141,8 @@ distribution is centered on half the configured range, with each boundary
 three standard deviations from the center. Only the roughly 0.27% of normal
 draws outside those boundaries are clipped, so every seed produces a delay in
 one draw with no retry or fallback path. The effective maximum is capped at one
-sample less than the beat length so a delayed note always has time to sound.
+sample less than the beat duration at the active sample rate so a delayed note
+always has time to sound.
 
 Using absolute arrangement beats and stable voice IDs means the timing for an
 event does not change when a different loop slice is selected, voices are
@@ -530,9 +531,10 @@ and reflection tails are no longer active. It therefore needs no output device
 and does not duplicate score interpretation or instrument DSP.
 
 The initial build format is stereo 32-bit IEEE-float WAV. The workspace offers
-44.1, 48, and 96 kHz, with 48 kHz as the default. Because the current project
-model expresses beat length and timing variance in samples, selecting a sample
-rate also determines the rendered duration of those sample counts. The selected
+44.1, 48, and 96 kHz, with 48 kHz as the default. Projects express beat
+duration in whole milliseconds. Live and offline renderers convert that
+duration to a frame count at their actual sample rate, so changing the rate no
+longer changes the tempo. Timing variance remains a sample count. The selected
 rate is explicit in the build workspace rather than inferred from audio
 hardware.
 
@@ -551,6 +553,9 @@ embedded `[pitch_system]` table, and their voices store `voice_type = "sin"`,
 
 Compatibility loading should:
 
+- Convert legacy `beat_length` sample counts to `beat_duration_millis` using
+  the historical 48 kHz default, rounded to the nearest whole millisecond, and
+  write only the millisecond field on the next save.
 - Interpret a missing pitch system as the current twelve-tone/MIDI behavior.
 - Resolve `tuning_system_id` through the workspace library and reject missing
   references.

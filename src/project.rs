@@ -4,6 +4,7 @@ use std::{
     fmt::{self, Write as _},
     fs::{self, OpenOptions},
     io::{self, Write},
+    num::NonZeroU32,
     path::{Path, PathBuf},
 };
 
@@ -29,6 +30,49 @@ const TRANSACTION_OLD_DIRECTORY: &str = "old";
 const TRANSACTION_CREATED_DIRECTORY: &str = "created";
 const TRANSACTION_COMMITTING_FILE: &str = "committing";
 const TRANSACTION_COMMITTED_FILE: &str = "committed";
+const LEGACY_BEAT_SAMPLE_RATE_HZ: u64 = 48_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BeatDurationMillis(NonZeroU32);
+
+impl BeatDurationMillis {
+    pub fn new(milliseconds: u32) -> Result<Self, BeatDurationError> {
+        NonZeroU32::new(milliseconds)
+            .map(Self)
+            .ok_or(BeatDurationError)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+
+    fn from_legacy_samples(samples: u32) -> Result<Self, BeatDurationError> {
+        if samples == 0 {
+            return Err(BeatDurationError);
+        }
+        let milliseconds = (u64::from(samples) * 1_000 + LEGACY_BEAT_SAMPLE_RATE_HZ / 2)
+            / LEGACY_BEAT_SAMPLE_RATE_HZ;
+        let milliseconds = u32::try_from(milliseconds.max(1)).map_err(|_| BeatDurationError)?;
+        Self::new(milliseconds)
+    }
+}
+
+impl From<u32> for BeatDurationMillis {
+    fn from(milliseconds: u32) -> Self {
+        Self::new(milliseconds).expect("beat duration must be at least one millisecond")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BeatDurationError;
+
+impl fmt::Display for BeatDurationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("beat duration must be at least one millisecond")
+    }
+}
+
+impl Error for BeatDurationError {}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, PartialOrd)]
 #[serde(try_from = "f64")]
@@ -73,7 +117,7 @@ impl Error for FrequencyVarianceError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub name: String,
-    pub beat_length: u32,
+    pub beat_duration_millis: BeatDurationMillis,
     pub timing_variance: u32,
     frequency_variance: FrequencyVariance,
     pub seed: Seed,
@@ -122,13 +166,13 @@ impl ArrangementOccurrence {
 impl Project {
     pub fn new(
         name: impl Into<String>,
-        beat_length: u32,
+        beat_duration_millis: impl Into<BeatDurationMillis>,
         timing_variance: u32,
         seed: Seed,
     ) -> Self {
         Self {
             name: name.into(),
-            beat_length,
+            beat_duration_millis: beat_duration_millis.into(),
             timing_variance,
             frequency_variance: FrequencyVariance::default(),
             seed,
@@ -337,10 +381,10 @@ impl Project {
 
     pub fn config_file_contents(&self) -> String {
         let mut contents = format!(
-            "name = {}\ndescription = {}\nbeat_length = {}\ntiming_variance = {}\nfrequency_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
+            "name = {}\ndescription = {}\nbeat_duration_millis = {}\ntiming_variance = {}\nfrequency_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
             toml_string(&self.name),
             toml_string(&self.description),
-            self.beat_length,
+            self.beat_duration_millis.get(),
             self.timing_variance,
             self.frequency_variance.ratio(),
             self.seed.value(),
@@ -1723,7 +1767,10 @@ fn toml_string(value: &str) -> String {
 struct ProjectConfig {
     name: String,
     description: String,
-    beat_length: u32,
+    #[serde(default)]
+    beat_duration_millis: Option<u32>,
+    #[serde(default)]
+    beat_length: Option<u32>,
     timing_variance: u32,
     #[serde(default)]
     frequency_variance: FrequencyVariance,
@@ -1870,6 +1917,18 @@ where
 
 impl ProjectConfig {
     fn into_project(self, tuning_systems: &[TuningSystem]) -> Result<Project, String> {
+        let beat_duration_millis = match (self.beat_duration_millis, self.beat_length) {
+            (Some(milliseconds), None) => BeatDurationMillis::new(milliseconds),
+            (None, Some(samples)) => BeatDurationMillis::from_legacy_samples(samples),
+            (Some(_), Some(_)) => {
+                return Err(
+                    "project must contain beat_duration_millis or legacy beat_length, not both"
+                        .to_string(),
+                );
+            }
+            (None, None) => return Err("project is missing beat_duration_millis".to_string()),
+        }
+        .map_err(|error| error.to_string())?;
         let sequence = match self.sequence {
             Some(sequence) => sequence
                 .into_iter()
@@ -1905,7 +1964,7 @@ impl ProjectConfig {
         };
         let mut project = Project::new(
             self.name,
-            self.beat_length,
+            beat_duration_millis,
             self.timing_variance,
             Seed::new(self.seed),
         )
@@ -1978,7 +2037,7 @@ mod tests {
         let project = Project::new("test", 4000, 100, Seed::new(19)).with_description("sketch");
 
         assert_eq!(project.name, "test");
-        assert_eq!(project.beat_length, 4000);
+        assert_eq!(project.beat_duration_millis.get(), 4000);
         assert_eq!(project.timing_variance, 100);
         assert_eq!(project.frequency_variance(), FrequencyVariance::default());
         assert_eq!(project.seed, Seed::new(19));
@@ -2059,7 +2118,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0.017\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
+                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0.017\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
             )
         );
     }
@@ -2074,7 +2133,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
             )
         );
     }
@@ -2194,7 +2253,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_length = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\nsubdivision_pattern = [4, 3, 3]\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\nsubdivision_pattern = [4, 3, 3]\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
             )
         );
     }
@@ -2538,6 +2597,7 @@ mod tests {
 
         let project = load_project(&project_directory).unwrap().project;
 
+        assert_eq!(project.beat_duration_millis.get(), 17);
         assert!(
             (project
                 .pitch_system()
@@ -2551,11 +2611,10 @@ mod tests {
         );
         assert_eq!(project.frequency_variance(), FrequencyVariance::default());
         save_project(&project_directory, &project).unwrap();
-        assert!(
-            fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
-                .unwrap()
-                .contains("tuning_system_id = \"western-twelve-tone\"")
-        );
+        let saved_config = fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+        assert!(saved_config.contains("beat_duration_millis = 17"));
+        assert!(!saved_config.contains("beat_length ="));
+        assert!(saved_config.contains("tuning_system_id = \"western-twelve-tone\""));
 
         fs::remove_dir_all(root).unwrap();
     }

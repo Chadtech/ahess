@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
     app::room_form::RoomFields,
-    project::{self, FrequencyVariance, ProjectOpened},
+    project::{self, BeatDurationMillis, FrequencyVariance, ProjectOpened},
     seed::Seed,
     style as s,
     tuning_system::{self, TuningSystem},
@@ -90,7 +90,7 @@ impl NewProjectDialog {
         cx: &mut Context<Self>,
     ) -> Result<ProjectOpened, CreateProjectFormError> {
         let project_name = self.fields.project_name.read(cx).value().trim().to_string();
-        let beat_length = parse_beat_length_field(&self.fields.beat_length.read(cx).value())?;
+        let beat_duration = parse_beat_duration_field(&self.fields.beat_duration.read(cx).value())?;
         let timing_variance =
             parse_u32_field("timing variance", &self.fields.variance.read(cx).value())?;
         let frequency_variance =
@@ -106,7 +106,7 @@ impl NewProjectDialog {
             .room
             .room(cx)
             .map_err(CreateProjectFormError::InvalidField)?;
-        let mut project = project::Project::new(project_name, beat_length, timing_variance, seed)
+        let mut project = project::Project::new(project_name, beat_duration, timing_variance, seed)
             .with_frequency_variance(frequency_variance)
             .with_description(description)
             .with_tuning_system(tuning_system);
@@ -167,14 +167,10 @@ fn parse_u32_field(label: &'static str, value: &str) -> Result<u32, CreateProjec
     })
 }
 
-fn parse_beat_length_field(value: &str) -> Result<u32, CreateProjectFormError> {
-    let beat_length = parse_u32_field("beat length", value)?;
-    if beat_length == 0 {
-        return Err(CreateProjectFormError::InvalidField(
-            "beat length must be at least one sample".to_string(),
-        ));
-    }
-    Ok(beat_length)
+fn parse_beat_duration_field(value: &str) -> Result<BeatDurationMillis, CreateProjectFormError> {
+    let milliseconds = parse_u32_field("beat duration", value)?;
+    BeatDurationMillis::new(milliseconds)
+        .map_err(|error| CreateProjectFormError::InvalidField(error.to_string()))
 }
 
 fn parse_frequency_variance_field(
@@ -197,7 +193,7 @@ fn parse_seed_field(value: &str) -> Result<Seed, CreateProjectFormError> {
 
 struct NewProjectFields {
     project_name: Entity<TextInput>,
-    beat_length: Entity<TextInput>,
+    beat_duration: Entity<TextInput>,
     variance: Entity<TextInput>,
     frequency_variance: Entity<TextInput>,
     seed: Entity<TextInput>,
@@ -209,7 +205,7 @@ impl NewProjectFields {
     fn new(cx: &mut Context<NewProjectDialog>) -> Self {
         Self {
             project_name: cx.new(|cx| TextInput::new("", "", cx)),
-            beat_length: cx.new(|cx| TextInput::new("", "800", cx)),
+            beat_duration: cx.new(|cx| TextInput::new("", "17", cx)),
             variance: cx.new(|cx| TextInput::new("", "", cx)),
             frequency_variance: cx.new(|cx| TextInput::new("", "", cx)),
             seed: cx.new(|cx| TextInput::new("", "1234", cx)),
@@ -233,7 +229,7 @@ fn new_project_form(
         .child(field_group("project name", fields.project_name.clone()))
         .child(control_group("tuning system", tuning_dropdown))
         .child(div().flex().gap_4().children([
-            field_group("beat length (samples)", fields.beat_length.clone()),
+            field_group("beat duration (ms)", fields.beat_duration.clone()),
             field_group("timing variance (samples)", fields.variance.clone()),
         ]))
         .child(div().flex().gap_4().children([
@@ -281,7 +277,8 @@ mod tests {
     use gpui::{px, size, Modifiers, TestAppContext};
 
     use super::{
-        parse_beat_length_field, parse_frequency_variance_field, parse_seed_field, parse_u32_field,
+        parse_beat_duration_field, parse_frequency_variance_field, parse_seed_field,
+        parse_u32_field,
     };
     use crate::{project, seed::Seed, style as s};
 
@@ -289,8 +286,8 @@ mod tests {
     fn parses_decimal_number_fields() {
         assert_eq!(parse_u32_field("beat length", " 4000 ").unwrap(), 4000);
         assert!(parse_u32_field("beat length", "4.0").is_err());
-        assert_eq!(parse_beat_length_field("800").unwrap(), 800);
-        assert!(parse_beat_length_field("0").is_err());
+        assert_eq!(parse_beat_duration_field("17").unwrap().get(), 17);
+        assert!(parse_beat_duration_field("0").is_err());
         assert_eq!(
             parse_frequency_variance_field(" 0.025 ").unwrap().ratio(),
             0.025
@@ -338,7 +335,7 @@ mod tests {
             let fields = &dialog.read(cx).fields;
             let values = [
                 (fields.project_name.clone(), "room project"),
-                (fields.beat_length.clone(), "800"),
+                (fields.beat_duration.clone(), "17"),
                 (fields.variance.clone(), "0"),
                 (fields.frequency_variance.clone(), "0.025"),
                 (fields.seed.clone(), "1"),
