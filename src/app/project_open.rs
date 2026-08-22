@@ -1554,15 +1554,27 @@ impl Model {
     }
 
     fn sync_playhead_highlights(&self, cx: &mut Context<Self>) {
-        let playing_position = self.playback.as_ref().and_then(|playback| {
-            let beat = playback.output.current_arrangement_beat();
-            match &playback.target {
-                PlaybackTarget::Arrangement => playing_score_row(&self.project, beat),
-                PlaybackTarget::Part(part_name) => usize::try_from(beat.checked_sub(1)?)
-                    .ok()
-                    .map(|row| (part_name.clone(), row)),
-            }
-        });
+        let (playing_position, playing_occurrence) =
+            self.playback.as_ref().map_or((None, None), |playback| {
+                let beat = playback.output.current_arrangement_beat();
+                match &playback.target {
+                    PlaybackTarget::Arrangement => {
+                        let position = playing_arrangement_position(&self.project, beat);
+                        (
+                            position
+                                .as_ref()
+                                .map(|position| (position.part_name.clone(), position.row)),
+                            position.map(|position| position.occurrence),
+                        )
+                    }
+                    PlaybackTarget::Part(part_name) => (
+                        beat.checked_sub(1)
+                            .and_then(|beat| usize::try_from(beat).ok())
+                            .map(|row| (part_name.clone(), row)),
+                        None,
+                    ),
+                }
+            });
         for view in &self.score_views {
             let playing_row = view.part_name.as_ref().and_then(|view_part| {
                 playing_position.as_ref().and_then(|(playing_part, row)| {
@@ -1575,6 +1587,10 @@ impl Model {
                 });
             }
         }
+        let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
+        arrangement_range.update(cx, |range, cx| {
+            range.sync_playing_row(playing_occurrence, cx);
+        });
     }
 
     fn clear_playhead_highlights(&self, cx: &mut Context<Self>) {
@@ -1585,6 +1601,10 @@ impl Model {
         {
             editor.update(cx, |editor, cx| editor.set_playing_row(None, cx));
         }
+        let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
+        arrangement_range.update(cx, |range, cx| {
+            range.sync_playing_row(None, cx);
+        });
     }
 
     fn assign_part_to_view(
@@ -3109,13 +3129,24 @@ fn loop_range_summary(project: &Project, range: Option<BeatRange>) -> String {
     }
 }
 
-fn playing_score_row(project: &Project, arrangement_beat: u64) -> Option<(PartName, usize)> {
-    for occurrence in project.arrangement_occurrences() {
+struct PlayingArrangementPosition {
+    occurrence: usize,
+    part_name: PartName,
+    row: usize,
+}
+
+fn playing_arrangement_position(
+    project: &Project,
+    arrangement_beat: u64,
+) -> Option<PlayingArrangementPosition> {
+    for (occurrence_index, occurrence) in project.arrangement_occurrences().into_iter().enumerate()
+    {
         if (occurrence.first_beat()..=occurrence.last_beat()).contains(&arrangement_beat) {
-            return Some((
-                occurrence.part_name().clone(),
-                (arrangement_beat - occurrence.first_beat()) as usize,
-            ));
+            return Some(PlayingArrangementPosition {
+                occurrence: occurrence_index,
+                part_name: occurrence.part_name().clone(),
+                row: (arrangement_beat - occurrence.first_beat()) as usize,
+            });
         }
     }
     None
@@ -3970,11 +4001,11 @@ mod tests {
     use super::{
         append_project_variants, combine_project_parts, create_configured_project_part,
         create_project_part, delete_project_part, duplicate_project_part, export_project_part_rows,
-        loop_range_summary, parts, playing_score_row, rename_project_part, update_project_sequence,
-        voices, BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model,
-        PartChangeError, PartsWorkspace, ProjectOverlay, ProjectSettingsMsg,
-        RowEditConfirmationMsg, RowEditRequested, StatusAction, UiState, WorkspaceSection,
-        WorkspaceSectionKind,
+        loop_range_summary, parts, playing_arrangement_position, rename_project_part,
+        update_project_sequence, voices, BuildWorkspaceMsg, ExportRowsConfirmed,
+        ExportRowsDialogMsg, Model, PartChangeError, PartsWorkspace, ProjectOverlay,
+        ProjectSettingsMsg, RowEditConfirmationMsg, RowEditRequested, StatusAction, UiState,
+        WorkspaceSection, WorkspaceSectionKind,
     };
     use crate::{
         acoustics::Point3Meters,
@@ -4000,7 +4031,8 @@ mod tests {
             ]);
 
         let position = |beat| {
-            playing_score_row(&project, beat).map(|(part, row)| (part.as_str().to_string(), row))
+            playing_arrangement_position(&project, beat)
+                .map(|position| (position.part_name.as_str().to_string(), position.row))
         };
         assert_eq!(position(1), Some(("first".to_string(), 0)));
         assert_eq!(position(2), Some(("first".to_string(), 1)));
@@ -4010,6 +4042,16 @@ mod tests {
         assert_eq!(position(7), Some(("first".to_string(), 1)));
         assert_eq!(position(0), None);
         assert_eq!(position(8), None);
+
+        assert_eq!(
+            playing_arrangement_position(&project, 1).map(|position| position.occurrence),
+            Some(0)
+        );
+        assert_eq!(
+            playing_arrangement_position(&project, 6).map(|position| position.occurrence),
+            Some(2),
+            "repeated parts should outline the occurrence that owns the current beat"
+        );
     }
 
     #[test]

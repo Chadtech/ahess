@@ -91,6 +91,7 @@ pub struct RangeSelectionList {
     empty_message: SharedString,
     rows: Vec<Row>,
     selection: Option<AnchoredSelection>,
+    playing_row: Option<usize>,
     drag_anchor: Option<usize>,
     context_action_labels: Vec<SharedString>,
     context_row: Option<usize>,
@@ -122,6 +123,7 @@ impl RangeSelectionList {
             empty_message: empty_message.into(),
             rows,
             selection,
+            playing_row: None,
             drag_anchor: None,
             context_action_labels: Vec::new(),
             context_row: None,
@@ -161,6 +163,15 @@ impl RangeSelectionList {
         cx.notify();
     }
 
+    pub fn sync_playing_row(&mut self, playing_row: Option<usize>, cx: &mut Context<Self>) {
+        let playing_row = playing_row.filter(|row| *row < self.rows.len());
+        if self.playing_row == playing_row {
+            return;
+        }
+        self.playing_row = playing_row;
+        cx.notify();
+    }
+
     pub fn set_context_actions<I, L>(&mut self, labels: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = L>,
@@ -183,6 +194,7 @@ impl RangeSelectionList {
         self.rows = rows;
         self.drag_anchor = None;
         self.context_row = self.context_row.filter(|index| *index < self.rows.len());
+        self.playing_row = self.playing_row.filter(|index| *index < self.rows.len());
         self.selection = self.selection.and_then(|selection| {
             AnchoredSelection::new(selection.anchor, selection.head, self.rows.len())
         });
@@ -398,7 +410,11 @@ impl Render for RangeSelectionList {
                     .on_mouse_move(cx.listener(move |list, event, window, cx| {
                         list.on_row_mouse_move(index, event, window, cx);
                     }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up));
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+                    .children(
+                        (self.playing_row == Some(index))
+                            .then(|| playback_row_border(self.id.clone(), index)),
+                    );
                 if context_row == Some(index) {
                     let actions = context_action_labels
                         .iter()
@@ -453,6 +469,15 @@ impl Render for RangeSelectionList {
             Viewport::Fill => list.flex_1().min_h(s::S0),
         }
     }
+}
+
+fn playback_row_border(id: ElementId, row: usize) -> gpui::Div {
+    gpui::div()
+        .absolute()
+        .inset_0()
+        .border_2()
+        .border_color(s::PLAYBACK_ROW_BORDER)
+        .debug_selector(move || format!("{id}-playback-row-{row}"))
 }
 
 #[cfg(test)]
@@ -558,5 +583,27 @@ mod tests {
         let last_after = cx.debug_bounds("range-row-23").unwrap();
         assert_eq!(list.size.height, crate::style::S8);
         assert!(last_after.origin.y < last_before.origin.y);
+    }
+
+    #[gpui::test]
+    fn playback_outline_identifies_one_row_without_replacing_selection(cx: &mut TestAppContext) {
+        let (list, cx) = cx.add_window_view(|_, cx| {
+            RangeSelectionList::new("range", "empty", rows(), SelectedRange::new(0, 2, 4), cx)
+        });
+
+        list.update(cx, |list, cx| list.sync_playing_row(Some(1), cx));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("range-playback-row-0").is_none());
+        assert!(cx.debug_bounds("range-playback-row-1").is_some());
+        assert!(cx.debug_bounds("range-playback-row-2").is_none());
+        assert_eq!(
+            cx.update(|_, cx| list.read(cx).selected_range()),
+            SelectedRange::new(0, 2, 4)
+        );
+
+        list.update(cx, |list, cx| list.sync_playing_row(None, cx));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("range-playback-row-1").is_none());
     }
 }
