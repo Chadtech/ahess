@@ -2,7 +2,7 @@ use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
     audio_build::{
-        planned_audio_files, AudioBuildResult, BuildSampleRate, PlannedAudioFile, BUILD_DIRECTORY,
+        planned_build_files, AudioBuildResult, BuildSampleRate, PlannedBuildFile, BUILD_DIRECTORY,
     },
     project::Project,
     style as s,
@@ -55,7 +55,7 @@ impl BuildWorkspace {
                 cx,
             )
         });
-        let build_button = cx.new(|_| Button::new("build-audio", "build audio"));
+        let build_button = cx.new(|_| Button::new("build-audio", "build"));
         cx.subscribe(&sample_rate_dropdown, Self::on_sample_rate_selected)
             .detach();
         cx.subscribe(&build_button, Self::on_build_clicked).detach();
@@ -167,10 +167,10 @@ impl BuildWorkspace {
     fn status(&self) -> status_bar::Status {
         match &self.state {
             BuildState::Ready => status_bar::Status::Empty,
-            BuildState::Building { .. } => status_bar::Status::Message("building audio…".into()),
+            BuildState::Building { .. } => status_bar::Status::Message("building…".into()),
             BuildState::Built(result) => status_bar::Status::Message(
                 format!(
-                    "built {} wav files · {} · {:.2} seconds · {}",
+                    "built {} files · {} · {:.2} seconds · {}",
                     result.file_count,
                     sample_rate_label(result.sample_rate),
                     result.duration_seconds(),
@@ -191,7 +191,7 @@ impl BuildWorkspace {
 
 impl Render for BuildWorkspace {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let files = planned_audio_files(&self.project);
+        let files = planned_build_files(&self.project);
         let controls = div()
             .flex()
             .flex_col()
@@ -204,9 +204,10 @@ impl Render for BuildWorkspace {
                     .flex()
                     .flex_col()
                     .gap(s::S4)
-                    .child(div().text_color(s::TEXT_HEADER).child("audio build"))
+                    .child(div().text_color(s::TEXT_HEADER).child("project build"))
                     .child("renders the entire arrangement, independent of the playback loop")
-                    .child("stereo 32-bit float wav with acoustic tails"),
+                    .child("stereo 32-bit float wav with acoustic tails")
+                    .child("one score json per voice with grid and ahess timing"),
             )
             .child(compact_control_group(
                 "sample rate",
@@ -246,7 +247,7 @@ impl Render for BuildWorkspace {
     }
 }
 
-fn output_file_panel(files: Vec<PlannedAudioFile>) -> gpui::Div {
+fn output_file_panel(files: Vec<PlannedBuildFile>) -> gpui::Div {
     let rows = files.into_iter().map(|file| {
         div()
             .flex()

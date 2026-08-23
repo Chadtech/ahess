@@ -7,8 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Serialize;
+
 use crate::{
     acoustics::StereoFrame,
+    part::{Part, PartScore},
     playback::{OfflineRenderer, PlaybackLoop},
     project::{self, Project},
 };
@@ -62,27 +65,60 @@ impl BuildSampleRate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PlannedAudioFile {
+pub(crate) struct PlannedBuildFile {
     pub(crate) label: String,
     pub(crate) file_name: String,
 }
 
-pub(crate) fn planned_audio_files(project: &Project) -> Vec<PlannedAudioFile> {
+pub(crate) fn planned_build_files(project: &Project) -> Vec<PlannedBuildFile> {
+    let mut audio_files = planned_audio_files(project).into_iter();
+    let mut files = Vec::with_capacity(1 + project.voices().len() * 2);
+    if let Some(mix) = audio_files.next() {
+        files.push(mix);
+    }
+    for (audio, score) in audio_files.zip(planned_score_files(project)) {
+        files.extend([audio, score]);
+    }
+    files
+}
+
+pub(crate) fn planned_audio_files(project: &Project) -> Vec<PlannedBuildFile> {
     let project_stem =
         project::project_directory_name(&project.name).unwrap_or_else(|| "project".to_string());
-    let mut files = vec![PlannedAudioFile {
+    let mut files = vec![PlannedBuildFile {
         label: "whole piece".to_string(),
         file_name: format!("{project_stem}-mix.wav"),
     }];
     files.extend(project.voices().iter().enumerate().map(|(index, voice)| {
         let voice_stem = project::project_directory_name(voice.name.as_str())
             .unwrap_or_else(|| format!("voice-{}", voice.id().value()));
-        PlannedAudioFile {
+        PlannedBuildFile {
             label: format!("voice: {}", voice.name.as_str()),
             file_name: format!("{project_stem}-voice-{:02}-{voice_stem}.wav", index + 1),
         }
     }));
     files
+}
+
+fn planned_score_files(project: &Project) -> Vec<PlannedBuildFile> {
+    let project_stem =
+        project::project_directory_name(&project.name).unwrap_or_else(|| "project".to_string());
+    project
+        .voices()
+        .iter()
+        .enumerate()
+        .map(|(index, voice)| {
+            let voice_stem = project::project_directory_name(voice.name.as_str())
+                .unwrap_or_else(|| format!("voice-{}", voice.id().value()));
+            PlannedBuildFile {
+                label: format!("score: {}", voice.name.as_str()),
+                file_name: format!(
+                    "{project_stem}-voice-{:02}-{voice_stem}-score.json",
+                    index + 1
+                ),
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,9 +138,16 @@ impl AudioBuildResult {
 pub(crate) fn build_project_audio(
     project_directory: impl AsRef<Path>,
     project: &Project,
+    arrangement_scores: &[(Part, PartScore)],
     playback_loop: PlaybackLoop,
     sample_rate: BuildSampleRate,
 ) -> Result<AudioBuildResult, AudioBuildError> {
+    let voice_scores = build_voice_scores(
+        project,
+        arrangement_scores,
+        &playback_loop,
+        sample_rate.hz(),
+    )?;
     let mut renderer = OfflineRenderer::new(playback_loop, sample_rate.hz());
     if renderer.voice_count() != project.voices().len() {
         return Err(AudioBuildError::new(
@@ -121,7 +164,13 @@ pub(crate) fn build_project_audio(
         )
     })?;
 
-    let plans = planned_audio_files(project);
+    let audio_plans = planned_audio_files(project);
+    let score_plans = planned_score_files(project);
+    let plans = audio_plans
+        .iter()
+        .chain(&score_plans)
+        .cloned()
+        .collect::<Vec<_>>();
     let pending_paths = plans
         .iter()
         .map(|plan| directory.join(format!(".{}.pending", plan.file_name)))
@@ -130,8 +179,8 @@ pub(crate) fn build_project_audio(
         .iter()
         .map(|plan| directory.join(&plan.file_name))
         .collect::<Vec<_>>();
-    let mut writers = Vec::with_capacity(pending_paths.len());
-    for pending_path in &pending_paths {
+    let mut writers = Vec::with_capacity(audio_plans.len());
+    for pending_path in &pending_paths[..audio_plans.len()] {
         if pending_path.exists() {
             fs::remove_file(pending_path).map_err(|source| {
                 AudioBuildError::io(
@@ -172,6 +221,11 @@ pub(crate) fn build_project_audio(
             return Err(error);
         }
     };
+    let score_pending_paths = &pending_paths[audio_plans.len()..];
+    if let Err(error) = write_build_voice_scores(score_pending_paths, &voice_scores) {
+        remove_files(&pending_paths);
+        return Err(error);
+    }
     if pending_paths.iter().any(|path| !path.exists()) {
         remove_files(&pending_paths);
         return Err(AudioBuildError::new(
@@ -205,6 +259,199 @@ pub(crate) fn build_project_audio(
     })
 }
 
+#[derive(Serialize)]
+struct BuildVoiceScore {
+    schema_version: u32,
+    project: String,
+    sample_rate_hz: u32,
+    beat_duration_millis: u32,
+    voice: BuildVoice,
+    notes: Vec<BuildNote>,
+}
+
+#[derive(Serialize)]
+struct BuildVoice {
+    id: u64,
+    name: String,
+    voice_type: String,
+}
+
+#[derive(Serialize)]
+struct BuildNote {
+    arrangement_beat: u64,
+    arrangement_occurrence: usize,
+    part: String,
+    part_beat: usize,
+    beat_label: String,
+    notation: String,
+    frequency_hz: f64,
+    duration_beats: f64,
+    duration_seconds: f64,
+    grid_timing: BuildTiming,
+    ahess_timing: BuildTiming,
+    applied_timing_offset: BuildTimingOffset,
+    permitted_timing_offset: BuildPermittedTimingOffset,
+}
+
+#[derive(Serialize)]
+struct BuildTiming {
+    beats_from_start: f64,
+    seconds: f64,
+    samples: u64,
+}
+
+#[derive(Serialize)]
+struct BuildTimingOffset {
+    beats: f64,
+    seconds: f64,
+    samples: u32,
+}
+
+#[derive(Serialize)]
+struct BuildPermittedTimingOffset {
+    minimum_beats: f64,
+    maximum_beats: f64,
+    minimum_seconds: f64,
+    maximum_seconds: f64,
+    minimum_samples: u32,
+    maximum_samples: u32,
+}
+
+fn build_voice_scores(
+    project: &Project,
+    arrangement_scores: &[(Part, PartScore)],
+    playback_loop: &PlaybackLoop,
+    sample_rate: u32,
+) -> Result<Vec<BuildVoiceScore>, AudioBuildError> {
+    let occurrences = project.arrangement_occurrences();
+    if arrangement_scores.len() != occurrences.len() {
+        return Err(AudioBuildError::new(
+            "the available scores do not match the project arrangement",
+        ));
+    }
+
+    let mut voice_scores = project
+        .voices()
+        .iter()
+        .map(|voice| BuildVoiceScore {
+            schema_version: 1,
+            project: project.name.clone(),
+            sample_rate_hz: sample_rate,
+            beat_duration_millis: project.beat_duration_millis.get(),
+            voice: BuildVoice {
+                id: voice.id().value(),
+                name: voice.name.as_str().to_string(),
+                voice_type: voice.voice_type.config_value().to_string(),
+            },
+            notes: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let beat_length_samples = playback_loop.beat_length_samples_at(sample_rate);
+    let beat_duration_seconds = f64::from(beat_length_samples) / f64::from(sample_rate);
+
+    for (occurrence, (part, score)) in occurrences.iter().zip(arrangement_scores) {
+        if !part.name.eq_ignore_ascii_case(occurrence.part_name()) {
+            return Err(AudioBuildError::new(
+                "the available scores do not match the project arrangement",
+            ));
+        }
+        let rows = score.resolved_rows(part, project).map_err(|error| {
+            AudioBuildError::new(format!("part {:?}: {error}", part.name.as_str()))
+        })?;
+        for (part_beat_index, (raw_row, resolved_row)) in score.rows().iter().zip(rows).enumerate()
+        {
+            let arrangement_beat = occurrence.first_beat() + part_beat_index as u64;
+            let beats_from_start = arrangement_beat - 1;
+            let grid_samples = beats_from_start
+                .checked_mul(u64::from(beat_length_samples))
+                .ok_or_else(|| AudioBuildError::new("the score timing is too large to export"))?;
+            for (voice_index, frequency) in resolved_row.into_iter().enumerate() {
+                let Some(frequency) = frequency else {
+                    continue;
+                };
+                let timing = playback_loop
+                    .prepared_timing_offset(voice_index, arrangement_beat, sample_rate)
+                    .ok_or_else(|| {
+                        AudioBuildError::new(
+                            "the prepared arrangement does not match the score export",
+                        )
+                    })?;
+                let applied_samples = u64::from(timing.applied_samples);
+                let ahess_samples = grid_samples.checked_add(applied_samples).ok_or_else(|| {
+                    AudioBuildError::new("the score timing is too large to export")
+                })?;
+                let sample_rate = f64::from(sample_rate);
+                let beat_length = f64::from(beat_length_samples);
+                voice_scores[voice_index].notes.push(BuildNote {
+                    arrangement_beat,
+                    arrangement_occurrence: occurrence.index() + 1,
+                    part: part.name.as_str().to_string(),
+                    part_beat: part_beat_index + 1,
+                    beat_label: part.beat_label(part_beat_index),
+                    notation: raw_row[voice_index].clone(),
+                    frequency_hz: frequency.as_hz(),
+                    duration_beats: 1.0,
+                    duration_seconds: beat_duration_seconds,
+                    grid_timing: BuildTiming {
+                        beats_from_start: beats_from_start as f64,
+                        seconds: grid_samples as f64 / sample_rate,
+                        samples: grid_samples,
+                    },
+                    ahess_timing: BuildTiming {
+                        beats_from_start: ahess_samples as f64 / beat_length,
+                        seconds: ahess_samples as f64 / sample_rate,
+                        samples: ahess_samples,
+                    },
+                    applied_timing_offset: BuildTimingOffset {
+                        beats: f64::from(timing.applied_samples) / beat_length,
+                        seconds: f64::from(timing.applied_samples) / sample_rate,
+                        samples: timing.applied_samples,
+                    },
+                    permitted_timing_offset: BuildPermittedTimingOffset {
+                        minimum_beats: 0.0,
+                        maximum_beats: f64::from(timing.maximum_samples) / beat_length,
+                        minimum_seconds: 0.0,
+                        maximum_seconds: f64::from(timing.maximum_samples) / sample_rate,
+                        minimum_samples: 0,
+                        maximum_samples: timing.maximum_samples,
+                    },
+                });
+            }
+        }
+    }
+
+    Ok(voice_scores)
+}
+
+fn write_build_voice_scores(
+    pending_paths: &[PathBuf],
+    voice_scores: &[BuildVoiceScore],
+) -> Result<(), AudioBuildError> {
+    if pending_paths.len() != voice_scores.len() {
+        return Err(AudioBuildError::new(
+            "the planned score files do not match the project voices",
+        ));
+    }
+    for (path, voice_score) in pending_paths.iter().zip(voice_scores) {
+        let mut contents = serde_json::to_vec_pretty(voice_score).map_err(|error| {
+            AudioBuildError::new(format!(
+                "failed to serialize score file {:?}: {error}",
+                path
+            ))
+        })?;
+        contents.push(b'\n');
+        let mut file = File::create(path).map_err(|source| {
+            AudioBuildError::io(format!("failed to create score file {:?}", path), source)
+        })?;
+        file.write_all(&contents)
+            .and_then(|_| file.sync_all())
+            .map_err(|source| {
+                AudioBuildError::io(format!("failed to write score file {:?}", path), source)
+            })?;
+    }
+    Ok(())
+}
+
 fn render_to_writers(
     renderer: &mut OfflineRenderer,
     writers: &mut [FloatStereoWavWriter],
@@ -235,7 +482,7 @@ fn ensure_wav_size_can_hold(frame_count: u64) -> Result<(), AudioBuildError> {
 
 fn update_build_manifest(
     directory: &Path,
-    plans: &[PlannedAudioFile],
+    plans: &[PlannedBuildFile],
 ) -> Result<(), AudioBuildError> {
     let manifest_path = directory.join(BUILD_MANIFEST);
     let current_files = plans
@@ -294,9 +541,9 @@ fn update_build_manifest(
 fn safe_generated_file_name(file_name: &str) -> bool {
     let path = Path::new(file_name);
     path.components().count() == 1
-        && path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
+        && path.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("wav") || extension.eq_ignore_ascii_case("json")
+        })
 }
 
 fn remove_files(paths: &[PathBuf]) {
@@ -430,7 +677,8 @@ mod tests {
     };
 
     use super::{
-        build_project_audio, planned_audio_files, BuildSampleRate, BUILD_DIRECTORY, WAV_HEADER_SIZE,
+        build_project_audio, planned_audio_files, planned_build_files, planned_score_files,
+        BuildSampleRate, BUILD_DIRECTORY, WAV_HEADER_SIZE,
     };
     use crate::{
         part::{Part, PartScore},
@@ -445,7 +693,7 @@ mod tests {
         let project_directory = root.join("project");
         fs::create_dir(&project_directory).unwrap();
         let part = Part::new("intro", 2);
-        let project = Project::new("Arc Light", 8, 0, Seed::new(1))
+        let project = Project::new("Arc Light", 8, 100, Seed::new(1))
             .with_voices(vec![
                 Voice::new(1, "Lead Voice", VoiceType::Saw),
                 Voice::new(2, "Bass", VoiceType::Sin),
@@ -453,21 +701,23 @@ mod tests {
             .with_parts(vec![part.clone()]);
         let score = PartScore::from_rows(vec![
             vec!["C4".to_string(), "C3".to_string()],
-            vec!["D4".to_string(), "G2".to_string()],
+            vec!["D4".to_string(), String::new()],
         ]);
         let range = BeatRange::new(1, 2, 2).unwrap();
+        let arrangement_scores = vec![(part, score)];
         let playback_loop =
-            PlaybackLoop::from_project_arrangement(&project, &[(part, score)], range).unwrap();
+            PlaybackLoop::from_project_arrangement(&project, &arrangement_scores, range).unwrap();
 
         let result = build_project_audio(
             &project_directory,
             &project,
+            &arrangement_scores,
             playback_loop,
             BuildSampleRate::Hz48000,
         )
         .unwrap();
 
-        assert_eq!(result.file_count, 3);
+        assert_eq!(result.file_count, 5);
         assert_eq!(result.frame_count, 768);
         assert_eq!(result.sample_rate, 48_000);
         assert_eq!(result.duration_seconds(), 0.016);
@@ -486,9 +736,82 @@ mod tests {
             let stem_sum = files[1].samples[sample_index] + files[2].samples[sample_index];
             assert_eq!(files[0].samples[sample_index], stem_sum.clamp(-1.0, 1.0));
         }
+        let score_plans = planned_score_files(&project);
+        assert_eq!(
+            score_plans[0].file_name,
+            "arc-light-voice-01-lead-voice-score.json"
+        );
+        assert_eq!(
+            planned_build_files(&project)
+                .into_iter()
+                .map(|plan| plan.file_name)
+                .collect::<Vec<_>>(),
+            vec![
+                "arc-light-mix.wav",
+                "arc-light-voice-01-lead-voice.wav",
+                "arc-light-voice-01-lead-voice-score.json",
+                "arc-light-voice-02-bass.wav",
+                "arc-light-voice-02-bass-score.json",
+            ]
+        );
+        let lead_score: serde_json::Value = serde_json::from_slice(
+            &fs::read(result.directory.join(&score_plans[0].file_name)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(lead_score["schema_version"], 1);
+        assert_eq!(lead_score["project"], "Arc Light");
+        assert_eq!(lead_score["sample_rate_hz"], 48_000);
+        assert_eq!(lead_score["voice"]["id"], 1);
+        assert_eq!(lead_score["voice"]["name"], "Lead Voice");
+        assert_eq!(lead_score["voice"]["voice_type"], "saw");
+        let notes = lead_score["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0]["notation"], "C4");
+        assert_eq!(notes[0]["arrangement_beat"], 1);
+        assert_eq!(notes[0]["arrangement_occurrence"], 1);
+        assert_eq!(notes[0]["part"], "intro");
+        assert_eq!(notes[0]["part_beat"], 1);
+        assert_eq!(notes[0]["grid_timing"]["samples"], 0);
+        assert_eq!(notes[1]["grid_timing"]["samples"], 384);
+        for note in notes {
+            let grid = note["grid_timing"]["samples"].as_u64().unwrap();
+            let ahess = note["ahess_timing"]["samples"].as_u64().unwrap();
+            let applied = note["applied_timing_offset"]["samples"].as_u64().unwrap();
+            assert_eq!(ahess, grid + applied);
+            assert!(applied <= 100);
+            assert_eq!(note["permitted_timing_offset"]["maximum_samples"], 100);
+        }
+        let bass_score: serde_json::Value = serde_json::from_slice(
+            &fs::read(result.directory.join(&score_plans[1].file_name)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bass_score["notes"].as_array().unwrap().len(), 1);
         assert!(result.directory.ends_with(BUILD_DIRECTORY));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn score_json_timing_range_uses_the_renderers_one_beat_cap() {
+        let part = Part::new("pulse", 1);
+        let project = Project::new("test", 1, 100, Seed::new(9))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Sin)])
+            .with_parts(vec![part.clone()]);
+        let arrangement_scores = vec![(part, PartScore::from_rows(vec![vec!["C4".to_string()]]))];
+        let range = BeatRange::new(1, 1, 1).unwrap();
+        let playback_loop =
+            PlaybackLoop::from_project_arrangement(&project, &arrangement_scores, range).unwrap();
+
+        let voice_scores =
+            super::build_voice_scores(&project, &arrangement_scores, &playback_loop, 48_000)
+                .unwrap();
+        let note = &voice_scores[0].notes[0];
+        assert_eq!(note.permitted_timing_offset.maximum_samples, 47);
+        assert!(note.applied_timing_offset.samples <= 47);
+        assert_eq!(
+            note.ahess_timing.samples,
+            note.grid_timing.samples + u64::from(note.applied_timing_offset.samples)
+        );
     }
 
     #[test]
@@ -505,15 +828,14 @@ mod tests {
             .with_parts(vec![part.clone()]);
         let two_voice_score = PartScore::from_rows(vec![vec!["C4".to_string(), "C3".to_string()]]);
         let range = BeatRange::new(1, 1, 1).unwrap();
-        let two_voice_loop = PlaybackLoop::from_project_arrangement(
-            &two_voice_project,
-            &[(part.clone(), two_voice_score)],
-            range,
-        )
-        .unwrap();
+        let two_voice_scores = vec![(part.clone(), two_voice_score)];
+        let two_voice_loop =
+            PlaybackLoop::from_project_arrangement(&two_voice_project, &two_voice_scores, range)
+                .unwrap();
         build_project_audio(
             &project_directory,
             &two_voice_project,
+            &two_voice_scores,
             two_voice_loop,
             BuildSampleRate::Hz44100,
         )
@@ -521,30 +843,37 @@ mod tests {
         let stale_file = project_directory
             .join(BUILD_DIRECTORY)
             .join("test-voice-02-bass.wav");
+        let stale_score_file = project_directory
+            .join(BUILD_DIRECTORY)
+            .join("test-voice-02-bass-score.json");
         assert!(stale_file.exists());
+        assert!(stale_score_file.exists());
         let unrelated_file = project_directory.join(BUILD_DIRECTORY).join("notes.wav");
+        let unrelated_score_file = project_directory.join(BUILD_DIRECTORY).join("notes.json");
         fs::write(&unrelated_file, b"not generated by ahess").unwrap();
+        fs::write(&unrelated_score_file, b"not generated by ahess").unwrap();
 
         let one_voice_project = Project::new("test", 8, 0, Seed::new(1))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
             .with_parts(vec![part.clone()]);
         let one_voice_score = PartScore::from_rows(vec![vec!["C4".to_string()]]);
-        let one_voice_loop = PlaybackLoop::from_project_arrangement(
-            &one_voice_project,
-            &[(part, one_voice_score)],
-            range,
-        )
-        .unwrap();
+        let one_voice_scores = vec![(part, one_voice_score)];
+        let one_voice_loop =
+            PlaybackLoop::from_project_arrangement(&one_voice_project, &one_voice_scores, range)
+                .unwrap();
         build_project_audio(
             &project_directory,
             &one_voice_project,
+            &one_voice_scores,
             one_voice_loop,
             BuildSampleRate::Hz44100,
         )
         .unwrap();
 
         assert!(!stale_file.exists());
+        assert!(!stale_score_file.exists());
         assert!(unrelated_file.exists());
+        assert!(unrelated_score_file.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

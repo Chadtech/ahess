@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     audio_build,
-    part::{self, MajorSubdivision, PartName, PartScore, SubdivisionPattern},
+    part::{self, MajorSubdivision, Part, PartName, PartScore, SubdivisionPattern},
     playback::{BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
     style as s,
@@ -1398,13 +1398,17 @@ impl Model {
         self.arrangement_playback_loop_for_range(range, cx)
     }
 
-    fn full_arrangement_playback_loop(
+    fn full_arrangement_build_data(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Result<PlaybackLoop, String> {
+    ) -> Result<(PlaybackLoop, Vec<(Part, PartScore)>), String> {
         let beat_count = self.project.arrangement_beat_count();
         let range = BeatRange::new(1, beat_count, beat_count).map_err(|error| error.to_string())?;
-        self.arrangement_playback_loop_for_range(range, cx)
+        let arrangement_scores = self.arrangement_scores(cx)?;
+        let playback_loop =
+            PlaybackLoop::from_project_arrangement(&self.project, &arrangement_scores, range)
+                .map_err(|error| error.to_string())?;
+        Ok((playback_loop, arrangement_scores))
     }
 
     fn arrangement_playback_loop_for_range(
@@ -1412,6 +1416,15 @@ impl Model {
         range: BeatRange,
         cx: &mut Context<Self>,
     ) -> Result<PlaybackLoop, String> {
+        let arrangement_scores = self.arrangement_scores(cx)?;
+        PlaybackLoop::from_project_arrangement(&self.project, &arrangement_scores, range)
+            .map_err(|error| error.to_string())
+    }
+
+    fn arrangement_scores(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<(Part, PartScore)>, String> {
         let sequence = self.project.sequence().to_vec();
         let mut arrangement_scores = Vec::with_capacity(sequence.len());
         for part_name in sequence {
@@ -1419,9 +1432,7 @@ impl Model {
             let document = document.read(cx);
             arrangement_scores.push((document.part().clone(), document.score().clone()));
         }
-
-        PlaybackLoop::from_project_arrangement(&self.project, &arrangement_scores, range)
-            .map_err(|error| error.to_string())
+        Ok(arrangement_scores)
     }
 
     fn part_playback_loop(
@@ -2321,8 +2332,8 @@ impl Model {
             request_id,
             sample_rate,
         } = *msg;
-        let playback_loop = match self.full_arrangement_playback_loop(cx) {
-            Ok(playback_loop) => playback_loop,
+        let (playback_loop, arrangement_scores) = match self.full_arrangement_build_data(cx) {
+            Ok(build_data) => build_data,
             Err(error) => {
                 workspace.update(cx, |workspace, cx| {
                     workspace.build_finished(request_id, Err(error), cx);
@@ -2341,6 +2352,7 @@ impl Model {
                         audio_build::build_project_audio(
                             project_directory,
                             &project,
+                            &arrangement_scores,
                             playback_loop,
                             sample_rate,
                         )
@@ -3144,6 +3156,15 @@ fn loop_range_summary(project: &Project, range: Option<BeatRange>) -> String {
     }
 }
 
+fn arrangement_duration_summary(project: &Project) -> String {
+    let duration_millis = u128::from(project.arrangement_beat_count())
+        * u128::from(project.beat_duration_millis.get());
+    let rounded_seconds = (duration_millis + 500) / 1_000;
+    let minutes = rounded_seconds / 60;
+    let seconds = rounded_seconds % 60;
+    format!("{minutes}:{seconds:02}")
+}
+
 struct PlayingArrangementPosition {
     occurrence: usize,
     part_name: PartName,
@@ -3286,14 +3307,18 @@ fn score_arrangement_panel(
             div()
                 .flex()
                 .items_center()
-                .justify_between()
-                .gap(s::S3)
                 .pb(s::S4)
-                .child(div().text_color(s::TEXT_HEADER).child("arrangement"))
-                .child(div().text_color(s::TEXT_DEFAULT).child(format!(
-                    "{} {occurrence_label}, {beat_count} {beat_label}",
+                .gap(s::S3)
+                .text_color(s::TEXT_DEFAULT)
+                .child(format!(
+                    "{} {occurrence_label}, {beat_count} {beat_label},",
                     occurrences.len()
-                ))),
+                ))
+                .child(
+                    div()
+                        .debug_selector(|| "score-arrangement-duration-summary".to_string())
+                        .child(arrangement_duration_summary(project)),
+                ),
         )
         .child(
             div()
@@ -4059,13 +4084,13 @@ mod tests {
 
     use super::score::{self, ScoreAction};
     use super::{
-        append_project_variants, combine_project_parts, create_configured_project_part,
-        create_project_part, delete_project_part, duplicate_project_part, export_project_part_rows,
-        loop_range_summary, parts, playing_arrangement_position, rename_project_part,
-        update_project_sequence, voices, BuildWorkspaceMsg, ExportRowsConfirmed,
-        ExportRowsDialogMsg, Model, PartChangeError, PartsWorkspace, ProjectOverlay,
-        ProjectSettingsMsg, RowEditConfirmationMsg, RowEditRequested, StatusAction, UiState,
-        WorkspaceSection, WorkspaceSectionKind,
+        append_project_variants, arrangement_duration_summary, combine_project_parts,
+        create_configured_project_part, create_project_part, delete_project_part,
+        duplicate_project_part, export_project_part_rows, loop_range_summary, parts,
+        playing_arrangement_position, rename_project_part, update_project_sequence, voices,
+        BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
+        PartsWorkspace, ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg,
+        RowEditRequested, StatusAction, UiState, WorkspaceSection, WorkspaceSectionKind,
     };
     use crate::{
         acoustics::Point3Meters,
@@ -4140,6 +4165,26 @@ mod tests {
             "loop beats 10–23"
         );
         assert_eq!(loop_range_summary(&project, None), "set loop");
+    }
+
+    #[test]
+    fn arrangement_duration_summary_uses_the_complete_arrangement() {
+        let project = Project::new("test project", 5_125, 0, Seed::new(12))
+            .with_parts(vec![Part::new("intro", 3), Part::new("verse", 5)])
+            .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
+
+        assert_eq!(arrangement_duration_summary(&project), "1:07");
+
+        let one_second = Project::new("test project", 500, 0, Seed::new(12))
+            .with_parts(vec![Part::new("intro", 2)]);
+        assert_eq!(arrangement_duration_summary(&one_second), "0:01");
+
+        let whole_minutes = Project::new("test project", 30_000, 0, Seed::new(12))
+            .with_parts(vec![Part::new("intro", 4)]);
+        assert_eq!(arrangement_duration_summary(&whole_minutes), "2:00");
+
+        let empty = Project::new("test project", 500, 0, Seed::new(12));
+        assert_eq!(arrangement_duration_summary(&empty), "0:00");
     }
 
     #[gpui::test]
@@ -5084,6 +5129,9 @@ mod tests {
             cx.debug_bounds("score-view-2").unwrap(),
         ];
         let arrangement = cx.debug_bounds("score-arrangement-panel").unwrap();
+        let arrangement_duration = cx
+            .debug_bounds("score-arrangement-duration-summary")
+            .unwrap();
         let workspace_right = workspace.origin.x + workspace.size.width;
         let arrangement_right = arrangement.origin.x + arrangement.size.width;
 
@@ -5092,6 +5140,7 @@ mod tests {
         assert!((panes[1].size.width / panes[2].size.width - 1.0).abs() < 0.01);
         assert_eq!(arrangement.size.width, crate::style::S10);
         assert!(panes[2].right() < arrangement.left());
+        assert!(arrangement_duration.right() <= arrangement.right());
         assert!(arrangement_right <= workspace_right + px(1.0));
 
         fs::remove_dir_all(root).unwrap();

@@ -538,6 +538,19 @@ longer changes the tempo. Timing variance remains a sample count. The selected
 rate is explicit in the build workspace rather than inferred from audio
 hardware.
 
+A build also writes one versioned JSON score file per voice. Each file expands
+the complete arrangement, including repeated Part occurrences, and contains
+one object per sounding score cell. Notes retain their raw notation, nominal
+resolved frequency, Part and occurrence identity, and one-based arrangement
+beat. Their grid timing contains no humanization. Separate fields contain the
+deterministic Ahess timing, the applied timing offset, and the full permitted
+late-offset range. All timing is expressed in beats, seconds, and exact build
+samples so another renderer can reproduce the WAV timing, choose a different
+performance within the same range, or ignore variance. The permitted maximum
+uses the renderer's effective cap of one sample less than a beat. Score JSON
+and WAV files are published together and tracked by the same private build
+manifest.
+
 Voice files contain their post-spatialization contributions with the same
 master normalization ramp used by the mix. Summing the voice files therefore
 reproduces the mix before its final `[-1, 1]` safety clamp. Float samples let an

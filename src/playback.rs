@@ -72,11 +72,18 @@ impl Playback {
 #[derive(Clone, Debug)]
 pub struct PlaybackLoop {
     beat_duration_millis: BeatDurationMillis,
+    timing_variance: u32,
     voices: Vec<PlaybackVoice>,
     acoustic_scene: AcousticScene,
     beat_count: usize,
     first_arrangement_beat: u64,
     version: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedTimingOffset {
+    pub(crate) applied_samples: u32,
+    pub(crate) maximum_samples: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -224,12 +231,35 @@ impl PlaybackLoop {
 
         Ok(Self {
             beat_duration_millis: project.beat_duration_millis,
+            timing_variance: project.timing_variance,
             voices,
             acoustic_scene: project.acoustic_scene().clone(),
             beat_count: rows.len(),
             first_arrangement_beat,
             version: 0,
         })
+    }
+
+    pub(crate) fn prepared_timing_offset(
+        &self,
+        voice_index: usize,
+        arrangement_beat: u64,
+        sample_rate: u32,
+    ) -> Option<PreparedTimingOffset> {
+        let beat_index = arrangement_beat.checked_sub(self.first_arrangement_beat)? as usize;
+        let voice = self.voices.get(voice_index)?;
+        voice.frequencies.get(beat_index)?.as_ref()?;
+        let beat_length = beat_length_samples(self.beat_duration_millis, sample_rate as f32);
+        let maximum_samples = self.timing_variance.min(beat_length.saturating_sub(1));
+        let applied_samples = (*voice.delays.get(beat_index)?).min(maximum_samples);
+        Some(PreparedTimingOffset {
+            applied_samples,
+            maximum_samples,
+        })
+    }
+
+    pub(crate) fn beat_length_samples_at(&self, sample_rate: u32) -> u32 {
+        beat_length_samples(self.beat_duration_millis, sample_rate as f32)
     }
 }
 
