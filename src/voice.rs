@@ -59,16 +59,21 @@ pub enum VoiceType {
     Sin,
     Saw,
     HarmonicSaw,
+    #[serde(alias = "surge-xt")]
+    SurgeXtPiano,
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 3] = [Self::Sin, Self::Saw, Self::HarmonicSaw];
+    pub const ALL: [Self; 4] = [Self::Sin, Self::Saw, Self::HarmonicSaw, Self::SurgeXtPiano];
+    #[cfg(test)]
+    pub(crate) const BUILT_IN: [Self; 3] = [Self::Sin, Self::Saw, Self::HarmonicSaw];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic saw",
+            Self::SurgeXtPiano => "Surge XT Piano",
         }
     }
 
@@ -77,6 +82,27 @@ impl VoiceType {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic-saw",
+            Self::SurgeXtPiano => "surge-xt-piano",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    use super::VoiceType;
+
+    #[derive(Deserialize)]
+    struct StoredVoiceType {
+        voice_type: VoiceType,
+    }
+
+    #[test]
+    fn generic_surge_xt_drafts_migrate_to_the_concrete_piano_voice() {
+        let stored: StoredVoiceType = toml::from_str("voice_type = \"surge-xt\"").unwrap();
+
+        assert_eq!(stored.voice_type, VoiceType::SurgeXtPiano);
+        assert_eq!(stored.voice_type.config_value(), "surge-xt-piano");
     }
 }

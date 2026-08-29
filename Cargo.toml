@@ -15,6 +15,10 @@ csv = "1.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
+libc = "0.2"
+objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = ["AUComponent", "AudioComponent", "AudioUnit", "AudioUnitProperties", "MusicDevice", "objc2-core-audio-types", "objc2-core-foundation"] }
+objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFData", "CFDictionary", "CFString", "std"] }
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }

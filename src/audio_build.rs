@@ -148,7 +148,8 @@ pub(crate) fn build_project_audio(
         &playback_loop,
         sample_rate.hz(),
     )?;
-    let mut renderer = OfflineRenderer::new(playback_loop, sample_rate.hz());
+    let mut renderer = OfflineRenderer::new(playback_loop, sample_rate.hz())
+        .map_err(|error| AudioBuildError::new(error.to_string()))?;
     if renderer.voice_count() != project.voices().len() {
         return Err(AudioBuildError::new(
             "the prepared arrangement does not match the project voices",

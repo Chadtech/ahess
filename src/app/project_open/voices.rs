@@ -252,6 +252,8 @@ impl VoicesWorkspace {
         cx.subscribe(&buttons.saw, Self::on_saw_clicked).detach();
         cx.subscribe(&buttons.harmonic_saw, Self::on_harmonic_saw_clicked)
             .detach();
+        cx.subscribe(&buttons.surge_xt_piano, Self::on_surge_xt_piano_clicked)
+            .detach();
     }
 
     fn on_add_new_clicked(
@@ -379,6 +381,15 @@ impl VoicesWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.select_voice_type(VoiceType::HarmonicSaw, cx);
+    }
+
+    fn on_surge_xt_piano_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_voice_type(VoiceType::SurgeXtPiano, cx);
     }
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
@@ -706,6 +717,7 @@ struct VoiceTypeButtons {
     sin: Entity<Button>,
     saw: Entity<Button>,
     harmonic_saw: Entity<Button>,
+    surge_xt_piano: Entity<Button>,
 }
 
 impl VoiceTypeButtons {
@@ -719,6 +731,12 @@ impl VoiceTypeButtons {
                 selected,
                 cx,
             ),
+            surge_xt_piano: voice_type_button(
+                "voice-type-surge-xt-piano",
+                VoiceType::SurgeXtPiano,
+                selected,
+                cx,
+            ),
         }
     }
 
@@ -727,6 +745,7 @@ impl VoiceTypeButtons {
             self.sin.clone(),
             self.saw.clone(),
             self.harmonic_saw.clone(),
+            self.surge_xt_piano.clone(),
         ]
     }
 
@@ -734,6 +753,11 @@ impl VoiceTypeButtons {
         set_button_selected(&self.sin, selected == VoiceType::Sin, cx);
         set_button_selected(&self.saw, selected == VoiceType::Saw, cx);
         set_button_selected(&self.harmonic_saw, selected == VoiceType::HarmonicSaw, cx);
+        set_button_selected(
+            &self.surge_xt_piano,
+            selected == VoiceType::SurgeXtPiano,
+            cx,
+        );
     }
 }
 
@@ -786,6 +810,34 @@ mod tests {
                 panic!("voice type selection must keep the add view open");
             };
             assert_eq!(*selected_voice_type, VoiceType::HarmonicSaw);
+        });
+    }
+
+    #[gpui::test]
+    fn surge_xt_piano_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
+            let surge_xt_piano_button = match &dialog.view {
+                View::Add {
+                    voice_type_buttons, ..
+                } => voice_type_buttons.surge_xt_piano.clone(),
+                _ => panic!("add view must contain voice type buttons"),
+            };
+
+            dialog.on_surge_xt_piano_clicked(surge_xt_piano_button, &button::Clicked, cx);
+
+            let View::Add {
+                selected_voice_type,
+                ..
+            } = &dialog.view
+            else {
+                panic!("voice type selection must keep the add view open");
+            };
+            assert_eq!(*selected_voice_type, VoiceType::SurgeXtPiano);
         });
     }
 

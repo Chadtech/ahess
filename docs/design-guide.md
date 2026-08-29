@@ -190,6 +190,8 @@ or when it defines how a shared component is used.
   the ordinary status-bar colors.
 - use the warning state for conditions that need attention but do not prevent
   continued work. Use the error state for invalid input and failed operations.
+- show the shared `copy` button at the trailing edge of every error status. It
+  copies the complete error message even when the visible message is truncated.
 - make an actionable error status explicit in its message and give the entire
   bar a pointing cursor. Use the action to reveal the affected input or retry
   the failed operation.

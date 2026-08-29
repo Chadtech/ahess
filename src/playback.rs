@@ -20,6 +20,11 @@ use crate::{
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
     seed::{standard_normal, Seed},
 };
+#[cfg(target_os = "macos")]
+use crate::{
+    mts_esp::{MtsEspMaster, MtsNoteAddress},
+    surge_xt::SurgeXt,
+};
 
 const MASTER_GAIN: f32 = 0.22;
 const MIX_GAIN_RAMP_SAMPLES: u32 = 64;
@@ -32,6 +37,12 @@ const HARMONIC_SAW_INHARMONICITY: f32 = 0.000_016;
 const HARMONIC_SAW_SPECTRAL_SLOPE: f32 = 1.12;
 const HARMONIC_SAW_NYQUIST_MARGIN: f32 = 0.98;
 const HARMONIC_SAW_RENORMALIZE_INTERVAL: u32 = 1_024;
+#[cfg(target_os = "macos")]
+const SURGE_RENDER_BLOCK_FRAMES: usize = 512;
+#[cfg(target_os = "macos")]
+const SURGE_SILENCE_THRESHOLD: f32 = 0.000_001;
+#[cfg(target_os = "macos")]
+const SURGE_PIANO_GAIN: f32 = 8.0;
 
 pub struct Playback {
     _stream: Stream,
@@ -188,6 +199,7 @@ impl PlaybackLoop {
         if rows.is_empty() {
             return Err(PlaybackError::new("a loop must contain at least one beat"));
         }
+        validate_external_voice_support(project)?;
 
         let maximum_delay = project.timing_variance;
         let voices = project
@@ -396,7 +408,7 @@ where
 {
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate as f32;
-    let mut engine = AudioEngine::new(sample_rate, shared_loop, playhead);
+    let mut engine = AudioEngine::new(sample_rate, shared_loop, playhead)?;
     let error_callback = |error| eprintln!("audio stream error: {error}");
 
     device
@@ -413,6 +425,8 @@ struct AudioEngine {
     sample_rate: f32,
     beat_length_samples: u32,
     voice_runtimes: Vec<VoiceRuntime>,
+    #[cfg(target_os = "macos")]
+    mts_master: Option<Arc<MtsEspMaster>>,
     mix_gain: GainRamp,
     beat_index: usize,
     sample_in_beat: u32,
@@ -426,30 +440,45 @@ impl AudioEngine {
         sample_rate: f32,
         shared_loop: Arc<Mutex<PlaybackLoop>>,
         playhead: Arc<AtomicU64>,
-    ) -> Self {
+    ) -> Result<Self, PlaybackError> {
         let playback_loop = shared_loop
             .lock()
             .expect("playback loop mutex was poisoned")
             .clone();
+        #[cfg(target_os = "macos")]
+        let mts_master = prepare_mts_master(&playback_loop)?;
         let voice_runtimes = playback_loop
             .voices
             .iter()
-            .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
-            .collect();
+            .enumerate()
+            .map(|(voice_index, voice)| {
+                VoiceRuntime::new(
+                    voice,
+                    voice_index,
+                    playback_loop.voices.len(),
+                    &playback_loop.acoustic_scene,
+                    sample_rate,
+                    #[cfg(target_os = "macos")]
+                    mts_master.as_ref(),
+                )
+            })
+            .collect::<Result<Vec<_>, PlaybackError>>()?;
         let beat_length_samples =
             beat_length_samples(playback_loop.beat_duration_millis, sample_rate);
 
-        Self {
+        Ok(Self {
             sample_rate,
             beat_length_samples,
             voice_runtimes,
+            #[cfg(target_os = "macos")]
+            mts_master,
             mix_gain: GainRamp::new(MASTER_GAIN),
             beat_index: 0,
             sample_in_beat: 0,
             playback_loop,
             shared_loop,
             playhead,
-        }
+        })
     }
 
     fn write<T>(&mut self, output: &mut [T], channels: usize)
@@ -480,19 +509,39 @@ impl AudioEngine {
             != self.playback_loop.first_arrangement_beat
             || playback_loop.beat_count != self.playback_loop.beat_count;
         let scene_changed = playback_loop.acoustic_scene != self.playback_loop.acoustic_scene;
+        #[cfg(target_os = "macos")]
+        if self.mts_master.is_none()
+            && playback_loop
+                .voices
+                .iter()
+                .any(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+        {
+            match prepare_mts_master(&playback_loop) {
+                Ok(master) => self.mts_master = master,
+                Err(error) => {
+                    eprintln!("cannot update playback with Surge XT Piano: {error}");
+                    return;
+                }
+            }
+        }
         let mut previous_runtimes = std::mem::take(&mut self.voice_runtimes);
         self.voice_runtimes = playback_loop
             .voices
             .iter()
-            .map(|voice| {
+            .enumerate()
+            .map(|(voice_index, voice)| {
                 let Some(index) = previous_runtimes
                     .iter()
                     .position(|runtime| runtime.id == voice.id)
                 else {
                     return VoiceRuntime::new(
                         voice,
+                        voice_index,
+                        playback_loop.voices.len(),
                         &playback_loop.acoustic_scene,
                         self.sample_rate,
+                        #[cfg(target_os = "macos")]
+                        self.mts_master.as_ref(),
                     );
                 };
                 let mut runtime = previous_runtimes.swap_remove(index);
@@ -504,10 +553,18 @@ impl AudioEngine {
                         f64::from(self.sample_rate),
                     );
                 }
-                runtime.reconcile_voice_type(voice.voice_type);
-                runtime
+                runtime.reconcile_voice_type(
+                    voice.voice_type,
+                    voice_index,
+                    playback_loop.voices.len(),
+                    self.sample_rate,
+                    #[cfg(target_os = "macos")]
+                    self.mts_master.as_ref(),
+                )?;
+                Ok(runtime)
             })
-            .collect();
+            .collect::<Result<Vec<_>, PlaybackError>>()
+            .expect("validated playback update could not create its voice instruments");
         self.playback_loop = playback_loop;
         self.beat_length_samples =
             beat_length_samples(self.playback_loop.beat_duration_millis, self.sample_rate);
@@ -579,18 +636,34 @@ pub(crate) struct OfflineRenderer {
 }
 
 impl OfflineRenderer {
-    pub(crate) fn new(playback_loop: PlaybackLoop, sample_rate: u32) -> Self {
+    pub(crate) fn new(
+        playback_loop: PlaybackLoop,
+        sample_rate: u32,
+    ) -> Result<Self, PlaybackError> {
         let sample_rate = sample_rate as f32;
+        #[cfg(target_os = "macos")]
+        let mts_master = prepare_mts_master(&playback_loop)?;
         let voice_runtimes = playback_loop
             .voices
             .iter()
-            .map(|voice| VoiceRuntime::new(voice, &playback_loop.acoustic_scene, sample_rate))
-            .collect();
+            .enumerate()
+            .map(|(voice_index, voice)| {
+                VoiceRuntime::new(
+                    voice,
+                    voice_index,
+                    playback_loop.voices.len(),
+                    &playback_loop.acoustic_scene,
+                    sample_rate,
+                    #[cfg(target_os = "macos")]
+                    mts_master.as_ref(),
+                )
+            })
+            .collect::<Result<Vec<_>, PlaybackError>>()?;
         let voice_frames = vec![StereoFrame::SILENCE; playback_loop.voices.len()];
         let beat_length_samples =
             beat_length_samples(playback_loop.beat_duration_millis, sample_rate);
 
-        Self {
+        Ok(Self {
             sample_rate,
             beat_length_samples,
             voice_runtimes,
@@ -599,7 +672,7 @@ impl OfflineRenderer {
             beat_index: 0,
             sample_in_beat: 0,
             playback_loop,
-        }
+        })
     }
 
     pub(crate) fn voice_count(&self) -> usize {
@@ -706,24 +779,56 @@ impl GainRamp {
 struct VoiceRuntime {
     id: VoiceId,
     position: Point3Meters,
-    oscillator: OscillatorRuntime,
+    instrument: InstrumentRuntime,
     spatializer: VoiceSpatializer,
 }
 
 impl VoiceRuntime {
-    fn new(voice: &PlaybackVoice, scene: &AcousticScene, sample_rate: f32) -> Self {
-        Self {
+    fn new(
+        voice: &PlaybackVoice,
+        voice_index: usize,
+        voice_count: usize,
+        scene: &AcousticScene,
+        sample_rate: f32,
+        #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
+    ) -> Result<Self, PlaybackError> {
+        Ok(Self {
             id: voice.id,
             position: voice.position,
-            oscillator: OscillatorRuntime::new(voice.voice_type),
+            instrument: InstrumentRuntime::new(
+                voice.voice_type,
+                voice_index,
+                voice_count,
+                sample_rate,
+                #[cfg(target_os = "macos")]
+                mts_master,
+            )?,
             spatializer: VoiceSpatializer::new(scene, voice.position, f64::from(sample_rate)),
-        }
+        })
     }
 
-    fn reconcile_voice_type(&mut self, voice_type: VoiceType) {
-        if self.oscillator.voice_type() != voice_type {
-            self.oscillator = OscillatorRuntime::new(voice_type);
+    fn reconcile_voice_type(
+        &mut self,
+        voice_type: VoiceType,
+        voice_index: usize,
+        voice_count: usize,
+        sample_rate: f32,
+        #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
+    ) -> Result<(), PlaybackError> {
+        if !self
+            .instrument
+            .matches(voice_type, voice_index, voice_count)
+        {
+            self.instrument = InstrumentRuntime::new(
+                voice_type,
+                voice_index,
+                voice_count,
+                sample_rate,
+                #[cfg(target_os = "macos")]
+                mts_master,
+            )?;
         }
+        Ok(())
     }
 
     fn render(
@@ -734,23 +839,306 @@ impl VoiceRuntime {
         beat_length: u32,
         sample_rate: f32,
     ) -> (StereoFrame, bool) {
-        let mut source_sample = 0.0;
-        let mut source_is_active = false;
-        if let Some(beat_index) = beat_index {
-            if let Some(frequency) = voice.frequencies[beat_index] {
-                let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
-                if sample_in_beat >= delay {
-                    let note_sample = sample_in_beat - delay;
-                    let note_length = beat_length - delay;
-                    source_sample = self.oscillator.sample(frequency.as_hz_f32(), sample_rate)
-                        * envelope(note_sample, note_length);
-                    source_is_active = true;
-                }
-            }
-        }
+        let (source_sample, source_is_active) =
+            self.instrument
+                .sample(voice, beat_index, sample_in_beat, beat_length, sample_rate);
 
         self.spatializer.process(source_sample, source_is_active)
     }
+}
+
+enum InstrumentRuntime {
+    BuiltIn(OscillatorRuntime),
+    #[cfg(target_os = "macos")]
+    SurgeXtPiano(SurgeXtPianoRuntime),
+}
+
+impl InstrumentRuntime {
+    fn new(
+        voice_type: VoiceType,
+        voice_index: usize,
+        voice_count: usize,
+        sample_rate: f32,
+        #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
+    ) -> Result<Self, PlaybackError> {
+        match voice_type {
+            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
+                Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
+            }
+            VoiceType::SurgeXtPiano => {
+                #[cfg(target_os = "macos")]
+                {
+                    let master = mts_master.ok_or_else(|| {
+                        PlaybackError::new(
+                            "Surge XT Piano requires the MTS-ESP exact-frequency master",
+                        )
+                    })?;
+                    return SurgeXtPianoRuntime::new(
+                        voice_index,
+                        voice_count,
+                        sample_rate,
+                        Arc::clone(master),
+                    )
+                    .map(Self::SurgeXtPiano);
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    Err(PlaybackError::new(
+                        "Surge XT Piano voices are currently supported only on macOS",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn matches(&self, voice_type: VoiceType, voice_index: usize, voice_count: usize) -> bool {
+        match self {
+            Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
+            #[cfg(target_os = "macos")]
+            Self::SurgeXtPiano(runtime) => {
+                voice_type == VoiceType::SurgeXtPiano
+                    && runtime.voice_index == voice_index
+                    && runtime.voice_count == voice_count
+            }
+        }
+    }
+
+    fn sample(
+        &mut self,
+        voice: &PlaybackVoice,
+        beat_index: Option<usize>,
+        sample_in_beat: u32,
+        beat_length: u32,
+        sample_rate: f32,
+    ) -> (f32, bool) {
+        match self {
+            Self::BuiltIn(oscillator) => {
+                let Some(beat_index) = beat_index else {
+                    return (0.0, false);
+                };
+                let Some(frequency) = voice.frequencies[beat_index] else {
+                    return (0.0, false);
+                };
+                let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                if sample_in_beat < delay {
+                    return (0.0, false);
+                }
+                let note_sample = sample_in_beat - delay;
+                let note_length = beat_length - delay;
+                (
+                    oscillator.sample(frequency.as_hz_f32(), sample_rate)
+                        * envelope(note_sample, note_length),
+                    true,
+                )
+            }
+            #[cfg(target_os = "macos")]
+            Self::SurgeXtPiano(runtime) => {
+                runtime.sample(voice, beat_index, sample_in_beat, beat_length)
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct SurgeXtPianoRuntime {
+    synth: SurgeXt,
+    master: Arc<MtsEspMaster>,
+    voice_index: usize,
+    voice_count: usize,
+    active_note: Option<MtsNoteAddress>,
+    stereo_buffer: Vec<f32>,
+    buffer_frame: usize,
+    buffered_frames: usize,
+    buffer_has_audio: bool,
+    failed: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl SurgeXtPianoRuntime {
+    fn new(
+        voice_index: usize,
+        voice_count: usize,
+        sample_rate: f32,
+        master: Arc<MtsEspMaster>,
+    ) -> Result<Self, PlaybackError> {
+        if voice_index >= 16 {
+            return Err(PlaybackError::new(
+                "Surge XT Piano exact-frequency playback supports at most 16 project voices",
+            ));
+        }
+        let synth = SurgeXt::new_piano(f64::from(sample_rate)).map_err(|error| {
+            PlaybackError::new(format!("failed to prepare Surge XT Piano voice: {error}"))
+        })?;
+        Ok(Self {
+            synth,
+            master,
+            voice_index,
+            voice_count,
+            active_note: None,
+            stereo_buffer: vec![0.0; SURGE_RENDER_BLOCK_FRAMES * 2],
+            buffer_frame: 0,
+            buffered_frames: 0,
+            buffer_has_audio: false,
+            failed: false,
+        })
+    }
+
+    fn sample(
+        &mut self,
+        voice: &PlaybackVoice,
+        beat_index: Option<usize>,
+        sample_in_beat: u32,
+        beat_length: u32,
+    ) -> (f32, bool) {
+        if self.failed {
+            return (0.0, false);
+        }
+        if self.buffer_frame >= self.buffered_frames {
+            if let Err(error) = self.fill_buffer(voice, beat_index, sample_in_beat, beat_length) {
+                eprintln!("Surge XT render stopped: {error}");
+                self.failed = true;
+                return (0.0, false);
+            }
+        }
+
+        let offset = self.buffer_frame * 2;
+        let sample =
+            (self.stereo_buffer[offset] + self.stereo_buffer[offset + 1]) * 0.5 * SURGE_PIANO_GAIN;
+        self.buffer_frame += 1;
+        (sample, self.active_note.is_some() || self.buffer_has_audio)
+    }
+
+    fn fill_buffer(
+        &mut self,
+        voice: &PlaybackVoice,
+        beat_index: Option<usize>,
+        sample_in_beat: u32,
+        beat_length: u32,
+    ) -> Result<(), PlaybackError> {
+        if sample_in_beat == 0 {
+            if let Some(address) = self.active_note.take() {
+                self.synth
+                    .note_off(address.channel, address.note, 0)
+                    .map_err(|error| PlaybackError::new(error.to_string()))?;
+            }
+        }
+
+        let next_boundary = if let Some(beat_index) = beat_index {
+            let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+            if sample_in_beat == delay {
+                if let Some(frequency) = voice.frequencies[beat_index] {
+                    let address = MtsNoteAddress {
+                        // Surge's default channel-2/channel-3 scene behavior does
+                        // not reliably apply MTS retuning outside MIDI channel 1.
+                        // Instances are already isolated; disjoint note lanes
+                        // prevent collisions in the shared general tuning table.
+                        channel: 0,
+                        note: collision_free_midi_note(
+                            frequency,
+                            self.voice_index,
+                            self.voice_count,
+                        ),
+                    };
+                    self.master.set_frequency(address, frequency.as_hz());
+                    self.synth
+                        .note_on(address.channel, address.note, 100, 0)
+                        .map_err(|error| PlaybackError::new(error.to_string()))?;
+                    self.active_note = Some(address);
+                }
+            }
+            if sample_in_beat < delay && voice.frequencies[beat_index].is_some() {
+                delay
+            } else {
+                beat_length
+            }
+        } else {
+            if let Some(address) = self.active_note.take() {
+                self.synth
+                    .note_off(address.channel, address.note, 0)
+                    .map_err(|error| PlaybackError::new(error.to_string()))?;
+            }
+            sample_in_beat.saturating_add(SURGE_RENDER_BLOCK_FRAMES as u32)
+        };
+        let frames_until_boundary = next_boundary.saturating_sub(sample_in_beat).max(1) as usize;
+        self.buffered_frames = frames_until_boundary.min(SURGE_RENDER_BLOCK_FRAMES);
+        self.buffer_frame = 0;
+        let samples = self.buffered_frames * 2;
+        self.stereo_buffer[..samples].fill(0.0);
+        self.synth
+            .render(&mut self.stereo_buffer[..samples])
+            .map_err(|error| PlaybackError::new(error.to_string()))?;
+        self.buffer_has_audio = self.stereo_buffer[..samples]
+            .iter()
+            .any(|sample| sample.abs() > SURGE_SILENCE_THRESHOLD);
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn collision_free_midi_note(frequency: FrequencyHz, voice_index: usize, voice_count: usize) -> u8 {
+    let ideal_note = 69.0 + 12.0 * (frequency.as_hz() / 440.0).log2();
+    (0_u8..=127)
+        .filter(|note| usize::from(*note) % voice_count == voice_index)
+        .min_by(|left, right| {
+            (f64::from(*left) - ideal_note)
+                .abs()
+                .total_cmp(&(f64::from(*right) - ideal_note).abs())
+        })
+        .expect("a validated project voice owns at least one MIDI note")
+}
+
+fn validate_external_voice_support(project: &Project) -> Result<(), PlaybackError> {
+    let surge_voice_count = project
+        .voices()
+        .iter()
+        .filter(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+        .count();
+    if surge_voice_count == 0 {
+        return Ok(());
+    }
+    if project.voices().len() > 16 {
+        return Err(PlaybackError::new(
+            "Surge XT Piano exact-frequency playback supports at most 16 project voices",
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if !SurgeXt::is_available() {
+            return Err(PlaybackError::new(
+                "Surge XT Audio Unit aumu/SgXT/VmbA is not installed",
+            ));
+        }
+        if !MtsEspMaster::is_available() {
+            return Err(PlaybackError::new(
+                "Surge XT Piano exact-frequency playback requires the free MTS-ESP middleware",
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(PlaybackError::new(
+            "Surge XT Piano voices are currently supported only on macOS",
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_mts_master(
+    playback_loop: &PlaybackLoop,
+) -> Result<Option<Arc<MtsEspMaster>>, PlaybackError> {
+    if !playback_loop
+        .voices
+        .iter()
+        .any(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+    {
+        return Ok(None);
+    }
+    MtsEspMaster::new()
+        .map(Arc::new)
+        .map(Some)
+        .map_err(|error| PlaybackError::new(error.to_string()))
 }
 
 enum OscillatorRuntime {
@@ -765,6 +1153,7 @@ impl OscillatorRuntime {
             VoiceType::Sin => Self::Sin { phase: 0.0 },
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
+            VoiceType::SurgeXtPiano => unreachable!("external instruments are not oscillators"),
         }
     }
 
@@ -942,22 +1331,29 @@ fn envelope(sample: u32, length: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
     use std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     };
 
+    #[cfg(target_os = "macos")]
+    use super::collision_free_midi_note;
     use super::{
         beat_length_samples, frequency_variance_seed, normally_distributed_delay, timing_seed,
         varied_frequency, write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial,
         HarmonicSawRuntime, OfflineRenderer, PlaybackLoop, HARMONIC_SAW_PARTIAL_COUNT,
         MIX_GAIN_RAMP_SAMPLES,
     };
+    #[cfg(target_os = "macos")]
+    use crate::mts_esp::MtsEspTuningProbe;
     use crate::{
         acoustics::{Point3Meters, StereoFrame},
         part::{Part, PartScore},
-        pitch_system::{FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem},
+        pitch_system::{
+            ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
+            PitchSystem,
+        },
         project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType},
         seed::Seed,
     };
@@ -1020,6 +1416,30 @@ mod tests {
         assert_eq!(
             playback_loop.voices[1].frequencies[1],
             project.pitch_system().resolve_cell("G2").unwrap()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn surge_voices_use_collision_free_keys_on_the_common_tuning_channel() {
+        let clustered_frequency = FrequencyHz::new(261.625_565).unwrap();
+        let notes = (0..4)
+            .map(|voice_index| collision_free_midi_note(clustered_frequency, voice_index, 4))
+            .collect::<Vec<_>>();
+        assert_eq!(notes, vec![60, 61, 58, 59]);
+        assert_eq!(notes.iter().copied().collect::<HashSet<_>>().len(), 4);
+
+        assert_eq!(
+            collision_free_midi_note(FrequencyHz::new(64.0).unwrap(), 0, 1),
+            36
+        );
+        assert_eq!(
+            collision_free_midi_note(FrequencyHz::new(440.0).unwrap(), 0, 1),
+            69
+        );
+        assert_eq!(
+            collision_free_midi_note(FrequencyHz::new(512.0).unwrap(), 0, 1),
+            72
         );
     }
 
@@ -1356,7 +1776,7 @@ mod tests {
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(1));
-        let mut engine = AudioEngine::new(1_000.0, shared, playhead);
+        let mut engine = AudioEngine::new(1_000.0, shared, playhead).unwrap();
 
         let frames = (0..24).map(|_| engine.next_frame()).collect::<Vec<_>>();
 
@@ -1369,7 +1789,7 @@ mod tests {
 
     #[test]
     fn every_voice_type_matches_between_live_and_offline_rendering() {
-        for voice_type in VoiceType::ALL {
+        for voice_type in VoiceType::BUILT_IN {
             let project = Project::new("test", 8, 0, Seed::new(1))
                 .with_voices(vec![Voice::new(1, "lead", voice_type)]);
             let part = Part::new("intro", 1);
@@ -1378,8 +1798,8 @@ mod tests {
             let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
             let shared = Arc::new(Mutex::new(playback_loop.clone()));
             let playhead = Arc::new(AtomicU64::new(1));
-            let mut live = AudioEngine::new(48_000.0, shared, playhead);
-            let mut offline = OfflineRenderer::new(playback_loop, 48_000);
+            let mut live = AudioEngine::new(48_000.0, shared, playhead).unwrap();
+            let mut offline = OfflineRenderer::new(playback_loop, 48_000).unwrap();
 
             for _ in 0..384 {
                 let live_frame = live.next_frame();
@@ -1390,6 +1810,134 @@ mod tests {
             }
             assert!(offline.next_frame().is_none());
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires installed Surge XT and MTS-ESP"]
+    fn surge_xt_piano_renders_simultaneous_clustered_exact_frequencies() {
+        let frequencies = [255.0, 259.0, 263.0, 267.0].map(|hz| FrequencyHz::new(hz).unwrap());
+        let pitch_system = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "exact test",
+                BTreeMap::from([
+                    ("first".to_string(), frequencies[0]),
+                    ("second".to_string(), frequencies[1]),
+                    ("third".to_string(), frequencies[2]),
+                    ("fourth".to_string(), frequencies[3]),
+                ]),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test", 100, 0, Seed::new(1))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![
+                Voice::new(1, "first", VoiceType::SurgeXtPiano),
+                Voice::new(2, "second", VoiceType::SurgeXtPiano),
+                Voice::new(3, "third", VoiceType::SurgeXtPiano),
+                Voice::new(4, "fourth", VoiceType::SurgeXtPiano),
+            ]);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec![
+            "first".to_string(),
+            "second".to_string(),
+            "third".to_string(),
+            "fourth".to_string(),
+        ]]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+
+        assert_eq!(
+            playback_loop
+                .voices
+                .iter()
+                .map(|voice| voice.frequencies[0].unwrap().as_hz())
+                .collect::<Vec<_>>(),
+            frequencies.map(FrequencyHz::as_hz)
+        );
+
+        let mut renderer = OfflineRenderer::new(playback_loop, 48_000).unwrap();
+        let (_, first_voice_frames) = renderer.next_frame().unwrap();
+        assert_eq!(first_voice_frames.len(), 4);
+
+        let tuning = MtsEspTuningProbe::new().unwrap();
+        for (voice_index, frequency) in frequencies.into_iter().enumerate() {
+            let note = collision_free_midi_note(frequency, voice_index, 4);
+            let published_frequency = tuning.frequency(note);
+            assert!(
+                (published_frequency - frequency.as_hz()).abs() < 1.0e-9,
+                "voice {voice_index} requested {} Hz but the MTS general table contains {published_frequency} Hz",
+                frequency.as_hz()
+            );
+        }
+
+        let mut energy = [0.0_f32; 4];
+        let mut voice_samples: [Vec<f32>; 4] = std::array::from_fn(|_| Vec::new());
+        for _ in 0..48_000 {
+            let Some((_, voice_frames)) = renderer.next_frame() else {
+                break;
+            };
+            for ((voice_energy, samples), frame) in
+                energy.iter_mut().zip(&mut voice_samples).zip(voice_frames)
+            {
+                *voice_energy += frame.left.abs() + frame.right.abs();
+                samples.push((frame.left + frame.right) * 0.5);
+            }
+        }
+        assert!(
+            energy.into_iter().all(|voice_energy| voice_energy > 0.01),
+            "a Surge XT Piano voice rendered silence"
+        );
+        for (voice_index, (samples, expected)) in voice_samples.iter().zip(frequencies).enumerate()
+        {
+            let measured = strongest_frequency_near(samples, expected.as_hz(), 48_000.0);
+            let error_cents = 1_200.0 * (measured / expected.as_hz()).log2();
+            assert!(
+                error_cents.abs() < 40.0,
+                "voice {voice_index} requested {} Hz but rendered {measured} Hz ({error_cents} cents)",
+                expected.as_hz()
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn strongest_frequency_near(samples: &[f32], expected: f64, sample_rate: f64) -> f64 {
+        let start = 2_400.min(samples.len());
+        let end = 12_000.min(samples.len());
+        let sample_count = end.saturating_sub(start);
+        assert!(sample_count > 1);
+        let windowed = samples[start..end]
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| {
+                let phase = std::f64::consts::TAU * index as f64 / (sample_count - 1) as f64;
+                f64::from(*sample) * (0.5 - 0.5 * phase.cos())
+            })
+            .collect::<Vec<_>>();
+
+        let minimum = expected * 0.85;
+        let maximum = expected * 1.15;
+        let step = 0.05;
+        let candidate_count = ((maximum - minimum) / step).ceil() as usize;
+        (0..=candidate_count)
+            .map(|candidate| minimum + candidate as f64 * step)
+            .map(|frequency| {
+                let angle = std::f64::consts::TAU * frequency / sample_rate;
+                let (step_sin, step_cos) = angle.sin_cos();
+                let (mut oscillator_sin, mut oscillator_cos) = (0.0, 1.0);
+                let (mut imaginary, mut real) = (0.0, 0.0);
+                for sample in &windowed {
+                    real += sample * oscillator_cos;
+                    imaginary -= sample * oscillator_sin;
+                    let next_cos = oscillator_cos * step_cos - oscillator_sin * step_sin;
+                    oscillator_sin = oscillator_sin * step_cos + oscillator_cos * step_sin;
+                    oscillator_cos = next_cos;
+                }
+                (frequency, real * real + imaginary * imaginary)
+            })
+            .max_by(|left, right| left.1.total_cmp(&right.1))
+            .unwrap()
+            .0
     }
 
     #[test]
@@ -1404,7 +1952,7 @@ mod tests {
         let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
         let rows = score.resolved_rows(&part, &project).unwrap();
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
-        let mut offline = OfflineRenderer::new(playback_loop, 48_000);
+        let mut offline = OfflineRenderer::new(playback_loop, 48_000).unwrap();
         let mut rendered_frame_count = 0;
 
         while offline.next_frame().is_some() {
@@ -1430,7 +1978,7 @@ mod tests {
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(1));
-        let mut engine = AudioEngine::new(44_100.0, shared, playhead);
+        let mut engine = AudioEngine::new(44_100.0, shared, playhead).unwrap();
 
         let frames = (0..600).map(|_| engine.next_frame()).collect::<Vec<_>>();
         let left_energy = frames.iter().map(|frame| frame.left.abs()).sum::<f32>();
@@ -1489,7 +2037,7 @@ mod tests {
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 4).unwrap();
         let shared = Arc::new(Mutex::new(playback_loop));
         let playhead = Arc::new(AtomicU64::new(4));
-        let mut engine = AudioEngine::new(1_000.0, shared, Arc::clone(&playhead));
+        let mut engine = AudioEngine::new(1_000.0, shared, Arc::clone(&playhead)).unwrap();
 
         engine.next_frame();
         assert_eq!(playhead.load(Ordering::Relaxed), 4);

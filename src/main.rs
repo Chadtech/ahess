@@ -6,6 +6,8 @@ mod cpal_spike;
 mod gpui_spike;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod mts_esp;
 mod palette;
 pub mod part;
 pub mod pitch_system;
@@ -13,6 +15,8 @@ mod playback;
 pub mod project;
 pub mod seed;
 mod style;
+#[cfg(target_os = "macos")]
+mod surge_xt;
 pub mod tuning_system;
 mod view;
 pub mod voice;
