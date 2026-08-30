@@ -41,10 +41,17 @@ pub fn bar<T>(status: Status<T>) -> gpui::Div {
 }
 
 fn copy_error_button(message: SharedString) -> gpui::Div {
+    action_button("copy-status-error", "copy").on_mouse_down(MouseButton::Left, move |_, _, cx| {
+        cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(message.to_string()));
+    })
+}
+
+pub fn action_button(id: &'static str, label: impl Into<SharedString>) -> gpui::Div {
     s::raised(
         div()
-            .id("copy-status-error")
-            .debug_selector(|| "copy-status-error".to_string())
+            .id(id)
+            .debug_selector(move || id.to_string())
             .flex()
             .flex_none()
             .items_center()
@@ -56,11 +63,7 @@ fn copy_error_button(message: SharedString) -> gpui::Div {
             .cursor(CursorStyle::PointingHand)
             .hover(|style| style.text_color(s::TEXT_HOVERED))
             .active(|style| style.bg(s::GRAY1))
-            .child("copy")
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                cx.stop_propagation();
-                cx.write_to_clipboard(ClipboardItem::new_string(message.to_string()));
-            }),
+            .child(label.into()),
     )
 }
 

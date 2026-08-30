@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     audio_build,
     part::{self, MajorSubdivision, Part, PartName, PartScore, SubdivisionPattern},
-    playback::{BeatRange, Playback, PlaybackLoop},
+    playback::{reset_mts_esp_master, BeatRange, Playback, PlaybackLoop},
     project::{self, Project},
     style as s,
     view::{
@@ -116,7 +116,7 @@ pub struct Model {
     playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
     build_task: Option<Task<()>>,
-    transport_error: Option<String>,
+    transport_error: Option<TransportError>,
     workspace_error: Option<String>,
     history: ProjectHistory,
     history_activity: HistoryActivity,
@@ -167,6 +167,15 @@ struct ActivePlayback {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum TransportError {
+    Message(String),
+    MtsMasterAlreadyActive {
+        message: String,
+        retry_target: PlaybackTarget,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum PlaybackTarget {
     Arrangement,
     Part(PartName),
@@ -180,6 +189,7 @@ enum StatusAction {
         column: usize,
     },
     RetryScoreSave,
+    ResetMtsEspAndRetry(PlaybackTarget),
 }
 
 type ProjectStatus = status_bar::Status<StatusAction>;
@@ -618,7 +628,7 @@ impl Model {
         let playback_loop = match self.playback_loop_for_target(&target, cx) {
             Ok(playback_loop) => playback_loop,
             Err(error) => {
-                self.transport_error = Some(error);
+                self.transport_error = Some(TransportError::Message(error));
                 cx.notify();
                 return;
             }
@@ -1208,10 +1218,22 @@ impl Model {
             };
         }
 
-        if let Some(message) = &self.transport_error {
-            return ProjectStatus::Error {
-                message: message.clone().into(),
-                target: None,
+        if let Some(error) = &self.transport_error {
+            return match error {
+                TransportError::Message(message) => ProjectStatus::Error {
+                    message: message.clone().into(),
+                    target: None,
+                },
+                TransportError::MtsMasterAlreadyActive {
+                    message,
+                    retry_target,
+                } => ProjectStatus::Error {
+                    message: format!(
+                        "{message} · reset only if no other tuning master should be active"
+                    )
+                    .into(),
+                    target: Some(StatusAction::ResetMtsEspAndRetry(retry_target.clone())),
+                },
             };
         }
 
@@ -1473,8 +1495,9 @@ impl Model {
                 self.transport_error = None;
             }
             Err(error) => {
-                self.transport_error =
-                    Some(format!("playback is keeping the last valid loop: {error}"));
+                self.transport_error = Some(TransportError::Message(format!(
+                    "playback is keeping the last valid loop: {error}"
+                )));
             }
         }
         cx.notify();
@@ -1509,7 +1532,22 @@ impl Model {
                 self.start_playhead_tracking(cx);
             }
             Err(error) => {
-                self.transport_error = Some(error.to_string());
+                let message = error.to_string();
+                let audio_build_is_active = self.workspace.audio_build.read(cx).is_building();
+                self.transport_error =
+                    Some(if error.can_reset_mts_esp() && audio_build_is_active {
+                        TransportError::Message(
+                        "the audio build is using MTS-ESP; wait for it to finish before playing"
+                            .to_string(),
+                    )
+                    } else if error.can_reset_mts_esp() {
+                        TransportError::MtsMasterAlreadyActive {
+                            message,
+                            retry_target: target,
+                        }
+                    } else {
+                        TransportError::Message(message)
+                    });
                 self.sync_transport_button(cx);
             }
         }
@@ -1856,7 +1894,7 @@ impl Model {
         match self.playback_loop_for_target(&target, cx) {
             Ok(playback_loop) => self.start_playback(target, playback_loop, cx),
             Err(error) => {
-                self.transport_error = Some(error);
+                self.transport_error = Some(TransportError::Message(error));
                 cx.notify();
             }
         }
@@ -3019,6 +3057,7 @@ impl Model {
                 self.retry_failed_score_saves(cx);
                 return;
             }
+            StatusAction::ResetMtsEspAndRetry(_) => return,
         };
 
         let active_view_has_target = self
@@ -3062,6 +3101,46 @@ impl Model {
             });
         });
         cx.notify();
+    }
+
+    fn on_reset_mts_esp_clicked(
+        &mut self,
+        _: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(TransportError::MtsMasterAlreadyActive { retry_target, .. }) =
+            self.transport_error.clone()
+        else {
+            return;
+        };
+
+        if self.workspace.audio_build.read(cx).is_building() {
+            self.transport_error = Some(TransportError::Message(
+                "the audio build is using MTS-ESP; wait for it to finish before resetting"
+                    .to_string(),
+            ));
+            cx.notify();
+            return;
+        }
+
+        if let Err(error) = reset_mts_esp_master() {
+            self.transport_error = Some(TransportError::Message(format!(
+                "couldn't reset the MTS-ESP master: {error}"
+            )));
+            cx.notify();
+            return;
+        }
+
+        self.transport_error = None;
+        match self.playback_loop_for_target(&retry_target, cx) {
+            Ok(playback_loop) => self.start_playback(retry_target, playback_loop, cx),
+            Err(error) => {
+                self.transport_error = Some(TransportError::Message(error));
+                cx.notify();
+            }
+        }
     }
 
     fn on_close_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -3252,12 +3331,31 @@ fn score_workspace(
             ))
         });
     let status_is_actionable = match &project_status {
-        ProjectStatus::Error { target, .. } => target.is_some(),
+        ProjectStatus::Error {
+            target: Some(StatusAction::RevealIssue { .. } | StatusAction::RetryScoreSave),
+            ..
+        } => true,
+        ProjectStatus::Error { .. } => false,
         ProjectStatus::Empty | ProjectStatus::Message(_) | ProjectStatus::Warning(_) => false,
     };
+    let can_reset_mts_esp = matches!(
+        &project_status,
+        ProjectStatus::Error {
+            target: Some(StatusAction::ResetMtsEspAndRetry(_)),
+            ..
+        }
+    );
     let project_status_bar = status_bar::bar(project_status)
         .id("project-status-bar")
         .debug_selector(|| "project-status-bar".to_string())
+        .when(can_reset_mts_esp, |bar| {
+            bar.child(
+                status_bar::action_button("reset-mts-esp", "reset MTS").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(Model::on_reset_mts_esp_clicked),
+                ),
+            )
+        })
         .when(status_is_actionable, |bar| {
             bar.cursor(CursorStyle::PointingHand)
                 .on_mouse_down(MouseButton::Left, cx.listener(Model::on_status_bar_clicked))
@@ -4093,8 +4191,9 @@ mod tests {
         duplicate_project_part, export_project_part_rows, loop_range_summary, parts,
         playing_arrangement_position, rename_project_part, update_project_sequence, voices,
         BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
-        PartsWorkspace, ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg,
-        RowEditRequested, StatusAction, UiState, WorkspaceSection, WorkspaceSectionKind,
+        PartsWorkspace, PlaybackTarget, ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg,
+        RowEditRequested, StatusAction, TransportError, UiState, WorkspaceSection,
+        WorkspaceSectionKind,
     };
     use crate::{
         acoustics::Point3Meters,
@@ -5798,6 +5897,37 @@ mod tests {
             cx.debug_bounds("project-status-bar").unwrap(),
             status_bar_before
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn mts_master_error_shows_only_its_compact_reset_action(cx: &mut TestAppContext) {
+        let root = temp_root("mts-master-reset-action");
+        let project = Project::new("test project", 800, 0, Seed::new(12));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let (model, cx) =
+            cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
+        model.update(cx, |model, cx| {
+            model.transport_error = Some(TransportError::MtsMasterAlreadyActive {
+                message: "another MTS-ESP master is already active".to_string(),
+                retry_target: PlaybackTarget::Arrangement,
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("reset-mts-esp").is_some());
+        assert!(cx.debug_bounds("copy-status-error").is_some());
+
+        model.update(cx, |model, cx| {
+            model.transport_error = Some(TransportError::Message("ordinary error".to_string()));
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("reset-mts-esp").is_none());
+        assert!(cx.debug_bounds("copy-status-error").is_some());
 
         fs::remove_dir_all(root).unwrap();
     }

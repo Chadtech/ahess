@@ -346,13 +346,35 @@ struct PlaybackVoice {
 #[derive(Debug)]
 pub struct PlaybackError {
     message: String,
+    recovery: Option<PlaybackRecovery>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlaybackRecovery {
+    ResetMtsEsp,
 }
 
 impl PlaybackError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            recovery: None,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn from_mts_esp(error: crate::mts_esp::MtsEspError) -> Self {
+        let recovery = error
+            .is_master_already_active()
+            .then_some(PlaybackRecovery::ResetMtsEsp);
+        Self {
+            message: error.to_string(),
+            recovery,
+        }
+    }
+
+    pub fn can_reset_mts_esp(&self) -> bool {
+        self.recovery == Some(PlaybackRecovery::ResetMtsEsp)
     }
 }
 
@@ -1200,7 +1222,20 @@ fn prepare_mts_master(
     MtsEspMaster::new()
         .map(Arc::new)
         .map(Some)
-        .map_err(|error| PlaybackError::new(error.to_string()))
+        .map_err(PlaybackError::from_mts_esp)
+}
+
+pub fn reset_mts_esp_master() -> Result<(), PlaybackError> {
+    #[cfg(target_os = "macos")]
+    {
+        MtsEspMaster::reinitialize().map_err(PlaybackError::from_mts_esp)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(PlaybackError::new(
+            "MTS-ESP master recovery is supported only on macOS",
+        ))
+    }
 }
 
 enum OscillatorRuntime {

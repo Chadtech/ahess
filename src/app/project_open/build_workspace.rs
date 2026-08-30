@@ -78,6 +78,10 @@ impl BuildWorkspace {
         self.mark_project_changed(cx);
     }
 
+    pub(crate) fn is_building(&self) -> bool {
+        matches!(self.state, BuildState::Building { .. })
+    }
+
     pub(crate) fn mark_project_changed(&mut self, cx: &mut Context<Self>) {
         self.state = match &self.state {
             BuildState::Ready => BuildState::Ready,

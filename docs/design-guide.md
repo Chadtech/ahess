@@ -196,6 +196,9 @@ or when it defines how a shared component is used.
   continued work. Use the error state for invalid input and failed operations.
 - show the shared `copy` button at the trailing edge of every error status. It
   copies the complete error message even when the visible message is truncated.
+- put narrowly scoped, explicit recovery commands in a compact trailing status
+  action beside `copy`; do not make a potentially disruptive recovery the
+  action of the entire bar.
 - make an actionable error status explicit in its message and give the entire
   bar a pointing cursor. Use the action to reveal the affected input or retry
   the failed operation.

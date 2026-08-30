@@ -129,6 +129,13 @@ therefore fails preparation with an actionable error when the Audio Unit or
 MTS-ESP middleware is unavailable, or when another MTS-ESP master already owns
 the session.
 
+If the shared middleware reports an existing master after its owner exited
+without deregistering, the playback error exposes an explicit `reset MTS`
+status action. The action calls MTS-ESP's `MTS_Reinitialize` entry point and
+retries the same playback target. Ahess does not reset automatically because a
+different audio host may own a legitimate master, and it suppresses recovery
+while its own offline audio build is actively using MTS-ESP.
+
 Each hosted Surge instance receives notes on MIDI channel 1 and each project
 voice owns a disjoint lane of MIDI notes. For each prepared frequency Ahess
 selects the closest note in that lane. The common channel is necessary because

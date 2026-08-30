@@ -75,7 +75,7 @@ impl MtsEspMaster {
             // SAFETY: all function pointers were resolved from the live libMTS
             // handle and have the signatures published by its master API.
             if unsafe { has_master() } {
-                return Err(MtsEspError::new(
+                return Err(MtsEspError::master_already_active(
                     "another MTS-ESP master is already active; close it before playing Surge XT from Ahess",
                 ));
             }
@@ -114,6 +114,28 @@ impl MtsEspMaster {
                 address.channel as i8,
             );
         }
+    }
+
+    pub(crate) fn reinitialize() -> Result<(), MtsEspError> {
+        // SAFETY: the path is a valid nul-terminated string.
+        let handle =
+            NonNull::new(unsafe { dlopen(LIBRARY_PATH.as_ptr(), RTLD_NOW) }).ok_or_else(|| {
+                MtsEspError::new(format!(
+                    "MTS-ESP middleware is not installed at {}: {}",
+                    LIBRARY_PATH.to_string_lossy(),
+                    dynamic_loader_error()
+                ))
+            })?;
+        let result = (|| {
+            let reinitialize: VoidFunction = load_symbol(handle, c"MTS_Reinitialize")?;
+            // SAFETY: the function pointer was resolved from the live libMTS
+            // handle with the signature published by its API.
+            unsafe { reinitialize() };
+            Ok(())
+        })();
+        // SAFETY: no function pointers from this handle escape this method.
+        unsafe { dlclose(handle.as_ptr()) };
+        result
     }
 }
 
@@ -211,13 +233,32 @@ fn dynamic_loader_error_from(error: *const c_char) -> String {
 #[derive(Debug)]
 pub(crate) struct MtsEspError {
     message: String,
+    kind: MtsEspErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MtsEspErrorKind {
+    Other,
+    MasterAlreadyActive,
 }
 
 impl MtsEspError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            kind: MtsEspErrorKind::Other,
         }
+    }
+
+    fn master_already_active(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: MtsEspErrorKind::MasterAlreadyActive,
+        }
+    }
+
+    pub(crate) fn is_master_already_active(&self) -> bool {
+        self.kind == MtsEspErrorKind::MasterAlreadyActive
     }
 }
 
@@ -244,5 +285,22 @@ mod tests {
             },
             432.123_456_789,
         );
+    }
+
+    #[test]
+    #[ignore = "requires the installed MTS-ESP middleware and resets its shared state"]
+    fn installed_middleware_reinitializes_a_stale_master() {
+        let stale_master = MtsEspMaster::new().unwrap();
+        let error = match MtsEspMaster::new() {
+            Ok(_) => panic!("a second MTS-ESP master should be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.is_master_already_active());
+
+        MtsEspMaster::reinitialize().unwrap();
+        drop(stale_master);
+        let recovered_master = MtsEspMaster::new().unwrap();
+
+        drop(recovered_master);
     }
 }
