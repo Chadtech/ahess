@@ -9,6 +9,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 mod mts_esp;
 mod noitech_bell_a;
+mod noitech_bell_b;
 mod palette;
 pub mod part;
 pub mod pitch_system;

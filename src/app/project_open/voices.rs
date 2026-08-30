@@ -783,7 +783,13 @@ fn matching_voice_types(query: &str) -> impl Iterator<Item = VoiceType> + '_ {
         .collect::<Vec<_>>();
     VoiceType::ALL.into_iter().filter(move |voice_type| {
         let label = voice_type.label().to_lowercase();
-        terms.iter().all(|term| label.contains(term))
+        terms.iter().all(|term| {
+            if term.chars().count() == 1 {
+                label.split_whitespace().any(|word| word == term)
+            } else {
+                label.contains(term)
+            }
+        })
     })
 }
 
@@ -839,6 +845,10 @@ mod tests {
         assert_eq!(
             matching_voice_types("bell a").collect::<Vec<_>>(),
             vec![VoiceType::NoitechBellA]
+        );
+        assert_eq!(
+            matching_voice_types("bell b").collect::<Vec<_>>(),
+            vec![VoiceType::NoitechBellB]
         );
         assert!(matching_voice_types("pipe organ").next().is_none());
     }

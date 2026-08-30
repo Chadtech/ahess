@@ -16,6 +16,7 @@ use cpal::{
 use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
     noitech_bell_a::NoitechBellARuntime,
+    noitech_bell_b::NoitechBellBRuntime,
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
@@ -856,6 +857,7 @@ impl VoiceRuntime {
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
     NoitechBellA(NoitechBellARuntime),
+    NoitechBellB(NoitechBellBRuntime),
     #[cfg(target_os = "macos")]
     SurgeXt(SurgeXtRuntime),
 }
@@ -873,6 +875,7 @@ impl InstrumentRuntime {
                 Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
             }
             VoiceType::NoitechBellA => Ok(Self::NoitechBellA(NoitechBellARuntime::new())),
+            VoiceType::NoitechBellB => Ok(Self::NoitechBellB(NoitechBellBRuntime::new())),
             VoiceType::SurgeXtPiano
             | VoiceType::SurgeXtDistortedElectricGuitar
             | VoiceType::SurgeXtClarinet => {
@@ -908,6 +911,7 @@ impl InstrumentRuntime {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
             Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
+            Self::NoitechBellB(_) => voice_type == VoiceType::NoitechBellB,
             #[cfg(target_os = "macos")]
             Self::SurgeXt(runtime) => {
                 voice_type == runtime.voice_type
@@ -946,6 +950,17 @@ impl InstrumentRuntime {
                 )
             }
             Self::NoitechBellA(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(frequency) = voice.frequencies[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            runtime.trigger(frequency.as_hz_f32());
+                        }
+                    }
+                }
+                runtime.sample(sample_rate)
+            }
+            Self::NoitechBellB(runtime) => {
                 if let Some(beat_index) = beat_index {
                     if let Some(frequency) = voice.frequencies[beat_index] {
                         let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
@@ -1000,7 +1015,11 @@ impl SurgeXtRuntime {
                 (SurgeXtPatch::DistortedElectricGuitar, 1.0)
             }
             VoiceType::SurgeXtClarinet => (SurgeXtPatch::Clarinet, 1.0),
-            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw | VoiceType::NoitechBellA => {
+            VoiceType::Sin
+            | VoiceType::Saw
+            | VoiceType::HarmonicSaw
+            | VoiceType::NoitechBellA
+            | VoiceType::NoitechBellB => {
                 unreachable!("built-in voices do not use Surge XT")
             }
         };
@@ -1197,6 +1216,7 @@ impl OscillatorRuntime {
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
             VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
+            VoiceType::NoitechBellB => unreachable!("Noitech Bell B has a tail-aware runtime"),
             VoiceType::SurgeXtPiano
             | VoiceType::SurgeXtDistortedElectricGuitar
             | VoiceType::SurgeXtClarinet => {
@@ -1900,15 +1920,20 @@ mod tests {
                 assert_eq!(voice_frames.len(), 1);
                 assert_eq!(voice_frames[0], live_frame);
             }
-            if voice_type == VoiceType::NoitechBellA {
+            let tail_bounds = match voice_type {
+                VoiceType::NoitechBellA => Some((200_000, 250_000)),
+                VoiceType::NoitechBellB => Some((160_000, 200_000)),
+                _ => None,
+            };
+            if let Some((minimum, maximum)) = tail_bounds {
                 let mut tail_frames = 0;
                 while offline.next_frame().is_some() {
                     tail_frames += 1;
-                    assert!(tail_frames < 250_000, "bell tail must terminate");
+                    assert!(tail_frames < maximum, "bell tail must terminate");
                 }
                 assert!(
-                    tail_frames > 200_000,
-                    "bell must retain its five-second body"
+                    tail_frames > minimum,
+                    "bell must retain its source duration"
                 );
             } else {
                 assert!(offline.next_frame().is_none());

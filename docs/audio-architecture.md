@@ -89,6 +89,18 @@ envelope; Ahess applies voice volume adjustment, spatialization, and room
 acoustics afterward. Components above the safe Nyquist boundary are omitted
 rather than folded into audible aliases.
 
+`Noitech Bell B` translates `bells20150804/buildBellsB.coffee`. Its audible
+profile contains seven sine oscillators at ratios `0.5`, `1`, `2`, `3`, `4.26`,
+`5.55`, and `7.02`; each has its source amplitude, `0.7` volume factor, distinct
+duration, and full-duration fade-out. The complete four-second body retains the
+source's 60-sample ramp-in and ramp-out, converted from 44.1 kHz timing at the
+active output rate, and successive notes overlap. The fourteen source entries
+named `enharmonics` use fractional numbers directly as sample counts; the
+CoffeeScript generator consequently emits only their zero-valued phase-zero
+sample, so they are intentionally silent in this faithful rendering. Bell B
+has no strike. Like Bell A, it owns its envelope and then enters the shared
+voice-volume, spatialization, room-acoustics, and live/offline paths.
+
 ### Instruments do not write hardware channels
 
 An ordinary instrument produces a source signal. A later acoustic stage uses

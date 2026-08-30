@@ -118,6 +118,7 @@ pub enum VoiceType {
     Saw,
     HarmonicSaw,
     NoitechBellA,
+    NoitechBellB,
     #[serde(alias = "surge-xt")]
     SurgeXtPiano,
     SurgeXtDistortedElectricGuitar,
@@ -125,18 +126,24 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::NoitechBellA,
+        Self::NoitechBellB,
         Self::SurgeXtPiano,
         Self::SurgeXtDistortedElectricGuitar,
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 4] =
-        [Self::Sin, Self::Saw, Self::HarmonicSaw, Self::NoitechBellA];
+    pub(crate) const BUILT_IN: [Self; 5] = [
+        Self::Sin,
+        Self::Saw,
+        Self::HarmonicSaw,
+        Self::NoitechBellA,
+        Self::NoitechBellB,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -144,6 +151,7 @@ impl VoiceType {
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic saw",
             Self::NoitechBellA => "Noitech Bell A",
+            Self::NoitechBellB => "Noitech Bell B",
             Self::SurgeXtPiano => "Surge XT Piano",
             Self::SurgeXtDistortedElectricGuitar => "Surge XT distorted electric guitar",
             Self::SurgeXtClarinet => "Surge XT clarinet",
@@ -156,6 +164,7 @@ impl VoiceType {
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic-saw",
             Self::NoitechBellA => "noitech-bell-a",
+            Self::NoitechBellB => "noitech-bell-b",
             Self::SurgeXtPiano => "surge-xt-piano",
             Self::SurgeXtDistortedElectricGuitar => "surge-xt-distorted-electric-guitar",
             Self::SurgeXtClarinet => "surge-xt-clarinet",
