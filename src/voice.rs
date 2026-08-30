@@ -62,15 +62,17 @@ pub enum VoiceType {
     #[serde(alias = "surge-xt")]
     SurgeXtPiano,
     SurgeXtDistortedElectricGuitar,
+    SurgeXtClarinet,
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::SurgeXtPiano,
         Self::SurgeXtDistortedElectricGuitar,
+        Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
     pub(crate) const BUILT_IN: [Self; 3] = [Self::Sin, Self::Saw, Self::HarmonicSaw];
@@ -82,6 +84,7 @@ impl VoiceType {
             Self::HarmonicSaw => "harmonic saw",
             Self::SurgeXtPiano => "Surge XT Piano",
             Self::SurgeXtDistortedElectricGuitar => "Surge XT distorted electric guitar",
+            Self::SurgeXtClarinet => "Surge XT clarinet",
         }
     }
 
@@ -92,13 +95,14 @@ impl VoiceType {
             Self::HarmonicSaw => "harmonic-saw",
             Self::SurgeXtPiano => "surge-xt-piano",
             Self::SurgeXtDistortedElectricGuitar => "surge-xt-distorted-electric-guitar",
+            Self::SurgeXtClarinet => "surge-xt-clarinet",
         }
     }
 
     pub(crate) const fn uses_surge_xt(self) -> bool {
         matches!(
             self,
-            Self::SurgeXtPiano | Self::SurgeXtDistortedElectricGuitar
+            Self::SurgeXtPiano | Self::SurgeXtDistortedElectricGuitar | Self::SurgeXtClarinet
         )
     }
 }

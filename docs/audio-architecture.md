@@ -86,9 +86,9 @@ instrument to write directly to CPAL channel buffers.
 
 ### Surge XT instruments preserve exact frequencies
 
-`Surge XT Piano` and `Surge XT distorted electric guitar` are external pitched voice
-types. On macOS, Ahess hosts the signed Surge XT Audio Unit (`aumu/SgXT/VmbA`)
-in-process through AudioToolbox.
+`Surge XT Piano`, `Surge XT distorted electric guitar`, and `Surge XT clarinet`
+are external pitched voice types. On macOS, Ahess hosts the signed Surge XT
+Audio Unit (`aumu/SgXT/VmbA`) in-process through AudioToolbox.
 It does not launch or automate the Surge XT application, and GarageBand is not
 part of this path.
 
@@ -114,9 +114,10 @@ signal before the normal Ahess position and room-acoustics stage. The quiet
 Grand Piano patch receives fixed level compensation; the Distorted Electric
 Guitar patch does not. Ahess turns off that guitar patch's Reverb 2 global
 effect while retaining its distortion and other tone-shaping effects, leaving
-project room acoustics as the voice's only reverb. Each concrete voice loads
-its installed John Valentine patch through the Audio Unit's JUCE class-state
-dictionary. Surge XT does not
+project room acoustics as the voice's only reverb. The John Valentine Clarinet
+patch is already dry: its reverb effects are disabled and its scene sends are
+zero. Each concrete voice loads its installed John Valentine patch through the
+Audio Unit's JUCE class-state dictionary. Surge XT does not
 expose its native patch library through the Audio Unit factory-preset list in
 the standard macOS build. Missing factory resources are an error rather than a
 silent fallback to the default patch. Additional concrete Surge instruments and

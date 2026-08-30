@@ -865,7 +865,9 @@ impl InstrumentRuntime {
             VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
                 Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
             }
-            VoiceType::SurgeXtPiano | VoiceType::SurgeXtDistortedElectricGuitar => {
+            VoiceType::SurgeXtPiano
+            | VoiceType::SurgeXtDistortedElectricGuitar
+            | VoiceType::SurgeXtClarinet => {
                 #[cfg(target_os = "macos")]
                 {
                     let master = mts_master.ok_or_else(|| {
@@ -977,6 +979,7 @@ impl SurgeXtRuntime {
             VoiceType::SurgeXtDistortedElectricGuitar => {
                 (SurgeXtPatch::DistortedElectricGuitar, 1.0)
             }
+            VoiceType::SurgeXtClarinet => (SurgeXtPatch::Clarinet, 1.0),
             VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
                 unreachable!("built-in voices do not use Surge XT")
             }
@@ -1173,7 +1176,9 @@ impl OscillatorRuntime {
             VoiceType::Sin => Self::Sin { phase: 0.0 },
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
-            VoiceType::SurgeXtPiano | VoiceType::SurgeXtDistortedElectricGuitar => {
+            VoiceType::SurgeXtPiano
+            | VoiceType::SurgeXtDistortedElectricGuitar
+            | VoiceType::SurgeXtClarinet => {
                 unreachable!("external instruments are not oscillators")
             }
         }
@@ -1926,23 +1931,34 @@ mod tests {
     #[test]
     #[ignore = "requires installed Surge XT and MTS-ESP"]
     fn surge_xt_distorted_electric_guitar_renders_an_exact_frequency() {
+        assert_surge_voice_renders_an_exact_frequency(
+            VoiceType::SurgeXtDistortedElectricGuitar,
+            "guitar",
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires installed Surge XT and MTS-ESP"]
+    fn surge_xt_clarinet_renders_an_exact_frequency() {
+        assert_surge_voice_renders_an_exact_frequency(VoiceType::SurgeXtClarinet, "clarinet");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn assert_surge_voice_renders_an_exact_frequency(voice_type: VoiceType, voice_name: &str) {
         let frequency = FrequencyHz::new(259.0).unwrap();
         let pitch_system = PitchSystem::explicit(
             ExplicitPitchSystem::new(
-                "exact guitar test",
-                BTreeMap::from([("guitar-note".to_string(), frequency)]),
+                "exact Surge XT test",
+                BTreeMap::from([("exact-note".to_string(), frequency)]),
             )
             .unwrap(),
         );
         let project = Project::new("test", 100, 0, Seed::new(1))
             .with_pitch_system(pitch_system)
-            .with_voices(vec![Voice::new(
-                1,
-                "guitar",
-                VoiceType::SurgeXtDistortedElectricGuitar,
-            )]);
+            .with_voices(vec![Voice::new(1, voice_name, voice_type)]);
         let part = Part::new("intro", 1);
-        let score = PartScore::from_rows(vec![vec!["guitar-note".to_string()]]);
+        let score = PartScore::from_rows(vec![vec!["exact-note".to_string()]]);
         let rows = score.resolved_rows(&part, &project).unwrap();
         let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
         let mut renderer = OfflineRenderer::new(playback_loop, 48_000).unwrap();
@@ -1953,7 +1969,7 @@ mod tests {
         let published_frequency = tuning.frequency(note);
         assert!(
             (published_frequency - frequency.as_hz()).abs() < 1.0e-9,
-            "guitar requested {} Hz but the MTS general table contains {published_frequency} Hz",
+            "{voice_name} requested {} Hz but the MTS general table contains {published_frequency} Hz",
             frequency.as_hz()
         );
 
@@ -1967,13 +1983,13 @@ mod tests {
             energy += frame.left.abs() + frame.right.abs();
             samples.push((frame.left + frame.right) * 0.5);
         }
-        assert!(energy > 0.01, "Surge XT guitar voice rendered silence");
+        assert!(energy > 0.01, "Surge XT {voice_name} rendered silence");
 
         let measured = strongest_frequency_near(&samples, frequency.as_hz(), 48_000.0);
         let error_cents = 1_200.0 * (measured / frequency.as_hz()).log2();
         assert!(
             error_cents.abs() < 40.0,
-            "guitar requested {} Hz but rendered {measured} Hz ({error_cents} cents)",
+            "{voice_name} requested {} Hz but rendered {measured} Hz ({error_cents} cents)",
             frequency.as_hz()
         );
     }

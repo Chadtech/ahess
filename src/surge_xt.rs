@@ -31,6 +31,7 @@ const FXP_HEADER_BYTES: usize = 60;
 pub(crate) enum SurgeXtPatch {
     GrandPiano,
     DistortedElectricGuitar,
+    Clarinet,
 }
 
 impl SurgeXtPatch {
@@ -38,6 +39,7 @@ impl SurgeXtPatch {
         match self {
             Self::GrandPiano => "Grand Piano",
             Self::DistortedElectricGuitar => "Distorted Electric Guitar",
+            Self::Clarinet => "Clarinet",
         }
     }
 
@@ -45,6 +47,7 @@ impl SurgeXtPatch {
         match self {
             Self::GrandPiano => "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Keys/Grand Piano.fxp",
             Self::DistortedElectricGuitar => "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Guitars/Distorted Electric Guitar.fxp",
+            Self::Clarinet => "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Winds/Clarinet.fxp",
         }
     }
 
@@ -52,6 +55,7 @@ impl SurgeXtPatch {
         match self {
             Self::GrandPiano => Ok(()),
             Self::DistortedElectricGuitar => remove_distorted_guitar_reverb(chunk),
+            Self::Clarinet => Ok(()),
         }
     }
 }
@@ -488,5 +492,22 @@ mod tests {
             energy > 0.01,
             "Surge XT Distorted Electric Guitar rendered silence"
         );
+    }
+
+    #[test]
+    #[ignore = "requires installed Surge XT resources"]
+    fn installed_audio_unit_loads_clarinet() {
+        let mut surge = SurgeXt::new_with_patch(48_000.0, SurgeXtPatch::Clarinet).unwrap();
+        surge.note_on(0, 69, 100, 0).unwrap();
+
+        let mut rendered = vec![0.0; 512 * 2];
+        let mut energy = 0.0_f32;
+        for _ in 0..16 {
+            surge.render(&mut rendered).unwrap();
+            energy += rendered.iter().map(|sample| sample.abs()).sum::<f32>();
+        }
+        surge.note_off(0, 69, 0).unwrap();
+
+        assert!(energy > 0.01, "Surge XT Clarinet rendered silence");
     }
 }

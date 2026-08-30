@@ -259,6 +259,11 @@ impl VoicesWorkspace {
             Self::on_surge_xt_distorted_guitar_clicked,
         )
         .detach();
+        cx.subscribe(
+            &buttons.surge_xt_clarinet,
+            Self::on_surge_xt_clarinet_clicked,
+        )
+        .detach();
     }
 
     fn on_add_new_clicked(
@@ -404,6 +409,15 @@ impl VoicesWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.select_voice_type(VoiceType::SurgeXtDistortedElectricGuitar, cx);
+    }
+
+    fn on_surge_xt_clarinet_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_voice_type(VoiceType::SurgeXtClarinet, cx);
     }
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
@@ -739,6 +753,7 @@ struct VoiceTypeButtons {
     harmonic_saw: Entity<Button>,
     surge_xt_piano: Entity<Button>,
     surge_xt_distorted_guitar: Entity<Button>,
+    surge_xt_clarinet: Entity<Button>,
 }
 
 impl VoiceTypeButtons {
@@ -764,6 +779,12 @@ impl VoiceTypeButtons {
                 selected,
                 cx,
             ),
+            surge_xt_clarinet: voice_type_button(
+                "voice-type-surge-xt-clarinet",
+                VoiceType::SurgeXtClarinet,
+                selected,
+                cx,
+            ),
         }
     }
 
@@ -774,6 +795,7 @@ impl VoiceTypeButtons {
             self.harmonic_saw.clone(),
             self.surge_xt_piano.clone(),
             self.surge_xt_distorted_guitar.clone(),
+            self.surge_xt_clarinet.clone(),
         ]
     }
 
@@ -789,6 +811,11 @@ impl VoiceTypeButtons {
         set_button_selected(
             &self.surge_xt_distorted_guitar,
             selected == VoiceType::SurgeXtDistortedElectricGuitar,
+            cx,
+        );
+        set_button_selected(
+            &self.surge_xt_clarinet,
+            selected == VoiceType::SurgeXtClarinet,
             cx,
         );
     }
@@ -902,6 +929,34 @@ mod tests {
                 *selected_voice_type,
                 VoiceType::SurgeXtDistortedElectricGuitar
             );
+        });
+    }
+
+    #[gpui::test]
+    fn surge_xt_clarinet_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
+            let clarinet_button = match &dialog.view {
+                View::Add {
+                    voice_type_buttons, ..
+                } => voice_type_buttons.surge_xt_clarinet.clone(),
+                _ => panic!("add view must contain voice type buttons"),
+            };
+
+            dialog.on_surge_xt_clarinet_clicked(clarinet_button, &button::Clicked, cx);
+
+            let View::Add {
+                selected_voice_type,
+                ..
+            } = &dialog.view
+            else {
+                panic!("voice type selection must keep the add view open");
+            };
+            assert_eq!(*selected_voice_type, VoiceType::SurgeXtClarinet);
         });
     }
 
