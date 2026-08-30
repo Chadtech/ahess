@@ -25,9 +25,36 @@ use objc2_core_foundation::{
 const SURGE_COMPONENT_TYPE: u32 = u32::from_be_bytes(*b"aumu");
 const SURGE_COMPONENT_SUBTYPE: u32 = u32::from_be_bytes(*b"SgXT");
 const SURGE_COMPONENT_MANUFACTURER: u32 = u32::from_be_bytes(*b"VmbA");
-const PIANO_PATCH_PATH: &str =
-    "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Keys/Grand Piano.fxp";
 const FXP_HEADER_BYTES: usize = 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SurgeXtPatch {
+    GrandPiano,
+    DistortedElectricGuitar,
+}
+
+impl SurgeXtPatch {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::GrandPiano => "Grand Piano",
+            Self::DistortedElectricGuitar => "Distorted Electric Guitar",
+        }
+    }
+
+    const fn path(self) -> &'static str {
+        match self {
+            Self::GrandPiano => "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Keys/Grand Piano.fxp",
+            Self::DistortedElectricGuitar => "/Library/Application Support/Surge XT/patches_3rdparty/John Valentine/Guitars/Distorted Electric Guitar.fxp",
+        }
+    }
+
+    fn prepare_chunk(self, chunk: &mut [u8]) -> Result<(), SurgeXtError> {
+        match self {
+            Self::GrandPiano => Ok(()),
+            Self::DistortedElectricGuitar => remove_distorted_guitar_reverb(chunk),
+        }
+    }
+}
 
 pub(crate) struct SurgeXt {
     instance: AudioComponentInstance,
@@ -113,20 +140,26 @@ impl SurgeXt {
         })
     }
 
-    pub(crate) fn new_piano(sample_rate: f64) -> Result<Self, SurgeXtError> {
+    pub(crate) fn new_with_patch(
+        sample_rate: f64,
+        patch: SurgeXtPatch,
+    ) -> Result<Self, SurgeXtError> {
         let mut surge = Self::new(sample_rate)?;
-        surge.load_patch(Path::new(PIANO_PATCH_PATH))?;
+        surge.load_patch(patch)?;
         Ok(surge)
     }
 
-    fn load_patch(&mut self, path: &Path) -> Result<(), SurgeXtError> {
+    fn load_patch(&mut self, patch: SurgeXtPatch) -> Result<(), SurgeXtError> {
+        let path = Path::new(patch.path());
         let fxp = fs::read(path).map_err(|error| {
             SurgeXtError::new(format!(
-                "Surge XT Grand Piano patch is unavailable at {}: {error}; install the Surge XT factory resources",
+                "Surge XT {} patch is unavailable at {}: {error}; install the Surge XT factory resources",
+                patch.name(),
                 path.display()
             ))
         })?;
-        let patch = fxp_chunk(&fxp)?;
+        let mut patch_chunk = fxp_chunk(&fxp, patch.name())?.to_vec();
+        patch.prepare_chunk(&mut patch_chunk)?;
 
         let mut class_info: *const CFDictionary = ptr::null();
         let mut byte_count = size_of::<*const CFDictionary>() as u32;
@@ -155,12 +188,12 @@ impl SurgeXt {
             .ok_or_else(|| SurgeXtError::new("copy Surge XT Audio Unit state"))?;
         let mutable = unsafe { mutable.cast_unchecked::<CFString, CFType>() };
         let state_key = CFString::from_str("jucePluginState");
-        let patch_data = CFData::from_bytes(patch);
+        let patch_data = CFData::from_bytes(&patch_chunk);
         mutable.set(&state_key, patch_data.as_ref());
 
         let state: *const CFMutableDictionary = mutable.as_opaque();
         check_status(
-            "load Surge XT Grand Piano patch",
+            &format!("load Surge XT {} patch", patch.name()),
             // SAFETY: the Audio Unit is live, and `state` points to a retained
             // property-list dictionary for the duration of the call.
             unsafe {
@@ -261,15 +294,15 @@ impl SurgeXt {
     }
 }
 
-fn fxp_chunk(fxp: &[u8]) -> Result<&[u8], SurgeXtError> {
+fn fxp_chunk<'a>(fxp: &'a [u8], patch_name: &str) -> Result<&'a [u8], SurgeXtError> {
     if fxp.len() < FXP_HEADER_BYTES
         || &fxp[0..4] != b"CcnK"
         || &fxp[8..12] != b"FPCh"
         || &fxp[16..20] != b"cjs3"
     {
-        return Err(SurgeXtError::new(
-            "installed Surge XT Grand Piano patch is not a valid Surge chunk preset",
-        ));
+        return Err(SurgeXtError::new(format!(
+            "installed Surge XT {patch_name} patch is not a valid Surge chunk preset"
+        )));
     }
 
     let chunk_bytes = u32::from_be_bytes(
@@ -280,8 +313,37 @@ fn fxp_chunk(fxp: &[u8]) -> Result<&[u8], SurgeXtError> {
     let end = FXP_HEADER_BYTES
         .checked_add(chunk_bytes)
         .filter(|end| *end <= fxp.len())
-        .ok_or_else(|| SurgeXtError::new("installed Surge XT Grand Piano patch is truncated"))?;
+        .ok_or_else(|| {
+            SurgeXtError::new(format!(
+                "installed Surge XT {patch_name} patch is truncated"
+            ))
+        })?;
     Ok(&fxp[FXP_HEADER_BYTES..end])
+}
+
+fn remove_distorted_guitar_reverb(chunk: &mut [u8]) -> Result<(), SurgeXtError> {
+    // In this preset, XML `fx8` is Surge's zero-based slot 7 (Global FX 2),
+    // and effect type 11 is Reverb 2. Preserve the serialized chunk length so
+    // the enclosing JUCE state remains valid while turning only that effect off.
+    const REVERB: &[u8] = br#"<fx8_type type="0" value="11" />"#;
+    const OFF: &[u8] = br#"<fx8_type type="0" value="00" />"#;
+
+    let mut matches = chunk
+        .windows(REVERB.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == REVERB).then_some(offset));
+    let Some(offset) = matches.next() else {
+        return Err(SurgeXtError::new(
+            "Surge XT Distorted Electric Guitar patch does not contain its expected Reverb 2 slot",
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(SurgeXtError::new(
+            "Surge XT Distorted Electric Guitar patch contains more than one expected Reverb 2 slot",
+        ));
+    }
+    chunk[offset..offset + OFF.len()].copy_from_slice(OFF);
+    Ok(())
 }
 
 impl Drop for SurgeXt {
@@ -339,7 +401,31 @@ impl Error for SurgeXtError {}
 
 #[cfg(test)]
 mod tests {
-    use super::SurgeXt;
+    use super::{remove_distorted_guitar_reverb, SurgeXt, SurgeXtPatch};
+
+    #[test]
+    fn distorted_guitar_patch_removes_only_its_reverb_slot() {
+        let mut chunk =
+            br#"before <fx7_type type="0" value="12" /><fx8_type type="0" value="11" /> after"#
+                .to_vec();
+        let original_length = chunk.len();
+
+        remove_distorted_guitar_reverb(&mut chunk).unwrap();
+
+        assert_eq!(chunk.len(), original_length);
+        assert_eq!(
+            chunk,
+            br#"before <fx7_type type="0" value="12" /><fx8_type type="0" value="00" /> after"#
+        );
+    }
+
+    #[test]
+    fn distorted_guitar_patch_requires_the_expected_reverb_slot() {
+        let mut chunk = b"no reverb here".to_vec();
+        let error = remove_distorted_guitar_reverb(&mut chunk).unwrap_err();
+
+        assert!(error.to_string().contains("expected Reverb 2 slot"));
+    }
 
     #[test]
     #[ignore = "requires the installed Surge XT Audio Unit"]
@@ -363,8 +449,8 @@ mod tests {
     #[ignore = "requires installed Surge XT resources"]
     fn installed_audio_units_load_grand_piano_for_two_voices() {
         let mut surges = [
-            SurgeXt::new_piano(48_000.0).unwrap(),
-            SurgeXt::new_piano(48_000.0).unwrap(),
+            SurgeXt::new_with_patch(48_000.0, SurgeXtPatch::GrandPiano).unwrap(),
+            SurgeXt::new_with_patch(48_000.0, SurgeXtPatch::GrandPiano).unwrap(),
         ];
         let mut energy = [0.0_f32; 2];
 
@@ -380,6 +466,27 @@ mod tests {
         assert!(
             energy.into_iter().all(|voice_energy| voice_energy > 0.01),
             "a Surge XT Grand Piano voice rendered silence"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires installed Surge XT resources"]
+    fn installed_audio_unit_loads_distorted_electric_guitar() {
+        let mut surge =
+            SurgeXt::new_with_patch(48_000.0, SurgeXtPatch::DistortedElectricGuitar).unwrap();
+        surge.note_on(0, 45, 100, 0).unwrap();
+
+        let mut rendered = vec![0.0; 512 * 2];
+        let mut energy = 0.0_f32;
+        for _ in 0..16 {
+            surge.render(&mut rendered).unwrap();
+            energy += rendered.iter().map(|sample| sample.abs()).sum::<f32>();
+        }
+        surge.note_off(0, 45, 0).unwrap();
+
+        assert!(
+            energy > 0.01,
+            "Surge XT Distorted Electric Guitar rendered silence"
         );
     }
 }

@@ -23,7 +23,7 @@ use crate::{
 #[cfg(target_os = "macos")]
 use crate::{
     mts_esp::{MtsEspMaster, MtsNoteAddress},
-    surge_xt::SurgeXt,
+    surge_xt::{SurgeXt, SurgeXtPatch},
 };
 
 const MASTER_GAIN: f32 = 0.22;
@@ -514,12 +514,12 @@ impl AudioEngine {
             && playback_loop
                 .voices
                 .iter()
-                .any(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+                .any(|voice| voice.voice_type.uses_surge_xt())
         {
             match prepare_mts_master(&playback_loop) {
                 Ok(master) => self.mts_master = master,
                 Err(error) => {
-                    eprintln!("cannot update playback with Surge XT Piano: {error}");
+                    eprintln!("cannot update playback with Surge XT: {error}");
                     return;
                 }
             }
@@ -850,7 +850,7 @@ impl VoiceRuntime {
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
     #[cfg(target_os = "macos")]
-    SurgeXtPiano(SurgeXtPianoRuntime),
+    SurgeXt(SurgeXtRuntime),
 }
 
 impl InstrumentRuntime {
@@ -865,27 +865,30 @@ impl InstrumentRuntime {
             VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
                 Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
             }
-            VoiceType::SurgeXtPiano => {
+            VoiceType::SurgeXtPiano | VoiceType::SurgeXtDistortedElectricGuitar => {
                 #[cfg(target_os = "macos")]
                 {
                     let master = mts_master.ok_or_else(|| {
-                        PlaybackError::new(
-                            "Surge XT Piano requires the MTS-ESP exact-frequency master",
-                        )
+                        PlaybackError::new(format!(
+                            "{} requires the MTS-ESP exact-frequency master",
+                            voice_type.label()
+                        ))
                     })?;
-                    return SurgeXtPianoRuntime::new(
+                    return SurgeXtRuntime::new(
+                        voice_type,
                         voice_index,
                         voice_count,
                         sample_rate,
                         Arc::clone(master),
                     )
-                    .map(Self::SurgeXtPiano);
+                    .map(Self::SurgeXt);
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    Err(PlaybackError::new(
-                        "Surge XT Piano voices are currently supported only on macOS",
-                    ))
+                    Err(PlaybackError::new(format!(
+                        "{} voices are currently supported only on macOS",
+                        voice_type.label()
+                    )))
                 }
             }
         }
@@ -895,8 +898,8 @@ impl InstrumentRuntime {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
             #[cfg(target_os = "macos")]
-            Self::SurgeXtPiano(runtime) => {
-                voice_type == VoiceType::SurgeXtPiano
+            Self::SurgeXt(runtime) => {
+                voice_type == runtime.voice_type
                     && runtime.voice_index == voice_index
                     && runtime.voice_count == voice_count
             }
@@ -932,7 +935,7 @@ impl InstrumentRuntime {
                 )
             }
             #[cfg(target_os = "macos")]
-            Self::SurgeXtPiano(runtime) => {
+            Self::SurgeXt(runtime) => {
                 runtime.sample(voice, beat_index, sample_in_beat, beat_length)
             }
         }
@@ -940,9 +943,11 @@ impl InstrumentRuntime {
 }
 
 #[cfg(target_os = "macos")]
-struct SurgeXtPianoRuntime {
+struct SurgeXtRuntime {
     synth: SurgeXt,
     master: Arc<MtsEspMaster>,
+    voice_type: VoiceType,
+    gain: f32,
     voice_index: usize,
     voice_count: usize,
     active_note: Option<MtsNoteAddress>,
@@ -954,8 +959,9 @@ struct SurgeXtPianoRuntime {
 }
 
 #[cfg(target_os = "macos")]
-impl SurgeXtPianoRuntime {
+impl SurgeXtRuntime {
     fn new(
+        voice_type: VoiceType,
         voice_index: usize,
         voice_count: usize,
         sample_rate: f32,
@@ -963,15 +969,29 @@ impl SurgeXtPianoRuntime {
     ) -> Result<Self, PlaybackError> {
         if voice_index >= 16 {
             return Err(PlaybackError::new(
-                "Surge XT Piano exact-frequency playback supports at most 16 project voices",
+                "Surge XT exact-frequency playback supports at most 16 project voices",
             ));
         }
-        let synth = SurgeXt::new_piano(f64::from(sample_rate)).map_err(|error| {
-            PlaybackError::new(format!("failed to prepare Surge XT Piano voice: {error}"))
+        let (patch, gain) = match voice_type {
+            VoiceType::SurgeXtPiano => (SurgeXtPatch::GrandPiano, SURGE_PIANO_GAIN),
+            VoiceType::SurgeXtDistortedElectricGuitar => {
+                (SurgeXtPatch::DistortedElectricGuitar, 1.0)
+            }
+            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
+                unreachable!("built-in voices do not use Surge XT")
+            }
+        };
+        let synth = SurgeXt::new_with_patch(f64::from(sample_rate), patch).map_err(|error| {
+            PlaybackError::new(format!(
+                "failed to prepare {} voice: {error}",
+                voice_type.label()
+            ))
         })?;
         Ok(Self {
             synth,
             master,
+            voice_type,
+            gain,
             voice_index,
             voice_count,
             active_note: None,
@@ -1003,7 +1023,7 @@ impl SurgeXtPianoRuntime {
 
         let offset = self.buffer_frame * 2;
         let sample =
-            (self.stereo_buffer[offset] + self.stereo_buffer[offset + 1]) * 0.5 * SURGE_PIANO_GAIN;
+            (self.stereo_buffer[offset] + self.stereo_buffer[offset + 1]) * 0.5 * self.gain;
         self.buffer_frame += 1;
         (sample, self.active_note.is_some() || self.buffer_has_audio)
     }
@@ -1091,14 +1111,14 @@ fn validate_external_voice_support(project: &Project) -> Result<(), PlaybackErro
     let surge_voice_count = project
         .voices()
         .iter()
-        .filter(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+        .filter(|voice| voice.voice_type.uses_surge_xt())
         .count();
     if surge_voice_count == 0 {
         return Ok(());
     }
     if project.voices().len() > 16 {
         return Err(PlaybackError::new(
-            "Surge XT Piano exact-frequency playback supports at most 16 project voices",
+            "Surge XT exact-frequency playback supports at most 16 project voices",
         ));
     }
 
@@ -1111,7 +1131,7 @@ fn validate_external_voice_support(project: &Project) -> Result<(), PlaybackErro
         }
         if !MtsEspMaster::is_available() {
             return Err(PlaybackError::new(
-                "Surge XT Piano exact-frequency playback requires the free MTS-ESP middleware",
+                "Surge XT exact-frequency playback requires the free MTS-ESP middleware",
             ));
         }
         Ok(())
@@ -1119,7 +1139,7 @@ fn validate_external_voice_support(project: &Project) -> Result<(), PlaybackErro
     #[cfg(not(target_os = "macos"))]
     {
         Err(PlaybackError::new(
-            "Surge XT Piano voices are currently supported only on macOS",
+            "Surge XT voices are currently supported only on macOS",
         ))
     }
 }
@@ -1131,7 +1151,7 @@ fn prepare_mts_master(
     if !playback_loop
         .voices
         .iter()
-        .any(|voice| voice.voice_type == VoiceType::SurgeXtPiano)
+        .any(|voice| voice.voice_type.uses_surge_xt())
     {
         return Ok(None);
     }
@@ -1153,7 +1173,9 @@ impl OscillatorRuntime {
             VoiceType::Sin => Self::Sin { phase: 0.0 },
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
-            VoiceType::SurgeXtPiano => unreachable!("external instruments are not oscillators"),
+            VoiceType::SurgeXtPiano | VoiceType::SurgeXtDistortedElectricGuitar => {
+                unreachable!("external instruments are not oscillators")
+            }
         }
     }
 
@@ -1898,6 +1920,62 @@ mod tests {
                 expected.as_hz()
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires installed Surge XT and MTS-ESP"]
+    fn surge_xt_distorted_electric_guitar_renders_an_exact_frequency() {
+        let frequency = FrequencyHz::new(259.0).unwrap();
+        let pitch_system = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "exact guitar test",
+                BTreeMap::from([("guitar-note".to_string(), frequency)]),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test", 100, 0, Seed::new(1))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(
+                1,
+                "guitar",
+                VoiceType::SurgeXtDistortedElectricGuitar,
+            )]);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["guitar-note".to_string()]]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        let playback_loop = PlaybackLoop::from_rows(&project, rows, 1).unwrap();
+        let mut renderer = OfflineRenderer::new(playback_loop, 48_000).unwrap();
+
+        renderer.next_frame().unwrap();
+        let tuning = MtsEspTuningProbe::new().unwrap();
+        let note = collision_free_midi_note(frequency, 0, 1);
+        let published_frequency = tuning.frequency(note);
+        assert!(
+            (published_frequency - frequency.as_hz()).abs() < 1.0e-9,
+            "guitar requested {} Hz but the MTS general table contains {published_frequency} Hz",
+            frequency.as_hz()
+        );
+
+        let mut energy = 0.0_f32;
+        let mut samples = Vec::new();
+        for _ in 1..48_000 {
+            let Some((_, voice_frames)) = renderer.next_frame() else {
+                break;
+            };
+            let frame = voice_frames[0];
+            energy += frame.left.abs() + frame.right.abs();
+            samples.push((frame.left + frame.right) * 0.5);
+        }
+        assert!(energy > 0.01, "Surge XT guitar voice rendered silence");
+
+        let measured = strongest_frequency_near(&samples, frequency.as_hz(), 48_000.0);
+        let error_cents = 1_200.0 * (measured / frequency.as_hz()).log2();
+        assert!(
+            error_cents.abs() < 40.0,
+            "guitar requested {} Hz but rendered {measured} Hz ({error_cents} cents)",
+            frequency.as_hz()
+        );
     }
 
     #[cfg(target_os = "macos")]

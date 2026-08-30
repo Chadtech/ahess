@@ -254,6 +254,11 @@ impl VoicesWorkspace {
             .detach();
         cx.subscribe(&buttons.surge_xt_piano, Self::on_surge_xt_piano_clicked)
             .detach();
+        cx.subscribe(
+            &buttons.surge_xt_distorted_guitar,
+            Self::on_surge_xt_distorted_guitar_clicked,
+        )
+        .detach();
     }
 
     fn on_add_new_clicked(
@@ -390,6 +395,15 @@ impl VoicesWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.select_voice_type(VoiceType::SurgeXtPiano, cx);
+    }
+
+    fn on_surge_xt_distorted_guitar_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_voice_type(VoiceType::SurgeXtDistortedElectricGuitar, cx);
     }
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
@@ -602,7 +616,13 @@ impl VoicesWorkspace {
                     .flex_col()
                     .gap_3()
                     .child(div().text_color(s::FIELD_LABEL_TEXT).child("voice type"))
-                    .child(div().flex().gap_3().children(voice_type_buttons.entities())),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_3()
+                            .children(voice_type_buttons.entities()),
+                    ),
             )
             .child(position.view(&self.acoustic_scene));
 
@@ -718,6 +738,7 @@ struct VoiceTypeButtons {
     saw: Entity<Button>,
     harmonic_saw: Entity<Button>,
     surge_xt_piano: Entity<Button>,
+    surge_xt_distorted_guitar: Entity<Button>,
 }
 
 impl VoiceTypeButtons {
@@ -737,6 +758,12 @@ impl VoiceTypeButtons {
                 selected,
                 cx,
             ),
+            surge_xt_distorted_guitar: voice_type_button(
+                "voice-type-surge-xt-distorted-guitar",
+                VoiceType::SurgeXtDistortedElectricGuitar,
+                selected,
+                cx,
+            ),
         }
     }
 
@@ -746,6 +773,7 @@ impl VoiceTypeButtons {
             self.saw.clone(),
             self.harmonic_saw.clone(),
             self.surge_xt_piano.clone(),
+            self.surge_xt_distorted_guitar.clone(),
         ]
     }
 
@@ -756,6 +784,11 @@ impl VoiceTypeButtons {
         set_button_selected(
             &self.surge_xt_piano,
             selected == VoiceType::SurgeXtPiano,
+            cx,
+        );
+        set_button_selected(
+            &self.surge_xt_distorted_guitar,
+            selected == VoiceType::SurgeXtDistortedElectricGuitar,
             cx,
         );
     }
@@ -838,6 +871,37 @@ mod tests {
                 panic!("voice type selection must keep the add view open");
             };
             assert_eq!(*selected_voice_type, VoiceType::SurgeXtPiano);
+        });
+    }
+
+    #[gpui::test]
+    fn surge_xt_distorted_guitar_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+
+        dialog.update(cx, |dialog, cx| {
+            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
+            let guitar_button = match &dialog.view {
+                View::Add {
+                    voice_type_buttons, ..
+                } => voice_type_buttons.surge_xt_distorted_guitar.clone(),
+                _ => panic!("add view must contain voice type buttons"),
+            };
+
+            dialog.on_surge_xt_distorted_guitar_clicked(guitar_button, &button::Clicked, cx);
+
+            let View::Add {
+                selected_voice_type,
+                ..
+            } = &dialog.view
+            else {
+                panic!("voice type selection must keep the add view open");
+            };
+            assert_eq!(
+                *selected_voice_type,
+                VoiceType::SurgeXtDistortedElectricGuitar
+            );
         });
     }
 

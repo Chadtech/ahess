@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-08-25
+Last updated: 2026-08-29
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -84,15 +84,16 @@ An intrinsically spatial instrument can eventually expose multiple mono
 emitters with positions local to the voice. That is preferable to allowing an
 instrument to write directly to CPAL channel buffers.
 
-### Surge XT Piano is an exact-frequency external instrument
+### Surge XT instruments preserve exact frequencies
 
-`Surge XT Piano` is the first external pitched voice type. On macOS, Ahess hosts the
-signed Surge XT Audio Unit (`aumu/SgXT/VmbA`) in-process through AudioToolbox.
+`Surge XT Piano` and `Surge XT distorted electric guitar` are external pitched voice
+types. On macOS, Ahess hosts the signed Surge XT Audio Unit (`aumu/SgXT/VmbA`)
+in-process through AudioToolbox.
 It does not launch or automate the Surge XT application, and GarageBand is not
 part of this path.
 
-Before each note-on, Ahess chooses a nearby twelve-tone MIDI key so Surge's piano
-patch receives the appropriate register and key tracking, then publishes the
+Before each note-on, Ahess chooses a nearby twelve-tone MIDI key so the selected
+Surge patch receives the appropriate register and key tracking, then publishes the
 prepared `FrequencyHz` as a double-precision absolute frequency through the free
 MTS-ESP middleware. The MIDI key does not determine the final pitch: MTS-ESP
 does, without pitch bend or a twelve-tone approximation. A Surge voice
@@ -106,17 +107,20 @@ selects the closest note in that lane. The common channel is necessary because
 Surge's default channel-2/channel-3 scene behavior bypasses normal MTS retuning
 for those MIDI paths. The disjoint lanes prevent the instances from overwriting
 one another in MTS-ESP's shared general tuning table while retaining nearby-key
-piano timbre. This supports at most 16 project voices; exceeding that boundary
+timbre. This supports at most 16 project voices; exceeding that boundary
 is an error. Ahess also supplies the channel-specific MTS table for channel 1.
 Surge's stereo output is downmixed to the voice's mono source
-signal and receives a fixed level compensation for the quiet Grand Piano patch
-before the normal Ahess position and room-acoustics stage. The voice loads the
-installed `Grand Piano` patch through the Audio Unit's JUCE class-state
-dictionary. Surge XT does not expose its native patch library through the Audio
-Unit factory-preset list in the standard macOS build. Missing factory resources
-are an error rather than a silent fallback to the default patch. Additional
-concrete Surge instruments and parameter automation are future
-instrument-specification work.
+signal before the normal Ahess position and room-acoustics stage. The quiet
+Grand Piano patch receives fixed level compensation; the Distorted Electric
+Guitar patch does not. Ahess turns off that guitar patch's Reverb 2 global
+effect while retaining its distortion and other tone-shaping effects, leaving
+project room acoustics as the voice's only reverb. Each concrete voice loads
+its installed John Valentine patch through the Audio Unit's JUCE class-state
+dictionary. Surge XT does not
+expose its native patch library through the Audio Unit factory-preset list in
+the standard macOS build. Missing factory resources are an error rather than a
+silent fallback to the default patch. Additional concrete Surge instruments and
+parameter automation are future instrument-specification work.
 
 Audio Units render in bounded blocks of at most 512 frames. Ahess splits blocks
 at delayed note-on and beat boundaries so score timing remains sample-accurate.
