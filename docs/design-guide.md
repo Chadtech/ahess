@@ -157,6 +157,10 @@ or when it defines how a shared component is used.
   resource lists.
 - the component owns the sunken container, empty state, alternating row colors,
   and selected-row colors.
+- use `view::selection_list::searchable` for a long or growing set of choices in
+  a form. It places a full-width search field above a roomy, sunken, vertically
+  scrollable list; filter the rows as the user types and show a useful empty
+  message when there are no matches.
 - use `view::range_selection_list::RangeSelectionList` when an ordered list
   selects one contiguous range rather than independent rows.
 - a range selection starts with a single clicked row and extends by dragging,

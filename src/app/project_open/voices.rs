@@ -12,10 +12,10 @@ use crate::{
         dialog::{destructive_dialog, error_message},
         field_group::field_group,
         selection_list,
-        text_input::TextInput,
+        text_input::{Changed, TextInput},
         workspace,
     },
-    voice::{Voice, VoiceType},
+    voice::{Voice, VoiceType, VoiceVolumeAdjustment},
     voice_name::VoiceName,
 };
 
@@ -29,12 +29,14 @@ pub enum Change {
         name: String,
         voice_type: VoiceType,
         position: Point3Meters,
+        volume_adjustment: Option<VoiceVolumeAdjustment>,
     },
     Edit {
         original_name: VoiceName,
         name: String,
         voice_type: VoiceType,
         position: Point3Meters,
+        volume_adjustment: Option<VoiceVolumeAdjustment>,
     },
 }
 
@@ -133,18 +135,18 @@ enum View {
     },
     Add {
         name: Entity<TextInput>,
-        selected_voice_type: VoiceType,
-        voice_type_buttons: VoiceTypeButtons,
+        voice_type_picker: VoiceTypePicker,
         position: PositionFields,
+        volume_adjustment: Entity<TextInput>,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
         form_error: Option<String>,
     },
     Edit {
         name: Entity<TextInput>,
-        selected_voice_type: VoiceType,
-        voice_type_buttons: VoiceTypeButtons,
+        voice_type_picker: VoiceTypePicker,
         position: PositionFields,
+        volume_adjustment: Entity<TextInput>,
         cancel_button: Entity<Button>,
         save_button: Entity<Button>,
         delete_button: Entity<Button>,
@@ -196,22 +198,21 @@ impl VoicesWorkspace {
 
     fn add_view(acoustic_scene: &AcousticScene, cx: &mut Context<Self>) -> View {
         let name = cx.new(|cx| TextInput::new("", "lead", cx));
-        let selected_voice_type = VoiceType::Sin;
-        let voice_type_buttons = VoiceTypeButtons::new(selected_voice_type, cx);
+        let voice_type_picker = VoiceTypePicker::new(VoiceType::Sin, cx);
         let position = PositionFields::new("add-voice", acoustic_scene.listener(), cx);
+        let volume_adjustment = cx.new(|cx| TextInput::new("", "1.0", cx));
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let add_button = cx.new(|_| Button::new("confirm-add-voice", "add voice"));
 
         cx.subscribe(&cancel_button, Self::on_cancel_clicked)
             .detach();
         cx.subscribe(&add_button, Self::on_add_clicked).detach();
-        Self::subscribe_voice_type_buttons(&voice_type_buttons, cx);
 
         View::Add {
             name,
-            selected_voice_type,
-            voice_type_buttons,
+            voice_type_picker,
             position,
+            volume_adjustment,
             cancel_button,
             add_button,
             form_error: None,
@@ -221,9 +222,13 @@ impl VoicesWorkspace {
     fn edit_view(voice: &Voice, cx: &mut Context<Self>) -> View {
         let voice_name = voice.name.as_str().to_owned();
         let name = cx.new(move |cx| TextInput::new(voice_name, "lead", cx));
-        let selected_voice_type = voice.voice_type;
-        let voice_type_buttons = VoiceTypeButtons::new(selected_voice_type, cx);
+        let voice_type_picker = VoiceTypePicker::new(voice.voice_type, cx);
         let position = PositionFields::new("edit-voice", voice.position(), cx);
+        let saved_adjustment = voice
+            .volume_adjustment()
+            .map(|adjustment| adjustment.multiplier().to_string())
+            .unwrap_or_default();
+        let volume_adjustment = cx.new(move |cx| TextInput::new(saved_adjustment, "1.0", cx));
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let save_button = cx.new(|_| Button::new("save-voice", "save changes"));
         let delete_button = cx.new(|_| Button::new("delete-voice", "delete voice"));
@@ -233,37 +238,17 @@ impl VoicesWorkspace {
         cx.subscribe(&save_button, Self::on_save_clicked).detach();
         cx.subscribe(&delete_button, Self::on_delete_clicked)
             .detach();
-        Self::subscribe_voice_type_buttons(&voice_type_buttons, cx);
 
         View::Edit {
             name,
-            selected_voice_type,
-            voice_type_buttons,
+            voice_type_picker,
             position,
+            volume_adjustment,
             cancel_button,
             save_button,
             delete_button,
             form_error: None,
         }
-    }
-
-    fn subscribe_voice_type_buttons(buttons: &VoiceTypeButtons, cx: &mut Context<Self>) {
-        cx.subscribe(&buttons.sin, Self::on_sin_clicked).detach();
-        cx.subscribe(&buttons.saw, Self::on_saw_clicked).detach();
-        cx.subscribe(&buttons.harmonic_saw, Self::on_harmonic_saw_clicked)
-            .detach();
-        cx.subscribe(&buttons.surge_xt_piano, Self::on_surge_xt_piano_clicked)
-            .detach();
-        cx.subscribe(
-            &buttons.surge_xt_distorted_guitar,
-            Self::on_surge_xt_distorted_guitar_clicked,
-        )
-        .detach();
-        cx.subscribe(
-            &buttons.surge_xt_clarinet,
-            Self::on_surge_xt_clarinet_clicked,
-        )
-        .detach();
     }
 
     fn on_add_new_clicked(
@@ -318,15 +303,25 @@ impl VoicesWorkspace {
         let request = match &self.view {
             View::Add {
                 name,
-                selected_voice_type,
+                voice_type_picker,
                 position,
+                volume_adjustment,
                 ..
             } => position
                 .position(&self.acoustic_scene, cx)
-                .map(|position| (name.read(cx).value(), *selected_voice_type, position)),
+                .and_then(|position| {
+                    parse_volume_adjustment(&volume_adjustment.read(cx).value()).map(|adjustment| {
+                        (
+                            name.read(cx).value(),
+                            voice_type_picker.selected,
+                            position,
+                            adjustment,
+                        )
+                    })
+                }),
             _ => return,
         };
-        let (name, voice_type, position) = match request {
+        let (name, voice_type, position, volume_adjustment) = match request {
             Ok(request) => request,
             Err(error) => {
                 if let View::Add { form_error, .. } = &mut self.view {
@@ -340,6 +335,7 @@ impl VoicesWorkspace {
             name,
             voice_type,
             position,
+            volume_adjustment,
         }));
     }
 
@@ -350,15 +346,25 @@ impl VoicesWorkspace {
         let request = match &self.view {
             View::Edit {
                 name,
-                selected_voice_type,
+                voice_type_picker,
                 position,
+                volume_adjustment,
                 ..
             } => position
                 .position(&self.acoustic_scene, cx)
-                .map(|position| (name.read(cx).value(), *selected_voice_type, position)),
+                .and_then(|position| {
+                    parse_volume_adjustment(&volume_adjustment.read(cx).value()).map(|adjustment| {
+                        (
+                            name.read(cx).value(),
+                            voice_type_picker.selected,
+                            position,
+                            adjustment,
+                        )
+                    })
+                }),
             _ => return,
         };
-        let (name, voice_type, position) = match request {
+        let (name, voice_type, position, volume_adjustment) = match request {
             Ok(request) => request,
             Err(error) => {
                 if let View::Edit { form_error, .. } = &mut self.view {
@@ -373,76 +379,39 @@ impl VoicesWorkspace {
             name,
             voice_type,
             position,
+            volume_adjustment,
         }));
     }
 
-    fn on_sin_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        self.select_voice_type(VoiceType::Sin, cx);
-    }
-
-    fn on_saw_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
-        self.select_voice_type(VoiceType::Saw, cx);
-    }
-
-    fn on_harmonic_saw_clicked(
+    fn on_voice_type_search_changed(
         &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
+        _: Entity<TextInput>,
+        _: &Changed,
         cx: &mut Context<Self>,
     ) {
-        self.select_voice_type(VoiceType::HarmonicSaw, cx);
-    }
-
-    fn on_surge_xt_piano_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        self.select_voice_type(VoiceType::SurgeXtPiano, cx);
-    }
-
-    fn on_surge_xt_distorted_guitar_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        self.select_voice_type(VoiceType::SurgeXtDistortedElectricGuitar, cx);
-    }
-
-    fn on_surge_xt_clarinet_clicked(
-        &mut self,
-        _: Entity<Button>,
-        _: &button::Clicked,
-        cx: &mut Context<Self>,
-    ) {
-        self.select_voice_type(VoiceType::SurgeXtClarinet, cx);
+        cx.notify();
     }
 
     fn select_voice_type(&mut self, voice_type: VoiceType, cx: &mut Context<Self>) {
-        let (selected_voice_type, voice_type_buttons, form_error) = match &mut self.view {
+        let (voice_type_picker, form_error) = match &mut self.view {
             View::Add {
-                selected_voice_type,
-                voice_type_buttons,
+                voice_type_picker,
                 form_error,
                 ..
             }
             | View::Edit {
-                selected_voice_type,
-                voice_type_buttons,
+                voice_type_picker,
                 form_error,
                 ..
-            } => (selected_voice_type, voice_type_buttons, form_error),
+            } => (voice_type_picker, form_error),
             View::List { .. } => return,
         };
 
-        if *selected_voice_type == voice_type {
+        if voice_type_picker.selected == voice_type {
             return;
         }
 
-        *selected_voice_type = voice_type;
-        voice_type_buttons.set_selected(voice_type, cx);
+        voice_type_picker.selected = voice_type;
         *form_error = None;
         cx.notify();
     }
@@ -545,23 +514,27 @@ impl Render for VoicesWorkspace {
             } => self.voice_list(add_new_button.clone(), edit_button.clone(), cx),
             View::Add {
                 name,
-                voice_type_buttons,
+                voice_type_picker,
                 position,
+                volume_adjustment,
                 cancel_button,
                 add_button,
                 form_error,
                 ..
             } => self.voice_form(
                 name.clone(),
-                voice_type_buttons,
+                voice_type_picker,
                 position,
+                volume_adjustment.clone(),
                 form_error.clone(),
                 button::action_group([cancel_button.clone(), add_button.clone()]).justify_end(),
+                cx,
             ),
             View::Edit {
                 name,
-                voice_type_buttons,
+                voice_type_picker,
                 position,
+                volume_adjustment,
                 cancel_button,
                 save_button,
                 delete_button,
@@ -581,10 +554,12 @@ impl Render for VoicesWorkspace {
 
                 self.voice_form(
                     name.clone(),
-                    voice_type_buttons,
+                    voice_type_picker,
                     position,
+                    volume_adjustment.clone(),
                     form_error.clone(),
                     actions,
+                    cx,
                 )
             }
         }
@@ -614,31 +589,24 @@ impl VoicesWorkspace {
     fn voice_form(
         &self,
         name: Entity<TextInput>,
-        voice_type_buttons: &VoiceTypeButtons,
+        voice_type_picker: &VoiceTypePicker,
         position: &PositionFields,
+        volume_adjustment: Entity<TextInput>,
         form_error: Option<String>,
         actions: gpui::Div,
+        cx: &mut Context<Self>,
     ) -> gpui::Div {
         let form = div()
             .flex()
             .flex_col()
             .gap_5()
             .child(field_group("voice name", name))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(div().text_color(s::FIELD_LABEL_TEXT).child("voice type"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .children(voice_type_buttons.entities()),
-                    ),
-            )
-            .child(position.view(&self.acoustic_scene));
+            .child(voice_type_picker.view(cx))
+            .child(position.view(&self.acoustic_scene))
+            .child(field_group(
+                "volume adjustment (optional multiplier)",
+                volume_adjustment,
+            ));
 
         let form = if let Some(error) = form_error {
             form.child(error_message(error))
@@ -654,6 +622,20 @@ fn find_voice<'a>(voices: &'a [Voice], name: &VoiceName) -> Option<&'a Voice> {
     voices
         .iter()
         .find(|voice| voice.name.eq_ignore_ascii_case(name))
+}
+
+fn parse_volume_adjustment(value: &str) -> Result<Option<VoiceVolumeAdjustment>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let multiplier = value
+        .parse::<f64>()
+        .map_err(|_| "voice volume adjustment must be a decimal number".to_string())?;
+    VoiceVolumeAdjustment::new(multiplier)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 fn voice_list(
@@ -720,6 +702,19 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
                             .flex()
                             .flex_col()
                             .gap_1()
+                            .child(div().text_color(s::TEXT_HEADER).child("volume adjustment"))
+                            .child(div().text_color(s::TEXT_DEFAULT).child(
+                                voice.volume_adjustment().map_or_else(
+                                    || "default (1×)".to_string(),
+                                    |adjustment| format!("{}×", adjustment.multiplier()),
+                                ),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
                             .child(div().text_color(s::TEXT_HEADER).child("position"))
                             .child(div().text_color(s::TEXT_DEFAULT).child(format!(
                                 "X {}, Y {}, Z {} meters",
@@ -747,216 +742,143 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
         .child(details)
 }
 
-struct VoiceTypeButtons {
-    sin: Entity<Button>,
-    saw: Entity<Button>,
-    harmonic_saw: Entity<Button>,
-    surge_xt_piano: Entity<Button>,
-    surge_xt_distorted_guitar: Entity<Button>,
-    surge_xt_clarinet: Entity<Button>,
+struct VoiceTypePicker {
+    search: Entity<TextInput>,
+    selected: VoiceType,
 }
 
-impl VoiceTypeButtons {
+impl VoiceTypePicker {
     fn new(selected: VoiceType, cx: &mut Context<VoicesWorkspace>) -> Self {
-        Self {
-            sin: voice_type_button("voice-type-sin", VoiceType::Sin, selected, cx),
-            saw: voice_type_button("voice-type-saw", VoiceType::Saw, selected, cx),
-            harmonic_saw: voice_type_button(
-                "voice-type-harmonic-saw",
-                VoiceType::HarmonicSaw,
-                selected,
-                cx,
-            ),
-            surge_xt_piano: voice_type_button(
-                "voice-type-surge-xt-piano",
-                VoiceType::SurgeXtPiano,
-                selected,
-                cx,
-            ),
-            surge_xt_distorted_guitar: voice_type_button(
-                "voice-type-surge-xt-distorted-guitar",
-                VoiceType::SurgeXtDistortedElectricGuitar,
-                selected,
-                cx,
-            ),
-            surge_xt_clarinet: voice_type_button(
-                "voice-type-surge-xt-clarinet",
-                VoiceType::SurgeXtClarinet,
-                selected,
-                cx,
-            ),
-        }
+        let search = cx.new(|cx| TextInput::new("", "search voice types", cx));
+        cx.subscribe(&search, VoicesWorkspace::on_voice_type_search_changed)
+            .detach();
+        Self { search, selected }
     }
 
-    fn entities(&self) -> Vec<Entity<Button>> {
-        vec![
-            self.sin.clone(),
-            self.saw.clone(),
-            self.harmonic_saw.clone(),
-            self.surge_xt_piano.clone(),
-            self.surge_xt_distorted_guitar.clone(),
-            self.surge_xt_clarinet.clone(),
-        ]
-    }
+    fn view(&self, cx: &mut Context<VoicesWorkspace>) -> gpui::Div {
+        let query = self.search.read(cx).value();
+        let rows = matching_voice_types(&query)
+            .enumerate()
+            .map(|(index, voice_type)| voice_type_row(index, voice_type, self.selected, cx))
+            .collect();
 
-    fn set_selected(&self, selected: VoiceType, cx: &mut Context<VoicesWorkspace>) {
-        set_button_selected(&self.sin, selected == VoiceType::Sin, cx);
-        set_button_selected(&self.saw, selected == VoiceType::Saw, cx);
-        set_button_selected(&self.harmonic_saw, selected == VoiceType::HarmonicSaw, cx);
-        set_button_selected(
-            &self.surge_xt_piano,
-            selected == VoiceType::SurgeXtPiano,
-            cx,
-        );
-        set_button_selected(
-            &self.surge_xt_distorted_guitar,
-            selected == VoiceType::SurgeXtDistortedElectricGuitar,
-            cx,
-        );
-        set_button_selected(
-            &self.surge_xt_clarinet,
-            selected == VoiceType::SurgeXtClarinet,
-            cx,
-        );
+        div()
+            .flex()
+            .flex_col()
+            .gap(s::S3)
+            .child(div().text_color(s::FIELD_LABEL_TEXT).child("voice type"))
+            .child(selection_list::searchable(
+                "voice-type-list-scroll",
+                self.search.clone(),
+                "no voice types match",
+                rows,
+            ))
     }
 }
 
-fn voice_type_button(
-    id: &'static str,
+fn matching_voice_types(query: &str) -> impl Iterator<Item = VoiceType> + '_ {
+    let terms = query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    VoiceType::ALL.into_iter().filter(move |voice_type| {
+        let label = voice_type.label().to_lowercase();
+        terms.iter().all(|term| label.contains(term))
+    })
+}
+
+fn voice_type_row(
+    index: usize,
     voice_type: VoiceType,
     selected: VoiceType,
     cx: &mut Context<VoicesWorkspace>,
-) -> Entity<Button> {
-    cx.new(|_| Button::new(id, voice_type.label()).depressed(voice_type == selected))
-}
-
-fn set_button_selected(button: &Entity<Button>, selected: bool, cx: &mut Context<VoicesWorkspace>) {
-    button.update(cx, |button, cx| button.set_depressed(selected, cx));
+) -> gpui::Div {
+    selection_list::row(index, voice_type == selected, voice_type.label())
+        .debug_selector(move || format!("voice-type-{}", voice_type.config_value()))
+        .hover(|style| style.bg(s::GREEN5).text_color(s::TEXT_HOVERED))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |workspace, _: &MouseDownEvent, _: &mut Window, cx| {
+                workspace.select_voice_type(voice_type, cx);
+            }),
+        )
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::{px, size, TestAppContext};
+    use gpui::{px, size, Modifiers, MouseButton, TestAppContext};
 
-    use super::{View, VoicesWorkspace};
+    use super::{matching_voice_types, parse_volume_adjustment, View, VoicesWorkspace};
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
-        view::button,
-        voice::{Voice, VoiceType},
+        voice::{Voice, VoiceType, VoiceVolumeAdjustment},
     };
 
-    #[gpui::test]
-    fn harmonic_saw_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
-        let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
-        });
+    #[test]
+    fn volume_adjustment_field_is_optional_and_validated() {
+        assert_eq!(parse_volume_adjustment("  ").unwrap(), None);
+        assert_eq!(
+            parse_volume_adjustment("1.5").unwrap(),
+            Some(VoiceVolumeAdjustment::new(1.5).unwrap())
+        );
+        assert!(parse_volume_adjustment("loud").is_err());
+        assert!(parse_volume_adjustment("0").is_err());
+        assert!(parse_volume_adjustment("-1").is_err());
+    }
 
-        dialog.update(cx, |dialog, cx| {
-            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
-            let harmonic_saw_button = match &dialog.view {
-                View::Add {
-                    voice_type_buttons, ..
-                } => voice_type_buttons.harmonic_saw.clone(),
-                _ => panic!("add view must contain voice type buttons"),
-            };
-
-            dialog.on_harmonic_saw_clicked(harmonic_saw_button, &button::Clicked, cx);
-
-            let View::Add {
-                selected_voice_type,
-                ..
-            } = &dialog.view
-            else {
-                panic!("voice type selection must keep the add view open");
-            };
-            assert_eq!(*selected_voice_type, VoiceType::HarmonicSaw);
-        });
+    #[test]
+    fn voice_type_search_is_case_insensitive_and_matches_all_terms() {
+        assert_eq!(
+            matching_voice_types("XT guitar").collect::<Vec<_>>(),
+            vec![VoiceType::SurgeXtDistortedElectricGuitar]
+        );
+        assert_eq!(
+            matching_voice_types("saw").collect::<Vec<_>>(),
+            vec![VoiceType::Saw, VoiceType::HarmonicSaw]
+        );
+        assert_eq!(
+            matching_voice_types("bell a").collect::<Vec<_>>(),
+            vec![VoiceType::NoitechBellA]
+        );
+        assert!(matching_voice_types("pipe organ").next().is_none());
     }
 
     #[gpui::test]
-    fn surge_xt_piano_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
+    fn searchable_voice_type_list_filters_and_selects_a_row(cx: &mut TestAppContext) {
         let (dialog, cx) = cx.add_window_view(move |_, cx| {
             VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
         });
+        cx.simulate_resize(size(px(800.0), px(800.0)));
 
         dialog.update(cx, |dialog, cx| {
             dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
-            let surge_xt_piano_button = match &dialog.view {
-                View::Add {
-                    voice_type_buttons, ..
-                } => voice_type_buttons.surge_xt_piano.clone(),
-                _ => panic!("add view must contain voice type buttons"),
-            };
-
-            dialog.on_surge_xt_piano_clicked(surge_xt_piano_button, &button::Clicked, cx);
-
             let View::Add {
-                selected_voice_type,
-                ..
+                voice_type_picker, ..
+            } = &dialog.view
+            else {
+                panic!("add view must contain a voice type picker");
+            };
+            voice_type_picker
+                .search
+                .update(cx, |search, cx| search.sync_value("clarinet", cx));
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("voice-type-surge-xt-clarinet").is_some());
+        assert!(cx.debug_bounds("voice-type-sin").is_none());
+
+        let clarinet = cx.debug_bounds("voice-type-surge-xt-clarinet").unwrap();
+        cx.simulate_mouse_down(clarinet.center(), MouseButton::Left, Modifiers::default());
+
+        dialog.read_with(cx, |dialog, _| {
+            let View::Add {
+                voice_type_picker, ..
             } = &dialog.view
             else {
                 panic!("voice type selection must keep the add view open");
             };
-            assert_eq!(*selected_voice_type, VoiceType::SurgeXtPiano);
-        });
-    }
-
-    #[gpui::test]
-    fn surge_xt_distorted_guitar_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
-        let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
-        });
-
-        dialog.update(cx, |dialog, cx| {
-            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
-            let guitar_button = match &dialog.view {
-                View::Add {
-                    voice_type_buttons, ..
-                } => voice_type_buttons.surge_xt_distorted_guitar.clone(),
-                _ => panic!("add view must contain voice type buttons"),
-            };
-
-            dialog.on_surge_xt_distorted_guitar_clicked(guitar_button, &button::Clicked, cx);
-
-            let View::Add {
-                selected_voice_type,
-                ..
-            } = &dialog.view
-            else {
-                panic!("voice type selection must keep the add view open");
-            };
-            assert_eq!(
-                *selected_voice_type,
-                VoiceType::SurgeXtDistortedElectricGuitar
-            );
-        });
-    }
-
-    #[gpui::test]
-    fn surge_xt_clarinet_can_be_selected_for_a_new_voice(cx: &mut TestAppContext) {
-        let (dialog, cx) = cx.add_window_view(move |_, cx| {
-            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
-        });
-
-        dialog.update(cx, |dialog, cx| {
-            dialog.view = VoicesWorkspace::add_view(&dialog.acoustic_scene, cx);
-            let clarinet_button = match &dialog.view {
-                View::Add {
-                    voice_type_buttons, ..
-                } => voice_type_buttons.surge_xt_clarinet.clone(),
-                _ => panic!("add view must contain voice type buttons"),
-            };
-
-            dialog.on_surge_xt_clarinet_clicked(clarinet_button, &button::Clicked, cx);
-
-            let View::Add {
-                selected_voice_type,
-                ..
-            } = &dialog.view
-            else {
-                panic!("voice type selection must keep the add view open");
-            };
-            assert_eq!(*selected_voice_type, VoiceType::SurgeXtClarinet);
+            assert_eq!(voice_type_picker.selected, VoiceType::SurgeXtClarinet);
         });
     }
 
@@ -1016,5 +938,30 @@ mod tests {
             position.position(&dialog.acoustic_scene, cx).unwrap()
         });
         assert_eq!(position, saved_position);
+    }
+
+    #[gpui::test]
+    fn edit_voice_volume_starts_at_the_saved_adjustment(cx: &mut TestAppContext) {
+        let scene = AcousticScene::default();
+        let voice = Voice::new(1, "lead", VoiceType::Saw)
+            .with_volume_adjustment(Some(VoiceVolumeAdjustment::new(1.5).unwrap()));
+        let (dialog, cx) =
+            cx.add_window_view(move |_, cx| VoicesWorkspace::new(vec![voice], scene, cx));
+
+        dialog.update(cx, |dialog, cx| {
+            let voice = dialog.voices[0].clone();
+            dialog.view = VoicesWorkspace::edit_view(&voice, cx);
+        });
+
+        let value = cx.update(|_, cx| {
+            let View::Edit {
+                volume_adjustment, ..
+            } = &dialog.read(cx).view
+            else {
+                panic!("edit button must show the edit form");
+            };
+            volume_adjustment.read(cx).value()
+        });
+        assert_eq!(value, "1.5");
     }
 }

@@ -2516,13 +2516,15 @@ impl Model {
                 name,
                 voice_type,
                 position,
+                volume_adjustment,
             } => {
-                match project::add_voice_at(
+                match project::add_voice_with_adjustment_at(
                     &self.project_directory,
                     &self.project,
                     name,
                     *voice_type,
                     *position,
+                    *volume_adjustment,
                 ) {
                     Ok(updated_project) => {
                         let added = updated_project
@@ -2552,15 +2554,17 @@ impl Model {
                 name,
                 voice_type,
                 position,
+                volume_adjustment,
             } => {
                 let edited_id = self.project.voice(original_name).map(|voice| voice.id());
-                match project::edit_voice_at(
+                match project::edit_voice_with_adjustment_at(
                     &self.project_directory,
                     &self.project,
                     original_name,
                     name,
                     *voice_type,
                     *position,
+                    *volume_adjustment,
                 ) {
                     Ok(updated_project) => {
                         let edited = edited_id
@@ -6507,6 +6511,7 @@ mod tests {
                     name: "harmony".to_string(),
                     voice_type: VoiceType::Sin,
                     position: Point3Meters::default(),
+                    volume_adjustment: None,
                 }),
                 cx,
             );

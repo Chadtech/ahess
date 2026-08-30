@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -72,6 +72,22 @@ language.
 For example, a `MetallicChoir` or `BellCloud` instrument can be implemented in
 its own Rust module. TOML may select it and configure brightness, instability,
 partial spread, or decay. The algorithm itself remains code.
+
+`Noitech Bell A` is a built-in pitched voice translated from the static sine
+profile in `bells20150804/buildBells.coffee` from Chadtech/Ntv1.bYhS2. It sums
+the source's 16 sine oscillators at frequency ratios from `0.5` through `6.7`
+and retains the effective amplitude produced by every nested `eff.vol`
+operation. Each oscillator also retains its original stack of two through
+seven full-body fade-outs. The sine body begins with the source's 60-sample
+fade-in after a 120-sample, eight-harmonic square-wave strike at one third of
+the played frequency. Those two short sample counts are converted from the
+source's 44.1 kHz timing at the active output rate. The sine body and its
+full-body fades retain the source's fixed five-second duration. Successive
+notes own independent active bell instances so their decays overlap instead
+of being cut off at beat boundaries. This voice supplies its own note
+envelope; Ahess applies voice volume adjustment, spatialization, and room
+acoustics afterward. Components above the safe Nyquist boundary are omitted
+rather than folded into audible aliases.
 
 ### Instruments do not write hardware channels
 
@@ -249,6 +265,7 @@ pub struct Voice {
     name: VoiceName,
     instrument: InstrumentSpec,
     position: Point3Meters,
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
 }
 
 pub enum InstrumentSpec {
@@ -507,7 +524,7 @@ Effects should be placed according to what they mean:
 
 1. Instrument-internal processing is part of a handwritten instrument.
 2. Voice-local processing changes a source before spatialization, such as a
-   filter, saturation, or local delay.
+   volume adjustment, filter, saturation, or local delay.
 3. Acoustic processing depends on source and listener position.
 4. Project/master processing runs after voice contributions are mixed.
 
@@ -520,6 +537,13 @@ acoustically active voices. Because starting or ending one voice would otherwise
 rescale every other voice in a single sample, normalization gain moves to each
 new target with a 64-sample linear ramp. During silence it returns to the
 single-voice gain so the next isolated voice starts at the expected level.
+
+Each voice may also store a positive finite volume multiplier. When omitted it
+has unity gain. The multiplier is applied to the mono instrument source before
+position and room acoustics, so direct sound, reflections, live playback, the
+offline mix, and per-voice stems all use the same adjustment. This is a manual
+timbre-level correction and does not replace the master mixer's active-voice
+normalization.
 
 The first convolution configuration is a project default applied independently
 to every mono voice before position and room acoustics. It is therefore a

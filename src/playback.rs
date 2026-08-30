@@ -15,6 +15,7 @@ use cpal::{
 
 use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
+    noitech_bell_a::NoitechBellARuntime,
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
@@ -235,6 +236,9 @@ impl PlaybackLoop {
                     id: voice.id(),
                     voice_type: voice.voice_type,
                     position: voice.position(),
+                    volume_multiplier: voice
+                        .volume_adjustment()
+                        .map_or(1.0, |adjustment| adjustment.multiplier()),
                     frequencies,
                     delays,
                 })
@@ -333,6 +337,7 @@ struct PlaybackVoice {
     id: VoiceId,
     voice_type: VoiceType,
     position: Point3Meters,
+    volume_multiplier: f32,
     frequencies: Vec<Option<FrequencyHz>>,
     delays: Vec<u32>,
 }
@@ -843,12 +848,14 @@ impl VoiceRuntime {
             self.instrument
                 .sample(voice, beat_index, sample_in_beat, beat_length, sample_rate);
 
-        self.spatializer.process(source_sample, source_is_active)
+        self.spatializer
+            .process(source_sample * voice.volume_multiplier, source_is_active)
     }
 }
 
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
+    NoitechBellA(NoitechBellARuntime),
     #[cfg(target_os = "macos")]
     SurgeXt(SurgeXtRuntime),
 }
@@ -865,6 +872,7 @@ impl InstrumentRuntime {
             VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
                 Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
             }
+            VoiceType::NoitechBellA => Ok(Self::NoitechBellA(NoitechBellARuntime::new())),
             VoiceType::SurgeXtPiano
             | VoiceType::SurgeXtDistortedElectricGuitar
             | VoiceType::SurgeXtClarinet => {
@@ -899,6 +907,7 @@ impl InstrumentRuntime {
     fn matches(&self, voice_type: VoiceType, voice_index: usize, voice_count: usize) -> bool {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
+            Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
             #[cfg(target_os = "macos")]
             Self::SurgeXt(runtime) => {
                 voice_type == runtime.voice_type
@@ -935,6 +944,17 @@ impl InstrumentRuntime {
                         * envelope(note_sample, note_length),
                     true,
                 )
+            }
+            Self::NoitechBellA(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(frequency) = voice.frequencies[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            runtime.trigger(frequency.as_hz_f32());
+                        }
+                    }
+                }
+                runtime.sample(sample_rate)
             }
             #[cfg(target_os = "macos")]
             Self::SurgeXt(runtime) => {
@@ -980,7 +1000,7 @@ impl SurgeXtRuntime {
                 (SurgeXtPatch::DistortedElectricGuitar, 1.0)
             }
             VoiceType::SurgeXtClarinet => (SurgeXtPatch::Clarinet, 1.0),
-            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
+            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw | VoiceType::NoitechBellA => {
                 unreachable!("built-in voices do not use Surge XT")
             }
         };
@@ -1176,6 +1196,7 @@ impl OscillatorRuntime {
             VoiceType::Sin => Self::Sin { phase: 0.0 },
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
+            VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
             VoiceType::SurgeXtPiano
             | VoiceType::SurgeXtDistortedElectricGuitar
             | VoiceType::SurgeXtClarinet => {
@@ -1381,7 +1402,7 @@ mod tests {
             ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
             PitchSystem,
         },
-        project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType},
+        project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType, VoiceVolumeAdjustment},
         seed::Seed,
     };
 
@@ -1444,6 +1465,50 @@ mod tests {
             playback_loop.voices[1].frequencies[1],
             project.pitch_system().resolve_cell("G2").unwrap()
         );
+    }
+
+    #[test]
+    fn voice_volume_adjustment_scales_the_source_in_offline_rendering() {
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string()]]);
+        let base_project = Project::new("test", 8, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Sin,
+        )]);
+        let adjusted_project =
+            Project::new("test", 8, 0, Seed::new(1)).with_voices(vec![Voice::new(
+                1,
+                "lead",
+                VoiceType::Sin,
+            )
+            .with_volume_adjustment(Some(VoiceVolumeAdjustment::new(1.5).unwrap()))]);
+        let base_rows = score.resolved_rows(&part, &base_project).unwrap();
+        let adjusted_rows = score.resolved_rows(&part, &adjusted_project).unwrap();
+        let mut base = OfflineRenderer::new(
+            PlaybackLoop::from_rows(&base_project, base_rows, 1).unwrap(),
+            48_000,
+        )
+        .unwrap();
+        let mut adjusted = OfflineRenderer::new(
+            PlaybackLoop::from_rows(&adjusted_project, adjusted_rows, 1).unwrap(),
+            48_000,
+        )
+        .unwrap();
+
+        let mut compared_nonzero_frame = false;
+        for _ in 0..200 {
+            let (_, base_voices) = base.next_frame().unwrap();
+            let base_frame = base_voices[0];
+            let (_, adjusted_voices) = adjusted.next_frame().unwrap();
+            let adjusted_frame = adjusted_voices[0];
+            if base_frame.left != 0.0 || base_frame.right != 0.0 {
+                compared_nonzero_frame = true;
+                assert!((adjusted_frame.left - base_frame.left * 1.5).abs() < 1e-6);
+                assert!((adjusted_frame.right - base_frame.right * 1.5).abs() < 1e-6);
+            }
+        }
+        assert!(compared_nonzero_frame);
     }
 
     #[cfg(target_os = "macos")]
@@ -1835,7 +1900,19 @@ mod tests {
                 assert_eq!(voice_frames.len(), 1);
                 assert_eq!(voice_frames[0], live_frame);
             }
-            assert!(offline.next_frame().is_none());
+            if voice_type == VoiceType::NoitechBellA {
+                let mut tail_frames = 0;
+                while offline.next_frame().is_some() {
+                    tail_frames += 1;
+                    assert!(tail_frames < 250_000, "bell tail must terminate");
+                }
+                assert!(
+                    tail_frames > 200_000,
+                    "bell must retain its five-second body"
+                );
+            } else {
+                assert!(offline.next_frame().is_none());
+            }
         }
     }
 

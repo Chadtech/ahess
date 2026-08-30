@@ -10,7 +10,7 @@ use std::{
 
 use serde::Deserialize;
 
-pub use crate::voice::{Voice, VoiceId, VoiceType};
+pub use crate::voice::{Voice, VoiceId, VoiceType, VoiceVolumeAdjustment};
 
 use crate::{
     acoustics::{self, AcousticError, AcousticScene, Point3Meters, RectangularRoom},
@@ -425,6 +425,11 @@ impl Project {
             contents.push_str("\nvoice_type = ");
             contents.push_str(&toml_string(voice.voice_type.config_value()));
             contents.push('\n');
+            if let Some(adjustment) = voice.volume_adjustment() {
+                contents.push_str("volume_adjustment = ");
+                contents.push_str(&adjustment.multiplier().to_string());
+                contents.push('\n');
+            }
             if voice.position() != Point3Meters::origin() {
                 contents.push_str("position = ");
                 acoustics::append_point(&mut contents, voice.position());
@@ -1122,6 +1127,17 @@ pub fn add_voice_at(
     voice_type: VoiceType,
     position: Point3Meters,
 ) -> Result<Project, VoiceChangeError> {
+    add_voice_with_adjustment_at(project_directory, project, name, voice_type, position, None)
+}
+
+pub fn add_voice_with_adjustment_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
+) -> Result<Project, VoiceChangeError> {
     let name = validated_voice_name(project, None, name)?;
     project
         .acoustic_scene
@@ -1133,9 +1149,11 @@ pub fn add_voice_at(
         .ok_or_else(|| VoiceChangeError::InvalidField("no voice ids are available".to_string()))?;
     let mut updated_project = project.clone();
     updated_project.next_voice_id = following_id;
-    updated_project
-        .voices
-        .push(Voice::new(next_id, name, voice_type).with_position(position));
+    updated_project.voices.push(
+        Voice::new(next_id, name, voice_type)
+            .with_position(position)
+            .with_volume_adjustment(volume_adjustment),
+    );
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
 }
@@ -1171,6 +1189,32 @@ pub fn edit_voice_at(
     voice_type: VoiceType,
     position: Point3Meters,
 ) -> Result<Project, VoiceChangeError> {
+    let volume_adjustment = project
+        .voices
+        .iter()
+        .find(|voice| voice.name.eq_ignore_ascii_case(original_name))
+        .map(Voice::volume_adjustment)
+        .ok_or_else(|| VoiceChangeError::MissingVoice(original_name.as_str().to_string()))?;
+    edit_voice_with_adjustment_at(
+        project_directory,
+        project,
+        original_name,
+        name,
+        voice_type,
+        position,
+        volume_adjustment,
+    )
+}
+
+pub fn edit_voice_with_adjustment_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    original_name: &VoiceName,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
+) -> Result<Project, VoiceChangeError> {
     let index = project
         .voices
         .iter()
@@ -1183,7 +1227,9 @@ pub fn edit_voice_at(
         .validate_source(position)
         .map_err(|error| VoiceChangeError::InvalidField(error.to_string()))?;
     let mut updated_project = project.clone();
-    updated_project.voices[index] = Voice::new(id, name, voice_type).with_position(position);
+    updated_project.voices[index] = Voice::new(id, name, voice_type)
+        .with_position(position)
+        .with_volume_adjustment(volume_adjustment);
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
 }
@@ -1802,6 +1848,8 @@ struct StoredVoice {
     name: VoiceName,
     voice_type: VoiceType,
     #[serde(default)]
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
+    #[serde(default)]
     position: Point3Meters,
 }
 
@@ -1849,7 +1897,8 @@ where
         };
         voices.push(
             Voice::new(id, stored_voice.name, stored_voice.voice_type)
-                .with_position(stored_voice.position),
+                .with_position(stored_voice.position)
+                .with_volume_adjustment(stored_voice.volume_adjustment),
         );
     }
 
@@ -2010,13 +2059,14 @@ mod tests {
     };
 
     use super::{
-        add_voice, add_voice_at, create_project, delete_voice, duplicate_project, edit_part_rows,
-        edit_voice, edit_voice_at, list_projects, load_project, project_directory_name,
+        add_voice, add_voice_at, add_voice_with_adjustment_at, create_project, delete_voice,
+        duplicate_project, edit_part_rows, edit_voice, edit_voice_at,
+        edit_voice_with_adjustment_at, list_projects, load_project, project_directory_name,
         restore_project_state, save_project, save_project_with_voice_convolution,
         CreateProjectError, DuplicateProjectError, FrequencyVariance, LoadProjectError, Project,
-        ProjectEntry, Voice, VoiceConvolutionChange, VoiceType, PROJECT_CONFIG_FILE,
-        PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE, TRANSACTION_CREATED_DIRECTORY,
-        TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
+        ProjectEntry, Voice, VoiceConvolutionChange, VoiceType, VoiceVolumeAdjustment,
+        PROJECT_CONFIG_FILE, PROJECT_TRANSACTION_DIRECTORY, TRANSACTION_COMMITTING_FILE,
+        TRANSACTION_CREATED_DIRECTORY, TRANSACTION_NEW_DIRECTORY, TRANSACTION_OLD_DIRECTORY,
     };
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
@@ -2893,6 +2943,75 @@ mod tests {
                 .unwrap()
                 .contains("position = { x = 6.0, y = 7.5, z = 2.0 }")
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn voice_volume_adjustments_can_be_added_edited_and_reloaded() {
+        let root = temp_root("voice-volume-adjustments");
+        let project = Project::new("test", 800, 0, Seed::new(1));
+        let project_directory = create_project(&root, &project).unwrap();
+        let louder = VoiceVolumeAdjustment::new(1.5).unwrap();
+
+        let project = add_voice_with_adjustment_at(
+            &project_directory,
+            &project,
+            "lead",
+            VoiceType::Saw,
+            Point3Meters::origin(),
+            Some(louder),
+        )
+        .unwrap();
+        assert_eq!(project.voices[0].volume_adjustment(), Some(louder));
+        assert!(
+            fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
+                .unwrap()
+                .contains("volume_adjustment = 1.5")
+        );
+
+        let project = edit_voice_with_adjustment_at(
+            &project_directory,
+            &project,
+            &VoiceName::new("lead"),
+            "lead",
+            VoiceType::Saw,
+            Point3Meters::origin(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(project.voices[0].volume_adjustment(), None);
+        assert!(
+            !fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE))
+                .unwrap()
+                .contains("volume_adjustment")
+        );
+        assert_eq!(load_project(&project_directory).unwrap().project, project);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_config_rejects_non_positive_voice_volume_adjustments() {
+        let root = temp_root("invalid-voice-volume-adjustment");
+        let project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        let project_directory = create_project(&root, &project).unwrap();
+        let config_path = project_directory.join(PROJECT_CONFIG_FILE);
+        let invalid_config = fs::read_to_string(&config_path).unwrap().replace(
+            "voice_type = \"saw\"",
+            "voice_type = \"saw\"\nvolume_adjustment = 0.0",
+        );
+        fs::write(&config_path, invalid_config).unwrap();
+
+        let error = load_project(&project_directory).unwrap_err();
+        assert!(matches!(error, LoadProjectError::InvalidConfig { .. }));
+        assert!(error
+            .to_string()
+            .contains("voice volume adjustment must be a finite decimal greater than zero"));
 
         fs::remove_dir_all(root).unwrap();
     }
