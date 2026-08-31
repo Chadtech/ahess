@@ -20,6 +20,7 @@ use crate::{
     part::{Part, PartScore},
     pitch_system::FrequencyHz,
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
+    recovered_voice::RecoveredVoiceRuntime,
     seed::{standard_normal, Seed},
 };
 #[cfg(target_os = "macos")]
@@ -880,6 +881,7 @@ enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
     NoitechBellA(NoitechBellARuntime),
     NoitechBellB(NoitechBellBRuntime),
+    Recovered(RecoveredVoiceRuntime),
     #[cfg(target_os = "macos")]
     SurgeXt(SurgeXtRuntime),
 }
@@ -892,10 +894,15 @@ impl InstrumentRuntime {
         sample_rate: f32,
         #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
     ) -> Result<Self, PlaybackError> {
+        if voice_type.uses_recovered_runtime() {
+            return Ok(Self::Recovered(RecoveredVoiceRuntime::new(voice_type)));
+        }
         match voice_type {
-            VoiceType::Sin | VoiceType::Saw | VoiceType::HarmonicSaw => {
-                Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type)))
-            }
+            VoiceType::Sin
+            | VoiceType::Saw
+            | VoiceType::HarmonicSaw
+            | VoiceType::RadlerDullSaw
+            | VoiceType::RadlerHarmonics => Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type))),
             VoiceType::NoitechBellA => Ok(Self::NoitechBellA(NoitechBellARuntime::new())),
             VoiceType::NoitechBellB => Ok(Self::NoitechBellB(NoitechBellBRuntime::new())),
             VoiceType::SurgeXtPiano
@@ -926,6 +933,7 @@ impl InstrumentRuntime {
                     )))
                 }
             }
+            _ => unreachable!("recovered voice was handled before the instrument match"),
         }
     }
 
@@ -934,6 +942,7 @@ impl InstrumentRuntime {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
             Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
             Self::NoitechBellB(_) => voice_type == VoiceType::NoitechBellB,
+            Self::Recovered(runtime) => runtime.voice_type() == voice_type,
             #[cfg(target_os = "macos")]
             Self::SurgeXt(runtime) => {
                 voice_type == runtime.voice_type
@@ -993,6 +1002,17 @@ impl InstrumentRuntime {
                 }
                 runtime.sample(sample_rate)
             }
+            Self::Recovered(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(frequency) = voice.frequencies[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            runtime.trigger(frequency.as_hz_f32());
+                        }
+                    }
+                }
+                runtime.sample(sample_rate)
+            }
             #[cfg(target_os = "macos")]
             Self::SurgeXt(runtime) => {
                 runtime.sample(voice, beat_index, sample_in_beat, beat_length)
@@ -1041,7 +1061,27 @@ impl SurgeXtRuntime {
             | VoiceType::Saw
             | VoiceType::HarmonicSaw
             | VoiceType::NoitechBellA
-            | VoiceType::NoitechBellB => {
+            | VoiceType::NoitechBellB
+            | VoiceType::NoitechBellG
+            | VoiceType::NoitechBellH
+            | VoiceType::NoitechBellI
+            | VoiceType::NoitechBellJ
+            | VoiceType::NoitechBellK
+            | VoiceType::NoitechBellL
+            | VoiceType::NoitechBellM
+            | VoiceType::IconoclastBellG
+            | VoiceType::IconoclastBellH
+            | VoiceType::IconoclastIndustrialBar
+            | VoiceType::CtpianoBars
+            | VoiceType::CtpianoDkSquare
+            | VoiceType::CtpianoEmphaenharm
+            | VoiceType::CtpianoHiSaw
+            | VoiceType::CtpianoLoSaw
+            | VoiceType::CtpianoLoSquare
+            | VoiceType::CtpianoTriangleDrop
+            | VoiceType::RadlerDullSaw
+            | VoiceType::RadlerHarmonics
+            | VoiceType::LegacyNoitechEnharmonic => {
                 unreachable!("built-in voices do not use Surge XT")
             }
         };
@@ -1242,6 +1282,8 @@ enum OscillatorRuntime {
     Sin { phase: f32 },
     Saw { phase: f32 },
     HarmonicSaw(HarmonicSawRuntime),
+    RadlerDullSaw { phase: f32 },
+    RadlerHarmonics { phase: f32 },
 }
 
 impl OscillatorRuntime {
@@ -1250,8 +1292,30 @@ impl OscillatorRuntime {
             VoiceType::Sin => Self::Sin { phase: 0.0 },
             VoiceType::Saw => Self::Saw { phase: 0.0 },
             VoiceType::HarmonicSaw => Self::HarmonicSaw(HarmonicSawRuntime::new()),
+            VoiceType::RadlerDullSaw => Self::RadlerDullSaw { phase: 0.0 },
+            VoiceType::RadlerHarmonics => Self::RadlerHarmonics { phase: 0.0 },
             VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
             VoiceType::NoitechBellB => unreachable!("Noitech Bell B has a tail-aware runtime"),
+            VoiceType::NoitechBellG
+            | VoiceType::NoitechBellH
+            | VoiceType::NoitechBellI
+            | VoiceType::NoitechBellJ
+            | VoiceType::NoitechBellK
+            | VoiceType::NoitechBellL
+            | VoiceType::NoitechBellM
+            | VoiceType::IconoclastBellG
+            | VoiceType::IconoclastBellH
+            | VoiceType::IconoclastIndustrialBar
+            | VoiceType::CtpianoBars
+            | VoiceType::CtpianoDkSquare
+            | VoiceType::CtpianoEmphaenharm
+            | VoiceType::CtpianoHiSaw
+            | VoiceType::CtpianoLoSaw
+            | VoiceType::CtpianoLoSquare
+            | VoiceType::CtpianoTriangleDrop
+            | VoiceType::LegacyNoitechEnharmonic => {
+                unreachable!("recovered voice has a tail-aware runtime")
+            }
             VoiceType::SurgeXtPiano
             | VoiceType::SurgeXtDistortedElectricGuitar
             | VoiceType::SurgeXtClarinet => {
@@ -1265,6 +1329,8 @@ impl OscillatorRuntime {
             Self::Sin { .. } => VoiceType::Sin,
             Self::Saw { .. } => VoiceType::Saw,
             Self::HarmonicSaw(_) => VoiceType::HarmonicSaw,
+            Self::RadlerDullSaw { .. } => VoiceType::RadlerDullSaw,
+            Self::RadlerHarmonics { .. } => VoiceType::RadlerHarmonics,
         }
     }
 
@@ -1280,6 +1346,18 @@ impl OscillatorRuntime {
                 advance_phase(phase, frequency, sample_rate);
                 sample
             }
+            Self::RadlerDullSaw { phase } => {
+                let sample = radler_dull_saw(*phase, frequency, sample_rate);
+                advance_phase(phase, frequency, sample_rate);
+                sample
+            }
+            Self::RadlerHarmonics { phase } => {
+                let sample = (std::f32::consts::TAU * *phase).sin()
+                    + 0.5 * (std::f32::consts::TAU * *phase * 2.0).sin()
+                    + 0.2 * (std::f32::consts::TAU * *phase * 3.0).sin();
+                advance_phase(phase, frequency, sample_rate);
+                sample / 1.7
+            }
             Self::HarmonicSaw(runtime) => runtime.sample(frequency, sample_rate),
         }
     }
@@ -1287,6 +1365,30 @@ impl OscillatorRuntime {
 
 fn advance_phase(phase: &mut f32, frequency: f32, sample_rate: f32) {
     *phase = (*phase + frequency / sample_rate).fract();
+}
+
+fn radler_dull_saw(phase: f32, fundamental: f32, sample_rate: f32) -> f32 {
+    let normalization = binomial(20, 10) as f32;
+    (1_u32..=10)
+        .filter(|harmonic| {
+            fundamental * (*harmonic as f32) < sample_rate * 0.5 * HARMONIC_SAW_NYQUIST_MARGIN
+        })
+        .map(|harmonic| {
+            let weight = binomial(20, 10 - harmonic) as f32 / normalization / harmonic as f32;
+            (std::f32::consts::TAU * phase * harmonic as f32).sin() * weight
+        })
+        .sum()
+}
+
+const fn binomial(n: u32, k: u32) -> u64 {
+    let k = if k < n - k { k } else { n - k };
+    let mut result = 1_u64;
+    let mut index = 0;
+    while index < k {
+        result = result * (n - index) as u64 / (index + 1) as u64;
+        index += 1;
+    }
+    result
 }
 
 struct HarmonicSawRuntime {
@@ -1958,17 +2060,35 @@ mod tests {
             let tail_bounds = match voice_type {
                 VoiceType::NoitechBellA => Some((200_000, 250_000)),
                 VoiceType::NoitechBellB => Some((160_000, 200_000)),
+                VoiceType::NoitechBellG
+                | VoiceType::NoitechBellH
+                | VoiceType::NoitechBellI
+                | VoiceType::NoitechBellJ
+                | VoiceType::NoitechBellK
+                | VoiceType::NoitechBellL
+                | VoiceType::NoitechBellM
+                | VoiceType::IconoclastBellG
+                | VoiceType::IconoclastBellH => Some((180_000, 195_000)),
+                VoiceType::IconoclastIndustrialBar => Some((135_000, 148_000)),
+                VoiceType::CtpianoDkSquare => Some((1_400, 2_000)),
+                VoiceType::CtpianoBars
+                | VoiceType::CtpianoEmphaenharm
+                | VoiceType::CtpianoHiSaw
+                | VoiceType::CtpianoLoSaw
+                | VoiceType::CtpianoLoSquare
+                | VoiceType::CtpianoTriangleDrop
+                | VoiceType::LegacyNoitechEnharmonic => Some((90_000, 100_000)),
                 _ => None,
             };
             if let Some((minimum, maximum)) = tail_bounds {
                 let mut tail_frames = 0;
                 while offline.next_frame().is_some() {
                     tail_frames += 1;
-                    assert!(tail_frames < maximum, "bell tail must terminate");
+                    assert!(tail_frames < maximum, "voice tail must terminate");
                 }
                 assert!(
                     tail_frames > minimum,
-                    "bell must retain its source duration"
+                    "voice must retain its source duration"
                 );
             } else {
                 assert!(offline.next_frame().is_none());

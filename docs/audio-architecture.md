@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -100,6 +100,29 @@ CoffeeScript generator consequently emits only their zero-valued phase-zero
 sample, so they are intentionally silent in this faithful rendering. Bell B
 has no strike. Like Bell A, it owns its envelope and then enters the shared
 voice-volume, spatialization, room-acoustics, and live/offline paths.
+
+The recovered voice catalog extends this same model with Noitech Bells G–M,
+the later Iconoclast Bell G and H rewrites and industrial bar, seven Ctpiano
+recipes, Radler's dull-saw and concrete harmonic example, and an early Noitech
+enharmonic triangle. Fixed rendered-sample recipes own independent active-note
+instances and keep sounding across beat boundaries; the two Radler oscillator
+recipes use Ahess's beat envelope. Every implementation omits components above
+the active output rate's safe Nyquist boundary rather than aliasing them.
+
+Several old bell generators convolved their additive body with a repository
+WAV impulse (`expensiveE.wav` or `home_clap_1.wav`). The current recovered
+voices implement their native additive bodies but do not apply those external
+impulses. This boundary is part of the voice's displayed fidelity metadata, so
+the omission cannot be mistaken for source-exact reproduction. Likewise,
+repairs and distilled parameter choices—such as the industrial bar's `dir` /
+`dur` source typo—are recorded with the affected voice.
+
+Each `VoiceType` owns immutable `VoiceDetails`: a description, exact source
+repository and path, and fidelity note. This metadata describes the instrument
+definition, so it is derived from the selected type rather than copied into
+each project TOML. The voice picker searches it and both the picker and saved
+voice detail view display it. Project files continue to persist only the stable
+voice-type identifier and project-specific voice settings.
 
 ### Instruments do not write hardware channels
 

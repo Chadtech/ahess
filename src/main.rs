@@ -15,6 +15,7 @@ pub mod part;
 pub mod pitch_system;
 mod playback;
 pub mod project;
+mod recovered_voice;
 pub mod seed;
 mod style;
 #[cfg(target_os = "macos")]

@@ -597,8 +597,13 @@ impl VoicesWorkspace {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let form = div()
+            .id("voice-form-scroll")
+            .debug_selector(|| "voice-form-scroll".to_string())
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
             .gap_5()
             .child(field_group("voice name", name))
             .child(voice_type_picker.view(cx))
@@ -614,7 +619,12 @@ impl VoicesWorkspace {
             form
         };
 
-        workspace::management_form(form, actions)
+        workspace::management_form(
+            form,
+            actions
+                .flex_none()
+                .debug_selector(|| "voice-form-actions".to_string()),
+        )
     }
 }
 
@@ -669,62 +679,68 @@ fn voice_list_row(
 
 fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Div {
     let details = match voice {
-        Some(voice) => div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_color(s::TEXT_DEFAULT)
-                            .child(voice.name.as_str().to_owned()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_color(s::TEXT_HEADER).child("voice type"))
-                            .child(
-                                div()
-                                    .text_color(s::TEXT_DEFAULT)
-                                    .child(voice.voice_type.label()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_color(s::TEXT_HEADER).child("volume adjustment"))
-                            .child(div().text_color(s::TEXT_DEFAULT).child(
-                                voice.volume_adjustment().map_or_else(
-                                    || "default (1×)".to_string(),
-                                    |adjustment| format!("{}×", adjustment.multiplier()),
+        Some(voice) => {
+            let voice_type_details = voice.details();
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(
+                            div()
+                                .text_color(s::TEXT_DEFAULT)
+                                .child(voice.name.as_str().to_owned()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_color(s::TEXT_HEADER).child("voice type"))
+                                .child(
+                                    div()
+                                        .text_color(s::TEXT_DEFAULT)
+                                        .child(voice.voice_type.label()),
                                 ),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_color(s::TEXT_HEADER).child("position"))
-                            .child(div().text_color(s::TEXT_DEFAULT).child(format!(
-                                "X {}, Y {}, Z {} meters",
-                                voice.position().x(),
-                                voice.position().y(),
-                                voice.position().z(),
-                            ))),
-                    ),
-            )
-            .child(div().flex().child(edit_button)),
+                        )
+                        .child(detail_field("about", voice_type_details.description))
+                        .child(detail_field("source", voice_type_details.source))
+                        .child(detail_field("fidelity", voice_type_details.fidelity))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_color(s::TEXT_HEADER).child("volume adjustment"))
+                                .child(div().text_color(s::TEXT_DEFAULT).child(
+                                    voice.volume_adjustment().map_or_else(
+                                        || "default (1×)".to_string(),
+                                        |adjustment| format!("{}×", adjustment.multiplier()),
+                                    ),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_color(s::TEXT_HEADER).child("position"))
+                                .child(div().text_color(s::TEXT_DEFAULT).child(format!(
+                                    "X {}, Y {}, Z {} meters",
+                                    voice.position().x(),
+                                    voice.position().y(),
+                                    voice.position().z(),
+                                ))),
+                        ),
+                )
+                .child(div().flex().child(edit_button))
+        }
         None => div()
             .flex()
             .flex_1()
@@ -740,6 +756,15 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
         .flex_1()
         .min_h(px(0.0))
         .child(details)
+}
+
+fn detail_field(label: &'static str, value: &'static str) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_color(s::TEXT_HEADER).child(label))
+        .child(div().text_color(s::TEXT_DEFAULT).child(value))
 }
 
 struct VoiceTypePicker {
@@ -773,7 +798,19 @@ impl VoiceTypePicker {
                 "no voice types match",
                 rows,
             ))
+            .child(voice_type_summary(self.selected))
     }
+}
+
+fn voice_type_summary(voice_type: VoiceType) -> gpui::Div {
+    let details = voice_type.details();
+    div()
+        .flex()
+        .flex_col()
+        .gap(s::S3)
+        .child(detail_field("about", details.description))
+        .child(detail_field("source", details.source))
+        .child(detail_field("fidelity", details.fidelity))
 }
 
 fn matching_voice_types(query: &str) -> impl Iterator<Item = VoiceType> + '_ {
@@ -783,11 +820,17 @@ fn matching_voice_types(query: &str) -> impl Iterator<Item = VoiceType> + '_ {
         .collect::<Vec<_>>();
     VoiceType::ALL.into_iter().filter(move |voice_type| {
         let label = voice_type.label().to_lowercase();
+        let details = voice_type.details();
+        let searchable = format!(
+            "{label} {} {} {}",
+            details.description, details.source, details.fidelity
+        )
+        .to_lowercase();
         terms.iter().all(|term| {
             if term.chars().count() == 1 {
                 label.split_whitespace().any(|word| word == term)
             } else {
-                label.contains(term)
+                searchable.contains(term)
             }
         })
     })
@@ -840,7 +883,13 @@ mod tests {
         );
         assert_eq!(
             matching_voice_types("saw").collect::<Vec<_>>(),
-            vec![VoiceType::Saw, VoiceType::HarmonicSaw]
+            vec![
+                VoiceType::Saw,
+                VoiceType::HarmonicSaw,
+                VoiceType::CtpianoHiSaw,
+                VoiceType::CtpianoLoSaw,
+                VoiceType::RadlerDullSaw,
+            ]
         );
         assert_eq!(
             matching_voice_types("bell a").collect::<Vec<_>>(),
@@ -849,6 +898,10 @@ mod tests {
         assert_eq!(
             matching_voice_types("bell b").collect::<Vec<_>>(),
             vec![VoiceType::NoitechBellB]
+        );
+        assert_eq!(
+            matching_voice_types("home_clap_1.wav").collect::<Vec<_>>(),
+            vec![VoiceType::NoitechBellL, VoiceType::NoitechBellM]
         );
         assert!(matching_voice_types("pipe organ").next().is_none());
     }
@@ -973,5 +1026,28 @@ mod tests {
             volume_adjustment.read(cx).value()
         });
         assert_eq!(value, "1.5");
+    }
+
+    #[gpui::test]
+    fn edit_voice_actions_remain_visible_when_the_form_is_taller_than_the_window(
+        cx: &mut TestAppContext,
+    ) {
+        let scene = AcousticScene::default();
+        let voice = Voice::new(1, "lead", VoiceType::NoitechBellG);
+        let (dialog, cx) =
+            cx.add_window_view(move |_, cx| VoicesWorkspace::new(vec![voice], scene, cx));
+        cx.simulate_resize(size(px(800.0), px(520.0)));
+
+        dialog.update(cx, |dialog, cx| {
+            let voice = dialog.voices[0].clone();
+            dialog.view = VoicesWorkspace::edit_view(&voice, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let scroll = cx.debug_bounds("voice-form-scroll").unwrap();
+        let actions = cx.debug_bounds("voice-form-actions").unwrap();
+        assert!(scroll.bottom() <= actions.top());
+        assert!(actions.bottom() <= px(520.0));
     }
 }
