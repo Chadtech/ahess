@@ -11,7 +11,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::{
-    pitch_system::{FrequencyHz, ResolvePitchError},
+    pitch_system::{FrequencyHz, ResolvePitchError, Strike},
     project::{self, Project, Voice},
 };
 
@@ -848,6 +848,33 @@ impl PartScore {
             .collect()
     }
 
+    pub fn resolved_strikes(
+        &self,
+        part: &Part,
+        project: &Project,
+    ) -> Result<Vec<Vec<Option<Strike>>>, ScoreError> {
+        self.validate_shape(part, project.voices())?;
+        self.rows
+            .iter()
+            .enumerate()
+            .map(|(beat_index, row)| {
+                row.iter()
+                    .enumerate()
+                    .map(|(voice_index, value)| {
+                        project
+                            .pitch_system()
+                            .resolve_strike(value)
+                            .map_err(|source| ScoreError::InvalidPitch {
+                                beat: beat_index + 1,
+                                voice: project.voices()[voice_index].name.as_str().to_string(),
+                                source,
+                            })
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     pub fn save(
         &self,
         project_directory: impl AsRef<Path>,
@@ -864,7 +891,7 @@ impl PartScore {
         part: &Part,
         project: &Project,
     ) -> Result<Vec<u8>, ScoreError> {
-        self.resolved_rows(part, project)?;
+        self.resolved_strikes(part, project)?;
         self.score_file_contents(project_directory, part, project.voices())
     }
 

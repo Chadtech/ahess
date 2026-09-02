@@ -286,6 +286,7 @@ struct BuildNote {
     beat_label: String,
     notation: String,
     frequency_hz: f64,
+    volume: f64,
     duration_beats: f64,
     duration_seconds: f64,
     grid_timing: BuildTiming,
@@ -356,7 +357,7 @@ fn build_voice_scores(
                 "the available scores do not match the project arrangement",
             ));
         }
-        let rows = score.resolved_rows(part, project).map_err(|error| {
+        let rows = score.resolved_strikes(part, project).map_err(|error| {
             AudioBuildError::new(format!("part {:?}: {error}", part.name.as_str()))
         })?;
         for (part_beat_index, (raw_row, resolved_row)) in score.rows().iter().zip(rows).enumerate()
@@ -366,10 +367,11 @@ fn build_voice_scores(
             let grid_samples = beats_from_start
                 .checked_mul(u64::from(beat_length_samples))
                 .ok_or_else(|| AudioBuildError::new("the score timing is too large to export"))?;
-            for (voice_index, frequency) in resolved_row.into_iter().enumerate() {
-                let Some(frequency) = frequency else {
+            for (voice_index, strike) in resolved_row.into_iter().enumerate() {
+                let Some(strike) = strike else {
                     continue;
                 };
+                let frequency = strike.frequency();
                 let timing = playback_loop
                     .prepared_timing_offset(voice_index, arrangement_beat, sample_rate)
                     .ok_or_else(|| {
@@ -391,8 +393,9 @@ fn build_voice_scores(
                     beat_label: part.beat_label(part_beat_index),
                     notation: raw_row[voice_index].clone(),
                     frequency_hz: frequency.as_hz(),
-                    duration_beats: 1.0,
-                    duration_seconds: beat_duration_seconds,
+                    volume: f64::from(strike.volume()),
+                    duration_beats: f64::from(strike.duration_beats()),
+                    duration_seconds: beat_duration_seconds * f64::from(strike.duration_beats()),
                     grid_timing: BuildTiming {
                         beats_from_start: beats_from_start as f64,
                         seconds: grid_samples as f64 / sample_rate,

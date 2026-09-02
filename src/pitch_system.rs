@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     error::Error,
     fmt::{self, Write as _},
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroU8},
 };
 
 use serde::Deserialize;
@@ -44,6 +44,53 @@ impl FrequencyHz {
 
 // `FrequencyHz::new` excludes NaN, so equality is reflexive.
 impl Eq for FrequencyHz {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StrikeDuration {
+    VoiceDefault,
+    ExplicitBeats(NonZeroU8),
+}
+
+impl StrikeDuration {
+    pub const fn beats_or_one(self) -> u8 {
+        match self {
+            Self::VoiceDefault => 1,
+            Self::ExplicitBeats(beats) => beats.get(),
+        }
+    }
+
+    pub const fn explicit_beats(self) -> Option<u8> {
+        match self {
+            Self::VoiceDefault => None,
+            Self::ExplicitBeats(beats) => Some(beats.get()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strike {
+    frequency: FrequencyHz,
+    duration: StrikeDuration,
+    volume: f32,
+}
+
+impl Strike {
+    pub const fn frequency(self) -> FrequencyHz {
+        self.frequency
+    }
+
+    pub const fn duration_beats(self) -> u8 {
+        self.duration.beats_or_one()
+    }
+
+    pub const fn duration(self) -> StrikeDuration {
+        self.duration
+    }
+
+    pub const fn volume(self) -> f32 {
+        self.volume
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Ratio {
@@ -272,9 +319,9 @@ impl PeriodicPitchSystem {
         let degree_multiplier = self.degrees[degree_index].multiplier();
         FrequencyHz::new(self.fundamental.as_hz() * period_multiplier * degree_multiplier)
             .map(Some)
-            .map_err(|_| {
+            .map_err(|err| {
                 ResolvePitchError::new(format!(
-                    "pitch {value:?} resolves outside the supported frequency range"
+                    "pitch {value:?} resolves outside the supported frequency range: {err}",
                 ))
             })
     }
@@ -335,6 +382,60 @@ pub enum PitchSystem {
 }
 
 impl PitchSystem {
+    pub fn resolve_strike(&self, value: &str) -> Result<Option<Strike>, ResolvePitchError> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        let (pitch, duration, volume) = match self {
+            Self::Periodic(system)
+                if matches!(system.notation(), PeriodicNotation::RadlerDigits { .. }) =>
+            {
+                match value.len() {
+                    2 => (value, StrikeDuration::VoiceDefault, 1.0),
+                    6 if value.is_ascii() => {
+                        let duration = u8::from_str_radix(&value[2..4], 16).map_err(|_| {
+                            ResolvePitchError::new(format!(
+                                "strike {value:?} must use two hexadecimal duration digits"
+                            ))
+                        })?;
+                        if duration == 0 {
+                            return Err(ResolvePitchError::new(format!(
+                                "strike {value:?} must have a duration from 01 through FF beats"
+                            )));
+                        }
+                        let volume = u8::from_str_radix(&value[4..6], 16).map_err(|_| {
+                            ResolvePitchError::new(format!(
+                                "strike {value:?} must end with two hexadecimal volume digits"
+                            ))
+                        })?;
+                        (
+                            &value[..2],
+                            StrikeDuration::ExplicitBeats(
+                                NonZeroU8::new(duration)
+                                    .expect("zero strike durations were rejected above"),
+                            ),
+                            f32::from(volume) / 255.0,
+                        )
+                    }
+                    _ => {
+                        return Err(ResolvePitchError::new(format!(
+                            "expected a two-character Radler note or six-character note-duration-volume strike; got {value:?}"
+                        )))
+                    }
+                }
+            }
+            _ => (value, StrikeDuration::VoiceDefault, 1.0),
+        };
+        self.resolve_cell(pitch).map(|frequency| {
+            frequency.map(|frequency| Strike {
+                frequency,
+                duration,
+                volume,
+            })
+        })
+    }
+
     pub fn periodic(system: PeriodicPitchSystem) -> Self {
         Self::Periodic(system)
     }
@@ -660,6 +761,30 @@ mod tests {
         );
         assert_eq!(system.resolve_cell("  ").unwrap(), None);
         assert!(system.resolve_cell("35").is_err());
+
+        let legacy = system.resolve_strike("34").unwrap().unwrap();
+        assert_eq!(legacy.frequency(), FrequencyHz::new(350.0).unwrap());
+        assert_eq!(legacy.duration_beats(), 1);
+        assert_eq!(legacy.duration().explicit_beats(), None);
+        assert_eq!(legacy.volume(), 1.0);
+
+        let advanced = system.resolve_strike("340880").unwrap().unwrap();
+        assert_eq!(advanced.frequency(), FrequencyHz::new(350.0).unwrap());
+        assert_eq!(advanced.duration_beats(), 8);
+        assert_eq!(advanced.duration().explicit_beats(), Some(8));
+        assert!((advanced.volume() - (128.0 / 255.0)).abs() < f32::EPSILON);
+        assert_eq!(
+            system
+                .resolve_strike("340A80")
+                .unwrap()
+                .unwrap()
+                .duration_beats(),
+            10
+        );
+        assert!(system.resolve_strike("340080").is_err());
+        assert!(system.resolve_strike("34GG80").is_err());
+        assert!(system.resolve_strike("3408GG").is_err());
+        assert!(system.resolve_strike("3408").is_err());
     }
 
     #[test]

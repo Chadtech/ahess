@@ -8,6 +8,8 @@ const NYQUIST_MARGIN: f32 = 0.98;
 struct ActiveNote {
     fundamental: f32,
     sample: u32,
+    volume: f32,
+    cutoff_samples: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -55,10 +57,22 @@ impl RecoveredVoiceRuntime {
         self.voice_type
     }
 
+    #[cfg(test)]
     pub(crate) fn trigger(&mut self, fundamental: f32) {
+        self.trigger_with_volume_and_cutoff(fundamental, 1.0, None);
+    }
+
+    pub(crate) fn trigger_with_volume_and_cutoff(
+        &mut self,
+        fundamental: f32,
+        volume: f32,
+        cutoff_samples: Option<u32>,
+    ) {
         self.active.push(ActiveNote {
             fundamental,
             sample: 0,
+            volume,
+            cutoff_samples,
         });
     }
 
@@ -66,11 +80,17 @@ impl RecoveredVoiceRuntime {
         let voice_type = self.voice_type;
         let mut output = 0.0;
         for note in &mut self.active {
-            output += voice_sample(voice_type, note.fundamental, note.sample, sample_rate);
+            output +=
+                voice_sample(voice_type, note.fundamental, note.sample, sample_rate) * note.volume;
             note.sample += 1;
         }
         let duration = duration_samples(voice_type, sample_rate);
-        self.active.retain(|note| note.sample < duration);
+        self.active.retain(|note| {
+            note.sample < duration
+                && note
+                    .cutoff_samples
+                    .is_none_or(|cutoff_samples| note.sample < cutoff_samples)
+        });
         (output, !self.active.is_empty())
     }
 }
@@ -214,6 +234,7 @@ fn voice_sample(voice_type: VoiceType, fundamental: f32, sample: u32, sample_rat
         VoiceType::Sin
         | VoiceType::Saw
         | VoiceType::HarmonicSaw
+        | VoiceType::GamelanMetallophone
         | VoiceType::NoitechBellA
         | VoiceType::NoitechBellB
         | VoiceType::RadlerDullSaw

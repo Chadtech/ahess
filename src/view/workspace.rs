@@ -40,8 +40,8 @@ where
             .min_h(px(0.0))
             .gap(s::CONTENT_PADDING)
             .p(s::CONTENT_PADDING)
-            .child(list)
-            .child(details),
+            .child(equal_width_column(list))
+            .child(equal_width_column(details)),
     };
 
     let body = div()

@@ -759,7 +759,7 @@ impl Model {
                     Arc::new(loaded)
                 }
             };
-            let saved_score = match score.resolved_rows(project_part, &self.project) {
+            let saved_score = match score.resolved_strikes(project_part, &self.project) {
                 Ok(_) => score.clone(),
                 Err(crate::part::ScoreError::InvalidPitch { .. }) => {
                     let current_saved = (current.project.as_ref() == &self.project)

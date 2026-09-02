@@ -494,7 +494,7 @@ impl ProjectHistory {
             .project
             .part(part_name)
             .ok_or_else(|| format!("history has no part {:?}", part_name.as_str()))?;
-        match score.resolved_rows(part, &self.current.project) {
+        match score.resolved_strikes(part, &self.current.project) {
             Ok(_) => Ok(score.clone()),
             Err(ScoreError::InvalidPitch { .. }) => {
                 let current = self.current.score_state(part_name).ok_or_else(|| {

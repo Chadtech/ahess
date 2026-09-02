@@ -15,10 +15,11 @@ use cpal::{
 
 use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
+    gamelan_metallophone::GamelanMetallophoneRuntime,
     noitech_bell_a::NoitechBellARuntime,
     noitech_bell_b::NoitechBellBRuntime,
     part::{Part, PartScore},
-    pitch_system::FrequencyHz,
+    pitch_system::{FrequencyHz, Strike, StrikeDuration},
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
     recovered_voice::RecoveredVoiceRuntime,
     seed::{standard_normal, Seed},
@@ -145,7 +146,7 @@ impl PlaybackLoop {
         part: &Part,
         score: &PartScore,
     ) -> Result<Self, PlaybackError> {
-        let rows = score.resolved_rows(part, project).map_err(|error| {
+        let rows = score.resolved_strikes(part, project).map_err(|error| {
             PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
         })?;
         Self::from_rows(project, rows, 1)
@@ -176,7 +177,7 @@ impl PlaybackLoop {
 
             let occurrence_last = occurrence_first + u64::from(part.length) - 1;
             if range.first <= occurrence_last && range.last >= occurrence_first {
-                let resolved_rows = score.resolved_rows(part, project).map_err(|error| {
+                let resolved_rows = score.resolved_strikes(part, project).map_err(|error| {
                     PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
                 })?;
                 let first_row = range.first.saturating_sub(occurrence_first) as usize;
@@ -189,9 +190,9 @@ impl PlaybackLoop {
         Self::from_rows(project, rows, range.first)
     }
 
-    fn from_rows(
+    fn from_rows<S: PlaybackStrikeSpec>(
         project: &Project,
-        rows: Vec<Vec<Option<FrequencyHz>>>,
+        rows: Vec<Vec<Option<S>>>,
         first_arrangement_beat: u64,
     ) -> Result<Self, PlaybackError> {
         if project.voices().is_empty() {
@@ -214,17 +215,17 @@ impl PlaybackLoop {
                     .acoustic_scene()
                     .validate_source(voice.position())
                     .map_err(|error| PlaybackError::new(error.to_string()))?;
-                let frequencies = rows
+                let strikes = rows
                     .iter()
                     .enumerate()
                     .map(|(beat_index, row)| {
                         let arrangement_beat = first_arrangement_beat + beat_index as u64;
                         let seed =
                             frequency_variance_seed(project.seed, arrangement_beat, voice.id());
-                        varied_frequency(row[voice_index], seed, project.frequency_variance())
+                        varied_strike(row[voice_index], seed, project.frequency_variance())
                     })
                     .collect::<Result<Vec<_>, PlaybackError>>()?;
-                let delays = frequencies
+                let delays = strikes
                     .iter()
                     .enumerate()
                     .map(|(beat_index, _)| {
@@ -241,7 +242,11 @@ impl PlaybackLoop {
                     volume_multiplier: voice
                         .volume_adjustment()
                         .map_or(1.0, |adjustment| adjustment.multiplier()),
-                    frequencies,
+                    frequencies: strikes
+                        .iter()
+                        .map(|strike| strike.map(|strike| strike.frequency))
+                        .collect(),
+                    strikes,
                     delays,
                 })
             })
@@ -266,7 +271,7 @@ impl PlaybackLoop {
     ) -> Option<PreparedTimingOffset> {
         let beat_index = arrangement_beat.checked_sub(self.first_arrangement_beat)? as usize;
         let voice = self.voices.get(voice_index)?;
-        voice.frequencies.get(beat_index)?.as_ref()?;
+        voice.strikes.get(beat_index)?.as_ref()?;
         let beat_length = beat_length_samples(self.beat_duration_millis, sample_rate as f32);
         let maximum_samples = self.timing_variance.min(beat_length.saturating_sub(1));
         let applied_samples = (*voice.delays.get(beat_index)?).min(maximum_samples);
@@ -334,6 +339,66 @@ fn varied_frequency(
         })
 }
 
+fn varied_strike<S: PlaybackStrikeSpec>(
+    strike: Option<S>,
+    seed: Seed,
+    maximum_variance: FrequencyVariance,
+) -> Result<Option<PlaybackStrike>, PlaybackError> {
+    let Some(strike) = strike else {
+        return Ok(None);
+    };
+    Ok(
+        varied_frequency(Some(strike.frequency()), seed, maximum_variance)?.map(|frequency| {
+            PlaybackStrike {
+                frequency,
+                duration: strike.duration(),
+                volume: strike.volume(),
+            }
+        }),
+    )
+}
+
+trait PlaybackStrikeSpec: Copy {
+    fn frequency(self) -> FrequencyHz;
+    fn duration(self) -> StrikeDuration;
+    fn volume(self) -> f32;
+}
+
+impl PlaybackStrikeSpec for Strike {
+    fn frequency(self) -> FrequencyHz {
+        self.frequency()
+    }
+
+    fn duration(self) -> StrikeDuration {
+        self.duration()
+    }
+
+    fn volume(self) -> f32 {
+        self.volume()
+    }
+}
+
+impl PlaybackStrikeSpec for FrequencyHz {
+    fn frequency(self) -> FrequencyHz {
+        self
+    }
+
+    fn duration(self) -> StrikeDuration {
+        StrikeDuration::VoiceDefault
+    }
+
+    fn volume(self) -> f32 {
+        1.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlaybackStrike {
+    frequency: FrequencyHz,
+    duration: StrikeDuration,
+    volume: f32,
+}
+
 #[derive(Clone, Debug)]
 struct PlaybackVoice {
     id: VoiceId,
@@ -341,6 +406,7 @@ struct PlaybackVoice {
     position: Point3Meters,
     volume_multiplier: f32,
     frequencies: Vec<Option<FrequencyHz>>,
+    strikes: Vec<Option<PlaybackStrike>>,
     delays: Vec<u32>,
 }
 
@@ -879,6 +945,7 @@ impl VoiceRuntime {
 
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
+    GamelanMetallophone(GamelanMetallophoneRuntime),
     NoitechBellA(NoitechBellARuntime),
     NoitechBellB(NoitechBellBRuntime),
     Recovered(RecoveredVoiceRuntime),
@@ -903,6 +970,9 @@ impl InstrumentRuntime {
             | VoiceType::HarmonicSaw
             | VoiceType::RadlerDullSaw
             | VoiceType::RadlerHarmonics => Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type))),
+            VoiceType::GamelanMetallophone => {
+                Ok(Self::GamelanMetallophone(GamelanMetallophoneRuntime::new()))
+            }
             VoiceType::NoitechBellA => Ok(Self::NoitechBellA(NoitechBellARuntime::new())),
             VoiceType::NoitechBellB => Ok(Self::NoitechBellB(NoitechBellBRuntime::new())),
             VoiceType::SurgeXtPiano
@@ -940,6 +1010,7 @@ impl InstrumentRuntime {
     fn matches(&self, voice_type: VoiceType, voice_index: usize, voice_count: usize) -> bool {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
+            Self::GamelanMetallophone(_) => voice_type == VoiceType::GamelanMetallophone,
             Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
             Self::NoitechBellB(_) => voice_type == VoiceType::NoitechBellB,
             Self::Recovered(runtime) => runtime.voice_type() == voice_type,
@@ -965,27 +1036,38 @@ impl InstrumentRuntime {
                 let Some(beat_index) = beat_index else {
                     return (0.0, false);
                 };
-                let Some(frequency) = voice.frequencies[beat_index] else {
+                let Some((strike_beat, strike)) = active_strike(voice, beat_index) else {
                     return (0.0, false);
                 };
-                let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
-                if sample_in_beat < delay {
+                let delay = voice.delays[strike_beat].min(beat_length.saturating_sub(1));
+                if beat_index == strike_beat && sample_in_beat < delay {
                     return (0.0, false);
                 }
-                let note_sample = sample_in_beat - delay;
-                let note_length = beat_length - delay;
+                let elapsed_beats = beat_index - strike_beat;
+                let note_sample = (elapsed_beats as u32)
+                    .saturating_mul(beat_length)
+                    .saturating_add(sample_in_beat)
+                    .saturating_sub(delay);
+                let note_length = u32::from(strike.duration.beats_or_one())
+                    .saturating_mul(beat_length)
+                    .saturating_sub(delay);
                 (
-                    oscillator.sample(frequency.as_hz_f32(), sample_rate)
-                        * envelope(note_sample, note_length),
+                    oscillator.sample(strike.frequency.as_hz_f32(), sample_rate)
+                        * envelope(note_sample, note_length)
+                        * strike.volume,
                     true,
                 )
             }
             Self::NoitechBellA(runtime) => {
                 if let Some(beat_index) = beat_index {
-                    if let Some(frequency) = voice.frequencies[beat_index] {
+                    if let Some(strike) = voice.strikes[beat_index] {
                         let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
                         if sample_in_beat == delay {
-                            runtime.trigger(frequency.as_hz_f32());
+                            runtime.trigger_with_volume_and_cutoff(
+                                strike.frequency.as_hz_f32(),
+                                strike.volume,
+                                explicit_cutoff_samples(strike, beat_length, delay),
+                            );
                         }
                     }
                 }
@@ -993,10 +1075,29 @@ impl InstrumentRuntime {
             }
             Self::NoitechBellB(runtime) => {
                 if let Some(beat_index) = beat_index {
-                    if let Some(frequency) = voice.frequencies[beat_index] {
+                    if let Some(strike) = voice.strikes[beat_index] {
                         let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
                         if sample_in_beat == delay {
-                            runtime.trigger(frequency.as_hz_f32());
+                            runtime.trigger_with_volume_and_cutoff(
+                                strike.frequency.as_hz_f32(),
+                                strike.volume,
+                                explicit_cutoff_samples(strike, beat_length, delay),
+                            );
+                        }
+                    }
+                }
+                runtime.sample(sample_rate)
+            }
+            Self::GamelanMetallophone(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(strike) = voice.strikes[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            runtime.trigger_with_volume_and_cutoff(
+                                strike.frequency.as_hz_f32(),
+                                strike.volume,
+                                explicit_cutoff_samples(strike, beat_length, delay),
+                            );
                         }
                     }
                 }
@@ -1004,10 +1105,14 @@ impl InstrumentRuntime {
             }
             Self::Recovered(runtime) => {
                 if let Some(beat_index) = beat_index {
-                    if let Some(frequency) = voice.frequencies[beat_index] {
+                    if let Some(strike) = voice.strikes[beat_index] {
                         let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
                         if sample_in_beat == delay {
-                            runtime.trigger(frequency.as_hz_f32());
+                            runtime.trigger_with_volume_and_cutoff(
+                                strike.frequency.as_hz_f32(),
+                                strike.volume,
+                                explicit_cutoff_samples(strike, beat_length, delay),
+                            );
                         }
                     }
                 }
@@ -1019,6 +1124,26 @@ impl InstrumentRuntime {
             }
         }
     }
+}
+
+fn active_strike(voice: &PlaybackVoice, beat_index: usize) -> Option<(usize, PlaybackStrike)> {
+    voice.strikes[..=beat_index]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(strike_beat, strike)| strike.map(|strike| (strike_beat, strike)))
+        .filter(|(strike_beat, strike)| {
+            beat_index - strike_beat < usize::from(strike.duration.beats_or_one())
+        })
+}
+
+fn explicit_cutoff_samples(strike: PlaybackStrike, beat_length: u32, delay: u32) -> Option<u32> {
+    strike.duration.explicit_beats().map(|duration_beats| {
+        u32::from(duration_beats)
+            .saturating_mul(beat_length)
+            .saturating_sub(delay)
+            .max(1)
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -1060,6 +1185,7 @@ impl SurgeXtRuntime {
             VoiceType::Sin
             | VoiceType::Saw
             | VoiceType::HarmonicSaw
+            | VoiceType::GamelanMetallophone
             | VoiceType::NoitechBellA
             | VoiceType::NoitechBellB
             | VoiceType::NoitechBellG
@@ -1139,7 +1265,10 @@ impl SurgeXtRuntime {
         sample_in_beat: u32,
         beat_length: u32,
     ) -> Result<(), PlaybackError> {
-        if sample_in_beat == 0 {
+        let continuing_strike = beat_index
+            .and_then(|beat_index| active_strike(voice, beat_index))
+            .is_some_and(|(strike_beat, _)| strike_beat < beat_index.unwrap());
+        if sample_in_beat == 0 && !continuing_strike {
             if let Some(address) = self.active_note.take() {
                 self.synth
                     .note_off(address.channel, address.note, 0)
@@ -1150,7 +1279,13 @@ impl SurgeXtRuntime {
         let next_boundary = if let Some(beat_index) = beat_index {
             let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
             if sample_in_beat == delay {
-                if let Some(frequency) = voice.frequencies[beat_index] {
+                if let Some(strike) = voice.strikes[beat_index] {
+                    if let Some(address) = self.active_note.take() {
+                        self.synth
+                            .note_off(address.channel, address.note, 0)
+                            .map_err(|error| PlaybackError::new(error.to_string()))?;
+                    }
+                    let frequency = strike.frequency;
                     let address = MtsNoteAddress {
                         // Surge's default channel-2/channel-3 scene behavior does
                         // not reliably apply MTS retuning outside MIDI channel 1.
@@ -1165,12 +1300,17 @@ impl SurgeXtRuntime {
                     };
                     self.master.set_frequency(address, frequency.as_hz());
                     self.synth
-                        .note_on(address.channel, address.note, 100, 0)
+                        .note_on(
+                            address.channel,
+                            address.note,
+                            (strike.volume * 127.0).round() as u8,
+                            0,
+                        )
                         .map_err(|error| PlaybackError::new(error.to_string()))?;
                     self.active_note = Some(address);
                 }
             }
-            if sample_in_beat < delay && voice.frequencies[beat_index].is_some() {
+            if sample_in_beat < delay && voice.strikes[beat_index].is_some() {
                 delay
             } else {
                 beat_length
@@ -1296,6 +1436,9 @@ impl OscillatorRuntime {
             VoiceType::RadlerHarmonics => Self::RadlerHarmonics { phase: 0.0 },
             VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
             VoiceType::NoitechBellB => unreachable!("Noitech Bell B has a tail-aware runtime"),
+            VoiceType::GamelanMetallophone => {
+                unreachable!("gamelan metallophone has a tail-aware runtime")
+            }
             VoiceType::NoitechBellG
             | VoiceType::NoitechBellH
             | VoiceType::NoitechBellI
@@ -1547,8 +1690,8 @@ mod tests {
     use super::{
         beat_length_samples, frequency_variance_seed, normally_distributed_delay, timing_seed,
         varied_frequency, write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial,
-        HarmonicSawRuntime, OfflineRenderer, PlaybackLoop, HARMONIC_SAW_PARTIAL_COUNT,
-        MIX_GAIN_RAMP_SAMPLES,
+        HarmonicSawRuntime, InstrumentRuntime, OfflineRenderer, PlaybackLoop,
+        HARMONIC_SAW_PARTIAL_COUNT, MIX_GAIN_RAMP_SAMPLES,
     };
     #[cfg(target_os = "macos")]
     use crate::mts_esp::MtsEspTuningProbe;
@@ -2037,6 +2180,46 @@ mod tests {
     }
 
     #[test]
+    fn explicit_duration_cuts_bell_h_while_legacy_notation_keeps_its_tail() {
+        let pitch_system = PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "bell test",
+                FrequencyHz::new(55.0).unwrap(),
+                Interval::cents(1_200.0).unwrap(),
+                (0..7)
+                    .map(|degree| Interval::cents(f64::from(degree) * 100.0).unwrap())
+                    .collect(),
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test", 100, 0, Seed::new(1))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "bell", VoiceType::NoitechBellH)]);
+        let part = Part::new("intro", 1);
+        let beat_length = beat_length_samples(project.beat_duration_millis, 1_000.0);
+
+        let stays_active_after_one_beat = |notation: &str| {
+            let score = PartScore::from_rows(vec![vec![notation.to_string()]]);
+            let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+            let voice = &playback_loop.voices[0];
+            #[cfg(target_os = "macos")]
+            let mut runtime =
+                InstrumentRuntime::new(voice.voice_type, 0, 1, 1_000.0, None).unwrap();
+            #[cfg(not(target_os = "macos"))]
+            let mut runtime = InstrumentRuntime::new(voice.voice_type, 0, 1, 1_000.0).unwrap();
+
+            for sample_in_beat in 0..beat_length {
+                runtime.sample(voice, Some(0), sample_in_beat, beat_length, 1_000.0);
+            }
+            runtime.sample(voice, None, 0, beat_length, 1_000.0).1
+        };
+
+        assert!(stays_active_after_one_beat("60"));
+        assert!(!stays_active_after_one_beat("6001ff"));
+    }
+
+    #[test]
     fn every_voice_type_matches_between_live_and_offline_rendering() {
         for voice_type in VoiceType::BUILT_IN {
             let project = Project::new("test", 8, 0, Seed::new(1))
@@ -2070,6 +2253,7 @@ mod tests {
                 | VoiceType::IconoclastBellG
                 | VoiceType::IconoclastBellH => Some((180_000, 195_000)),
                 VoiceType::IconoclastIndustrialBar => Some((135_000, 148_000)),
+                VoiceType::GamelanMetallophone => Some((250_000, 266_000)),
                 VoiceType::CtpianoDkSquare => Some((1_400, 2_000)),
                 VoiceType::CtpianoBars
                 | VoiceType::CtpianoEmphaenharm
@@ -2410,4 +2594,5 @@ mod tests {
         assert_eq!(beat_length_samples(duration, 48_000.0), 12_000);
         assert_eq!(beat_length_samples(duration, 96_000.0), 24_000);
     }
+
 }

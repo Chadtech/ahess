@@ -128,6 +128,7 @@ pub enum VoiceType {
     Sin,
     Saw,
     HarmonicSaw,
+    GamelanMetallophone,
     NoitechBellA,
     NoitechBellB,
     NoitechBellG,
@@ -157,10 +158,11 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
+        Self::GamelanMetallophone,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -188,10 +190,11 @@ impl VoiceType {
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 25] = [
+    pub(crate) const BUILT_IN: [Self; 26] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
+        Self::GamelanMetallophone,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -221,6 +224,7 @@ impl VoiceType {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic saw",
+            Self::GamelanMetallophone => "gamelan metallophone",
             Self::NoitechBellA => "Noitech Bell A",
             Self::NoitechBellB => "Noitech Bell B",
             Self::NoitechBellG => "Noitech Bell G",
@@ -254,6 +258,7 @@ impl VoiceType {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic-saw",
+            Self::GamelanMetallophone => "gamelan-metallophone",
             Self::NoitechBellA => "noitech-bell-a",
             Self::NoitechBellB => "noitech-bell-b",
             Self::NoitechBellG => "noitech-bell-g",
@@ -329,6 +334,11 @@ impl VoiceType {
                 description: "A band-limited additive saw assembled from sine harmonics.",
                 source: "Ahess built-in voice",
                 fidelity: "Native Ahess implementation.",
+            },
+            Self::GamelanMetallophone => VoiceDetails {
+                description: "A bronze-bar voice with a dense sine-built mallet-noise impulse, measured gamelan-like inharmonic modes, resonator tones, independent fade-outs, and restrained four-hertz ombak shimmer.",
+                source: "Ahess original voice informed by published measurements of Balinese gangsa and Javanese gender/saron spectra",
+                fidelity: "Purpose-built additive model rather than a sampled or recovered historical instrument; every audible component is synthesized from sine waves.",
             },
             Self::NoitechBellA => VoiceDetails {
                 description: "Sixteen sine components, nested fades, and a short square-wave strike.",

@@ -574,13 +574,15 @@ impl VoicesWorkspace {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         workspace::list_detail(workspace::ListDetailArgs {
-            list: voice_list(&self.voices, self.selected_voice.as_ref(), cx),
+            list: voice_list(&self.voices, self.selected_voice.as_ref(), cx)
+                .debug_selector(|| "voice-list-column".to_string()),
             details: voice_details(
                 self.selected_voice
                     .as_ref()
                     .and_then(|name| find_voice(&self.voices, name)),
                 edit_button,
-            ),
+            )
+            .debug_selector(|| "voice-details-column".to_string()),
             auxiliary: None,
             footer: Some(add_new_button.into_any_element()),
         })
@@ -754,6 +756,7 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
         .flex()
         .flex_col()
         .flex_1()
+        .min_w(s::S0)
         .min_h(px(0.0))
         .child(details)
 }
@@ -1049,5 +1052,34 @@ mod tests {
         let actions = cx.debug_bounds("voice-form-actions").unwrap();
         assert!(scroll.bottom() <= actions.top());
         assert!(actions.bottom() <= px(520.0));
+    }
+
+    #[gpui::test]
+    fn voice_list_and_details_keep_equal_widths_across_selections(cx: &mut TestAppContext) {
+        let voices = vec![
+            Voice::new(1, "short details", VoiceType::Sin),
+            Voice::new(2, "long details", VoiceType::GamelanMetallophone),
+        ];
+        let long_details_name = voices[1].name.clone();
+        let (workspace, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(voices, AcousticScene::default(), cx)
+        });
+        cx.simulate_resize(size(px(800.0), px(700.0)));
+        cx.run_until_parked();
+
+        let short_list = cx.debug_bounds("voice-list-column").unwrap();
+        let short_details = cx.debug_bounds("voice-details-column").unwrap();
+        assert_eq!(short_list.size.width, short_details.size.width);
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.select_voice(&long_details_name, cx);
+        });
+        cx.run_until_parked();
+
+        let long_list = cx.debug_bounds("voice-list-column").unwrap();
+        let long_details = cx.debug_bounds("voice-details-column").unwrap();
+        assert_eq!(long_list.size.width, long_details.size.width);
+        assert_eq!(long_list.size.width, short_list.size.width);
+        assert_eq!(long_details.size.width, short_details.size.width);
     }
 }

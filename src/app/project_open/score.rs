@@ -95,7 +95,7 @@ impl ParseIssueCache {
                     .filter_map(move |(column, value)| {
                         project
                             .pitch_system()
-                            .resolve_cell(value)
+                            .resolve_strike(value)
                             .err()
                             .map(|source| ParseIssue {
                                 row,
@@ -1584,7 +1584,10 @@ mod tests {
     };
     use crate::{
         part::{Part, PartScore, ScoreRowRange},
-        pitch_system::{ExplicitPitchSystem, FrequencyHz, PitchSystem},
+        pitch_system::{
+            ExplicitPitchSystem, FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem,
+            PitchSystem,
+        },
         project::{Project, Voice, VoiceType},
         seed::Seed,
         view::button,
@@ -1755,6 +1758,33 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!((issues[0].row, issues[0].column), (1, 0));
         assert!(issues[0].message.contains("not defined in \"embers\""));
+    }
+
+    #[test]
+    fn score_issues_accept_radler_note_duration_volume_strikes() {
+        let pitch_system = PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "four tone",
+                FrequencyHz::new(16.0).unwrap(),
+                Interval::ratio(2, 1).unwrap(),
+                vec![
+                    Interval::ratio(1, 1).unwrap(),
+                    Interval::ratio(5, 4).unwrap(),
+                    Interval::ratio(3, 2).unwrap(),
+                    Interval::ratio(15, 8).unwrap(),
+                ],
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test project", 20_000, 32, Seed::new(12))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let part = Part::new("part-a", 1);
+        let score = PartScore::from_rows(vec![vec!["310880".to_string()]]);
+        let document = ScoreDocument::new(project, PathBuf::new(), part, score);
+
+        assert!(document.parse_issues().is_empty());
     }
 
     #[gpui::test]

@@ -59,6 +59,21 @@ reporting editor issues, each column is interpreted according to its voice:
 - A triggered voice resolves notation to a hit, sample, or other trigger.
 - A blank cell is a rest in either kind of column.
 
+Radler-digit score cells accept either the legacy two-character pitch or a
+six-character strike. A six-character strike stores two pitch characters, two
+hexadecimal duration digits (`01` through `FF` beats), and two hexadecimal
+volume digits (`00` through `FF`). Legacy two-character pitches mean one beat
+at full volume. These values are validated with the pitch at score preparation
+time and travel together through live playback and offline export.
+
+The distinction between those two forms is retained during playback. A legacy
+two-character note uses the voice's default duration: beat-enveloped and hosted
+voices hold for one beat, while fixed-duration percussive voices finish their
+natural decay. A six-character strike has an explicit duration. For a
+percussive voice, that duration acts as a maximum gate, so (for example)
+`6001FF` cuts Bell H at the end of one beat while a plain `60` does not truncate
+its tail. Each overlapping percussive note owns its gate independently.
+
 There should not be a long-lived representation in which a triggered voice can
 contain a pitched event or a pitched voice can contain a drum hit. Prepared
 playback data should retain the distinction with enums.
@@ -116,6 +131,29 @@ impulses. This boundary is part of the voice's displayed fidelity metadata, so
 the omission cannot be mistaken for source-exact reproduction. Likewise,
 repairs and distilled parameter choices—such as the industrial bar's `dir` /
 `dur` source typo—are recorded with the affected voice.
+
+`Gamelan metallophone` is a new native Ahess instrument rather than a recovered
+historical recipe. It models a paired bronze-bar instrument entirely with sine
+waves. Its prominent inharmonic mode ratios near `2.706`, `5.199`, and `5.502`
+are informed by published gangsa measurements; quieter modes near `2.01`,
+`4.05`, `4.8`, and `6.97` follow measured gender spectra. These sources report
+substantial variation between real bars, so the selected bank is an intentional
+musical design rather than a claim to reproduce one physical instrument.
+
+The requested pitch carries eighty percent of each mode; quieter copies two
+hertz above and below it provide restrained four-hertz paired-instrument
+beating called *ombak* without letting the body disappear into a full tremolo.
+A fourteen-millisecond, smoothly windowed cluster of twenty offset sine
+components supplies a dense padded-mallet noise impulse without stored noise or
+samples. Upper modes fade faster than the pitch-bearing fundamental, and a
+final finite taper brings the 5.5-second natural tail exactly to zero.
+Notes own independent runtime instances so strikes overlap; an explicit score
+duration still acts as hand damping. Components beyond the safe Nyquist boundary
+are omitted. Design references: Jones, Gee, and Grimshaw, "Vibrational
+characteristics of Balinese gamelan metallophones," JASA 127 (2010),
+doi:10.1121/1.3397234; Carterette, Kendall, and DeVale, "Comparative acoustical
+and psychoacoustical analyses of gamelan instrument tones," J. Acoust. Soc. Jpn.
+(E) 14 (1993).
 
 Each `VoiceType` owns immutable `VoiceDetails`: a description, exact source
 repository and path, and fidelity note. This metadata describes the instrument

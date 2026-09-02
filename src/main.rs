@@ -3,6 +3,7 @@ mod app;
 mod audio_build;
 pub mod convolution;
 mod cpal_spike;
+mod gamelan_metallophone;
 mod gpui_spike;
 #[cfg(target_os = "macos")]
 mod macos;
