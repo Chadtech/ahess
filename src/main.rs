@@ -5,6 +5,7 @@ pub mod convolution;
 mod cpal_spike;
 mod gamelan_metallophone;
 mod gpui_spike;
+mod historical_convolution;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

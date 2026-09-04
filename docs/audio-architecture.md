@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -70,9 +70,11 @@ The distinction between those two forms is retained during playback. A legacy
 two-character note uses the voice's default duration: beat-enveloped and hosted
 voices hold for one beat, while fixed-duration percussive voices finish their
 natural decay. A six-character strike has an explicit duration. For a
-percussive voice, that duration acts as a maximum gate, so (for example)
-`6001FF` cuts Bell H at the end of one beat while a plain `60` does not truncate
-its tail. Each overlapping percussive note owns its gate independently.
+percussive voice, that duration acts as a maximum source gate, so (for example)
+`6001FF` stops Bell H's synthesized body at the end of one beat while a plain
+`60` does not truncate it. Each overlapping percussive note owns its gate
+independently. Instrument-internal response processing may complete its short
+tail after the source gate closes.
 
 There should not be a long-lived representation in which a triggered voice can
 contain a pitched event or a pitched voice can contain a drum hit. Prepared
@@ -124,13 +126,27 @@ instances and keep sounding across beat boundaries; the two Radler oscillator
 recipes use Ahess's beat envelope. Every implementation omits components above
 the active output rate's safe Nyquist boundary rather than aliasing them.
 
-Several old bell generators convolved their additive body with a repository
-WAV impulse (`expensiveE.wav` or `home_clap_1.wav`). The current recovered
-voices implement their native additive bodies but do not apply those external
-impulses. This boundary is part of the voice's displayed fidelity metadata, so
-the omission cannot be mistaken for source-exact reproduction. Likewise,
-repairs and distilled parameter choices—such as the industrial bar's `dir` /
-`dur` source typo—are recorded with the affected voice.
+The historical Bell G through K generators convolved their additive bodies
+with the repository's 303-sample `expensiveE.wav` response, then mixed that
+processed signal back into the dry bell. Bell G, I, J, and K used a factor of
+`0.15`; Bell H used `0.25`. Bell L and M used the same dry-plus-processed
+topology with the 15,328-sample `home_clap_1.wav` response and a factor of
+`0.05`. Ahess bundles those exact source WAVs, retains the original factors,
+and preserves the legacy convolver's one-unit negative-PCM decoding asymmetry.
+At output rates other than the source's 44.1 kHz, the immutable response is
+band-limited and resampled before its voice runtime starts.
+
+Each affected voice sums its overlapping dry notes before the convolution
+stage. Convolution is linear, so this is equivalent to processing each note
+independently while requiring only one mutable response history per project
+voice. A direct response head keeps the strike sample-aligned, and a
+partitioned FFT tail keeps the longer `home_clap_1.wav` response suitable for
+real-time playback. The response history crosses beat and loop boundaries,
+and offline rendering treats it as active until its tail finishes. These
+historical responses are instrument-internal processing; they are distinct
+from the configurable project voice-convolution effect and from room
+acoustics. Repairs and distilled parameter choices—such as the industrial
+bar's `dir` / `dur` source typo—remain recorded with the affected voice.
 
 `Gamelan metallophone` is a new native Ahess instrument rather than a recovered
 historical recipe. It models a paired bronze-bar instrument entirely with sine

@@ -962,7 +962,10 @@ impl InstrumentRuntime {
         #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
     ) -> Result<Self, PlaybackError> {
         if voice_type.uses_recovered_runtime() {
-            return Ok(Self::Recovered(RecoveredVoiceRuntime::new(voice_type)));
+            return Ok(Self::Recovered(RecoveredVoiceRuntime::new(
+                voice_type,
+                sample_rate,
+            )));
         }
         match voice_type {
             VoiceType::Sin
@@ -2180,7 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_duration_cuts_bell_h_while_legacy_notation_keeps_its_tail() {
+    fn explicit_duration_stops_bell_h_body_but_preserves_its_short_response_tail() {
         let pitch_system = PitchSystem::periodic(
             PeriodicPitchSystem::new(
                 "bell test",
@@ -2199,7 +2202,7 @@ mod tests {
         let part = Part::new("intro", 1);
         let beat_length = beat_length_samples(project.beat_duration_millis, 1_000.0);
 
-        let stays_active_after_one_beat = |notation: &str| {
+        let active_samples_after_one_beat = |notation: &str| {
             let score = PartScore::from_rows(vec![vec![notation.to_string()]]);
             let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
             let voice = &playback_loop.voices[0];
@@ -2212,11 +2215,16 @@ mod tests {
             for sample_in_beat in 0..beat_length {
                 runtime.sample(voice, Some(0), sample_in_beat, beat_length, 1_000.0);
             }
-            runtime.sample(voice, None, 0, beat_length, 1_000.0).1
+            let mut active_samples = 0;
+            while runtime.sample(voice, None, 0, beat_length, 1_000.0).1 {
+                active_samples += 1;
+                assert!(active_samples < 5_000, "bell response must terminate");
+            }
+            active_samples
         };
 
-        assert!(stays_active_after_one_beat("60"));
-        assert!(!stays_active_after_one_beat("6001ff"));
+        assert!(active_samples_after_one_beat("60") > 3_000);
+        assert!((1..=10).contains(&active_samples_after_one_beat("6001ff")));
     }
 
     #[test]
@@ -2248,10 +2256,9 @@ mod tests {
                 | VoiceType::NoitechBellI
                 | VoiceType::NoitechBellJ
                 | VoiceType::NoitechBellK
-                | VoiceType::NoitechBellL
-                | VoiceType::NoitechBellM
                 | VoiceType::IconoclastBellG
                 | VoiceType::IconoclastBellH => Some((180_000, 195_000)),
+                VoiceType::NoitechBellL | VoiceType::NoitechBellM => Some((205_000, 212_000)),
                 VoiceType::IconoclastIndustrialBar => Some((135_000, 148_000)),
                 VoiceType::GamelanMetallophone => Some((250_000, 266_000)),
                 VoiceType::CtpianoDkSquare => Some((1_400, 2_000)),
@@ -2594,5 +2601,4 @@ mod tests {
         assert_eq!(beat_length_samples(duration, 48_000.0), 12_000);
         assert_eq!(beat_length_samples(duration, 96_000.0), 24_000);
     }
-
 }

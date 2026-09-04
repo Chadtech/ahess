@@ -1,4 +1,4 @@
-use crate::voice::VoiceType;
+use crate::{historical_convolution::HistoricalBellConvolver, voice::VoiceType};
 
 const SOURCE_SAMPLE_RATE: f32 = 44_100.0;
 const SOURCE_RAMP_SAMPLES: f32 = 60.0;
@@ -42,14 +42,16 @@ impl Partial {
 pub(crate) struct RecoveredVoiceRuntime {
     voice_type: VoiceType,
     active: Vec<ActiveNote>,
+    convolution: Option<HistoricalBellConvolver>,
 }
 
 impl RecoveredVoiceRuntime {
-    pub(crate) fn new(voice_type: VoiceType) -> Self {
+    pub(crate) fn new(voice_type: VoiceType, sample_rate: f32) -> Self {
         debug_assert!(voice_type.uses_recovered_runtime());
         Self {
             voice_type,
             active: Vec::with_capacity(32),
+            convolution: HistoricalBellConvolver::for_voice(voice_type, sample_rate),
         }
     }
 
@@ -78,6 +80,7 @@ impl RecoveredVoiceRuntime {
 
     pub(crate) fn sample(&mut self, sample_rate: f32) -> (f32, bool) {
         let voice_type = self.voice_type;
+        let source_is_active = !self.active.is_empty();
         let mut output = 0.0;
         for note in &mut self.active {
             output +=
@@ -91,7 +94,11 @@ impl RecoveredVoiceRuntime {
                     .cutoff_samples
                     .is_none_or(|cutoff_samples| note.sample < cutoff_samples)
         });
-        (output, !self.active.is_empty())
+        if let Some(convolution) = &mut self.convolution {
+            convolution.process(output, source_is_active)
+        } else {
+            (output, source_is_active)
+        }
     }
 }
 
@@ -599,7 +606,7 @@ mod tests {
             if !voice_type.uses_recovered_runtime() {
                 continue;
             }
-            let mut runtime = RecoveredVoiceRuntime::new(voice_type);
+            let mut runtime = RecoveredVoiceRuntime::new(voice_type, 44_100.0);
             runtime.trigger(110.0);
             let mut peak = 0.0_f32;
             let mut active = true;

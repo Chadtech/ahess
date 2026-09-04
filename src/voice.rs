@@ -353,37 +353,37 @@ impl VoiceType {
             Self::NoitechBellG => VoiceDetails {
                 description: "A broad bell with a subharmonic, thirteen main partials, nested fades, and tiny enharmonic attacks.",
                 source: "Chadtech/BellsJobot — buildBellsG.coffee",
-                fidelity: "Native additive core; the source expensiveE.wav convolution is documented but not folded into this voice.",
+                fidelity: "Native additive core with the source expensiveE.wav dry-plus-convolved response restored at its 0.15 gain.",
             },
             Self::NoitechBellH => VoiceDetails {
                 description: "A leaner Bell G relative with phase-shifted low components and nested fades.",
                 source: "Chadtech/BellsJobot — buildBellsH.coffee",
-                fidelity: "Native additive core; the source expensiveE.wav convolution is documented but not folded into this voice.",
+                fidelity: "Native additive core with the source expensiveE.wav dry-plus-convolved response restored at its 0.25 gain.",
             },
             Self::NoitechBellI => VoiceDetails {
                 description: "A tidy eight-component Bell G descendant with short upper-partial decays.",
                 source: "Chadtech/bellsTemplate — buildBellsI.coffee",
-                fidelity: "Native additive core; fractional sample-count enharmonics are silent and convolution is omitted.",
+                fidelity: "Native additive core; fractional sample-count enharmonics remain silent, and the source expensiveE.wav response is restored at its 0.15 gain.",
             },
             Self::NoitechBellJ => VoiceDetails {
                 description: "A long, sustained thirteen-component bell with stretched upper partials.",
                 source: "Chadtech/bellsTemplate — buildBellsJ.coffee",
-                fidelity: "Native additive core; fractional sample-count enharmonics are silent and convolution is omitted.",
+                fidelity: "Native additive core; fractional sample-count enharmonics remain silent, and the source expensiveE.wav response is restored at its 0.15 gain.",
             },
             Self::NoitechBellK => VoiceDetails {
                 description: "A clean seven-component stretched harmonic ladder.",
                 source: "Chadtech/bellsTemplate — buildBellsK.coffee",
-                fidelity: "Native additive core; the source expensiveE.wav convolution is omitted.",
+                fidelity: "Native additive core with the source expensiveE.wav dry-plus-convolved response restored at its 0.15 gain.",
             },
             Self::NoitechBellL => VoiceDetails {
                 description: "A sparse bell made from ratios 1, 2.01, and 4.04.",
                 source: "Chadtech/Iconoclast — old-voices/buildBellsL.coffee",
-                fidelity: "Native additive core; the source home_clap_1.wav convolution is omitted.",
+                fidelity: "Native additive core with the source home_clap_1.wav dry-plus-convolved response restored at its 0.05 gain.",
             },
             Self::NoitechBellM => VoiceDetails {
                 description: "A slightly stretched seven-component quasi-harmonic ladder.",
                 source: "Chadtech/Iconoclast — old-voices/buildBellsM.coffee",
-                fidelity: "Native additive core; the source home_clap_1.wav convolution is omitted.",
+                fidelity: "Native additive core with the source home_clap_1.wav dry-plus-convolved response restored at its 0.05 gain.",
             },
             Self::IconoclastBellG => VoiceDetails {
                 description: "The later live Bell G rewrite with thirteen explicit partials and pitch instability.",
