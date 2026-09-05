@@ -415,7 +415,6 @@ fn occurrence_rows(
     occurrences
         .iter()
         .map(|occurrence| {
-            let beat_label = singular_or_plural(occurrence.length(), "beat", "beats");
             let active = active_part.is_some_and(|active_part| {
                 occurrence.part_name().eq_ignore_ascii_case(active_part)
             });
@@ -425,12 +424,8 @@ fn occurrence_rows(
                     occurrence.index() + 1,
                     occurrence.part_name().as_str()
                 ),
-                format!("{} {beat_label}", occurrence.length()),
-                format!(
-                    "beats {}–{}",
-                    occurrence.first_beat(),
-                    occurrence.last_beat()
-                ),
+                "",
+                "",
             )
             .with_indicator(if active { "→" } else { "" })
         })

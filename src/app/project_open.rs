@@ -3395,8 +3395,6 @@ fn score_arrangement_panel(
     } else {
         "parts"
     };
-    let beat_count = project.arrangement_beat_count();
-    let beat_label = if beat_count == 1 { "beat" } else { "beats" };
     let panel = div()
         .flex()
         .flex_col()
@@ -3412,10 +3410,7 @@ fn score_arrangement_panel(
                 .pb(s::S4)
                 .gap(s::S3)
                 .text_color(s::TEXT_DEFAULT)
-                .child(format!(
-                    "{} {occurrence_label}, {beat_count} {beat_label},",
-                    occurrences.len()
-                ))
+                .child(format!("{} {occurrence_label},", occurrences.len()))
                 .child(
                     div()
                         .debug_selector(|| "score-arrangement-duration-summary".to_string())
@@ -3433,9 +3428,10 @@ fn score_arrangement_panel(
                 .child(
                     div()
                         .debug_selector(|| "score-arrangement-loop-summary".to_string())
+                        .min_w(s::S0)
+                        .truncate()
                         .child(loop_range_summary(project, loop_range)),
-                )
-                .child("click or drag to change"),
+                ),
         )
         .child(
             div()
@@ -3450,8 +3446,8 @@ fn score_arrangement_panel(
     s::raised(panel)
         .flex()
         .flex_none()
-        .w(s::S10)
-        .min_w(s::S10)
+        .w(s::S9)
+        .min_w(s::S9)
         .min_h(s::S0)
         .overflow_hidden()
         .debug_selector(|| "score-arrangement-panel".to_string())
@@ -5241,7 +5237,7 @@ mod tests {
         assert!(panes.iter().all(|pane| pane.size.width > px(0.0)));
         assert!((panes[0].size.width / panes[1].size.width - 1.0).abs() < 0.01);
         assert!((panes[1].size.width / panes[2].size.width - 1.0).abs() < 0.01);
-        assert_eq!(arrangement.size.width, crate::style::S10);
+        assert_eq!(arrangement.size.width, crate::style::S9);
         assert!(panes[2].right() < arrangement.left());
         assert!(arrangement_duration.right() <= arrangement.right());
         assert!(arrangement_right <= workspace_right + px(1.0));

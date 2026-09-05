@@ -38,7 +38,9 @@ impl HistoricalConvolutionSpec {
             | VoiceType::NoitechBellI
             | VoiceType::NoitechBellJ
             | VoiceType::NoitechBellK => (HistoricalImpulse::ExpensiveE, 0.15),
-            VoiceType::NoitechBellH => (HistoricalImpulse::ExpensiveE, 0.25),
+            VoiceType::NoitechBellH | VoiceType::NoitechBellHV2 => {
+                (HistoricalImpulse::ExpensiveE, 0.25)
+            }
             VoiceType::NoitechBellL | VoiceType::NoitechBellM => {
                 (HistoricalImpulse::HomeClap1, 0.05)
             }

@@ -3,6 +3,7 @@ use crate::{historical_convolution::HistoricalBellConvolver, voice::VoiceType};
 const SOURCE_SAMPLE_RATE: f32 = 44_100.0;
 const SOURCE_RAMP_SAMPLES: f32 = 60.0;
 const NYQUIST_MARGIN: f32 = 0.98;
+const CUTOFF_FADE_SECONDS: f32 = 0.005;
 
 #[derive(Clone, Copy)]
 struct ActiveNote {
@@ -80,14 +81,20 @@ impl RecoveredVoiceRuntime {
 
     pub(crate) fn sample(&mut self, sample_rate: f32) -> (f32, bool) {
         let voice_type = self.voice_type;
+        let duration = duration_samples(voice_type, sample_rate);
         let source_is_active = !self.active.is_empty();
         let mut output = 0.0;
         for note in &mut self.active {
-            output +=
-                voice_sample(voice_type, note.fundamental, note.sample, sample_rate) * note.volume;
+            output += voice_sample(
+                voice_type,
+                note.fundamental,
+                note.sample,
+                sample_rate,
+                note.volume,
+            ) * note.volume
+                * cutoff_gain(note.sample, note.cutoff_samples, duration, sample_rate);
             note.sample += 1;
         }
-        let duration = duration_samples(voice_type, sample_rate);
         self.active.retain(|note| {
             note.sample < duration
                 && note
@@ -102,7 +109,26 @@ impl RecoveredVoiceRuntime {
     }
 }
 
-fn voice_sample(voice_type: VoiceType, fundamental: f32, sample: u32, sample_rate: f32) -> f32 {
+// Fade each truncated source before convolution so other notes and response tails
+// remain independent. The final source sample is zero, at the original deadline.
+fn cutoff_gain(sample: u32, cutoff: Option<u32>, duration: u32, sample_rate: f32) -> f32 {
+    let Some(cutoff) = cutoff.filter(|cutoff| *cutoff < duration) else {
+        return 1.0;
+    };
+    let fade_samples = (CUTOFF_FADE_SECONDS * sample_rate).round().max(1.0) as u32;
+    let fade_samples = fade_samples.min(cutoff.saturating_sub(1)).max(1);
+    let remaining = cutoff.saturating_sub(sample.saturating_add(1));
+    let x = (remaining as f32 / fade_samples as f32).min(1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+fn voice_sample(
+    voice_type: VoiceType,
+    fundamental: f32,
+    sample: u32,
+    sample_rate: f32,
+    strike_strength: f32,
+) -> f32 {
     let duration_samples = duration_samples(voice_type, sample_rate);
     if sample >= duration_samples {
         return 0.0;
@@ -131,6 +157,9 @@ fn voice_sample(voice_type: VoiceType, fundamental: f32, sample: u32, sample_rat
                 body_seconds,
                 &BELL_H,
             );
+        }
+        VoiceType::NoitechBellHV2 => {
+            signal += bell_h_v2(fundamental, sample_rate, seconds, strike_strength);
         }
         VoiceType::NoitechBellI => {
             signal += partial_bank(
@@ -255,6 +284,7 @@ fn voice_sample(voice_type: VoiceType, fundamental: f32, sample: u32, sample_rat
         voice_type,
         VoiceType::NoitechBellG
             | VoiceType::NoitechBellH
+            | VoiceType::NoitechBellHV2
             | VoiceType::NoitechBellI
             | VoiceType::NoitechBellJ
             | VoiceType::NoitechBellK
@@ -269,6 +299,86 @@ fn voice_sample(voice_type: VoiceType, fundamental: f32, sample: u32, sample_rat
     } else {
         signal
     }
+}
+
+// Keep H's core ratios, phases, and four-second envelope. Quiet split modes
+// supply moving texture without detuning the pitch-bearing core. This is a
+// designed bronze timbre, not a claim of measured church-bell/gong acoustics.
+fn bell_h_v2(fundamental: f32, sample_rate: f32, seconds: f32, strike_strength: f32) -> f32 {
+    // The score boundary validates note volume in 0..=1. Derive expression
+    // from that note-owned value; the voice's mix gain never reaches this DSP.
+    // Smooth curves vary the resonant body continuously without attack layers.
+    debug_assert!((0.0..=1.0).contains(&strike_strength));
+    let hardness = strike_strength * strike_strength * (3.0 - 2.0 * strike_strength);
+    let shimmer = 0.3 + 0.7 * hardness;
+    let mut signal = 0.0;
+    for (index, partial) in BELL_H.iter().enumerate() {
+        let duration = 4.0 * partial.duration;
+        if seconds >= duration {
+            continue;
+        }
+        let envelope = (1.0 - seconds / duration).powi(partial.fade_power);
+        let frequency = fundamental * partial.ratio;
+        // Integrated exponentially settling frequency offset: upper modes bend
+        // down gently at the strike, while the fundamental and hum stay fixed.
+        let settling_hz = if partial.ratio >= 3.0 {
+            frequency * 0.003 * hardness
+        } else {
+            0.0
+        };
+        let phase = partial.phase + settling_hz * 0.045 * (1.0 - (-seconds / 0.045).exp());
+        let spread = (0.65 + index as f32 * 0.29) * (fundamental / 110.0).sqrt();
+        // Low hum and fundamental keep their weight; higher modes need a
+        // progressively harder strike to reach their full amplitude.
+        let soft_gain = 1.0 / (1.0 + 0.7 * (partial.ratio - 1.0).max(0.0));
+        let brightness = soft_gain + (1.0 - soft_gain) * hardness;
+        let amplitude = partial.amplitude * envelope * brightness;
+        signal += sine(
+            frequency,
+            amplitude * (0.82 + 0.18 * (1.0 - shimmer)),
+            phase,
+            sample_rate,
+            seconds,
+        );
+        signal += sine(
+            frequency + spread,
+            amplitude * 0.12 * shimmer,
+            phase + 0.07,
+            sample_rate,
+            seconds,
+        );
+        if frequency > spread {
+            signal += sine(
+                frequency - spread * 0.83,
+                amplitude * 0.06 * shimmer,
+                phase - 0.09,
+                sample_rate,
+                seconds,
+            );
+        }
+    }
+    // Quiet tierce and inharmonic skirt fill the spaces between H's main modes.
+    // Their individual exponential decays lose brightness before the low hum.
+    for (ratio, amplitude, decay) in [
+        (1.2, 0.016, 0.65),
+        (2.74, 0.012, 0.32),
+        (3.83, 0.009, 0.22),
+        (6.38, 0.006, 0.12),
+    ] {
+        let taper = (1.0 - seconds / 4.0).max(0.0).powi(2);
+        signal += sine(
+            fundamental * ratio,
+            amplitude * (-seconds / decay).exp() * taper * (0.25 + 0.75 * hardness),
+            0.0,
+            sample_rate,
+            seconds,
+        );
+    }
+    // Soften the resonant body's onset on quieter notes. This multiplies
+    // the existing source ramp and reaches unity after eight milliseconds.
+    let attack = (seconds / 0.008).min(1.0);
+    let soft_attack = attack * attack * (3.0 - 2.0 * attack);
+    signal * (hardness + (1.0 - hardness) * soft_attack)
 }
 
 fn partial_bank(
@@ -453,6 +563,7 @@ fn duration_seconds(voice_type: VoiceType) -> f32 {
     match voice_type {
         VoiceType::NoitechBellG
         | VoiceType::NoitechBellH
+        | VoiceType::NoitechBellHV2
         | VoiceType::NoitechBellI
         | VoiceType::NoitechBellJ
         | VoiceType::NoitechBellK
@@ -599,6 +710,206 @@ const BAR_R: [Partial; 9] = [
 mod tests {
     use super::RecoveredVoiceRuntime;
     use crate::voice::VoiceType;
+
+    #[test]
+    fn shortened_bell_h_reaches_zero_without_a_cutoff_jump() {
+        for sample_rate in [44_100.0, 48_000.0, 96_000.0] {
+            for voice_type in [VoiceType::NoitechBellH, VoiceType::NoitechBellHV2] {
+                for seconds in [0.001, 0.4, 1.2] {
+                    let cutoff = (seconds * sample_rate) as u32;
+                    let mut runtime = RecoveredVoiceRuntime::new(voice_type, sample_rate);
+                    // Inspect the source discontinuity independently of its response tail.
+                    runtime.convolution = None;
+                    runtime.trigger_with_volume_and_cutoff(116.54094, 1.0, Some(cutoff));
+                    let mut last = [0.0_f32; 2];
+                    for sample in 0..cutoff {
+                        let value = runtime.sample(sample_rate).0;
+                        if sample + 2 >= cutoff {
+                            last.rotate_left(1);
+                            last[1] = value;
+                        }
+                    }
+                    assert_eq!(last[1], 0.0);
+                    assert!(last[0].abs() < 0.0001, "cutoff jump: {last:?}");
+                    assert_eq!(runtime.sample(sample_rate), (0.0, false));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cutoff_preserves_other_notes_and_the_unshortened_body() {
+        let sample_rate = 48_000.0;
+        let mut mixed = RecoveredVoiceRuntime::new(VoiceType::NoitechBellH, sample_rate);
+        let mut continuing = RecoveredVoiceRuntime::new(VoiceType::NoitechBellH, sample_rate);
+        mixed.convolution = None;
+        continuing.convolution = None;
+        mixed.trigger_with_volume_and_cutoff(110.0, 1.0, Some(480));
+        mixed.trigger(220.0);
+        continuing.trigger(220.0);
+        for sample in 0..960 {
+            let actual = mixed.sample(sample_rate).0;
+            let other = continuing.sample(sample_rate).0;
+            if sample < 240 {
+                let expected =
+                    super::voice_sample(VoiceType::NoitechBellH, 110.0, sample, sample_rate, 1.0);
+                assert!((actual - other - expected).abs() < 1e-6);
+            }
+            if sample >= 479 {
+                assert_eq!(actual, other);
+            }
+        }
+    }
+
+    #[test]
+    fn bell_h_v2_preserves_level_and_adds_texture_across_registers() {
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            for pitch in [55.0, 110.0, 440.0, 1760.0] {
+                let mut original = RecoveredVoiceRuntime::new(VoiceType::NoitechBellH, rate);
+                let mut revised = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate);
+                original.trigger(pitch);
+                revised.trigger(pitch);
+                let (mut old_energy, mut new_energy, mut difference) = (0.0, 0.0, 0.0);
+                let (mut old_peak, mut new_peak) = (0.0_f32, 0.0_f32);
+                for _ in 0..(rate * 0.2) as usize {
+                    let old = original.sample(rate).0;
+                    let new = revised.sample(rate).0;
+                    assert!(new.is_finite());
+                    old_peak = old_peak.max(old.abs());
+                    new_peak = new_peak.max(new.abs());
+                    old_energy += old * old;
+                    new_energy += new * new;
+                    difference += (new - old).powi(2);
+                }
+                // Internal convolution can exceed unity before the shared mixer gain.
+                assert!(
+                    new_peak < old_peak * 1.25,
+                    "peak increased: {old_peak} -> {new_peak}"
+                );
+                let relative = new_energy / old_energy;
+                assert!((0.4..1.6).contains(&relative), "level changed: {relative}");
+                assert!(difference / old_energy > 0.005, "missing texture");
+            }
+        }
+    }
+
+    #[test]
+    fn bell_h_v2_strike_strength_changes_brightness_not_just_level() {
+        for rate in [44_100.0, 48_000.0, 96_000.0] {
+            for pitch in [55.0, 220.0, 880.0] {
+                let mut previous_brightness = 0.0;
+                let mut previous_energy = 0.0;
+                for strength in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let mut runtime = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate);
+                    runtime.trigger_with_volume_and_cutoff(pitch, strength, None);
+                    let (mut energy, mut high_energy, mut previous) = (0.0, 0.0, 0.0);
+                    for _ in 0..(rate * 0.2) as usize {
+                        let sample = runtime.sample(rate).0;
+                        assert!(sample.is_finite());
+                        energy += sample * sample;
+                        high_energy += (sample - previous).powi(2);
+                        previous = sample;
+                    }
+                    if strength == 0.0 {
+                        assert_eq!(energy, 0.0);
+                        continue;
+                    }
+                    // First-difference energy relative to signal energy measures
+                    // spectral brightness independently of overall loudness.
+                    let brightness = high_energy / energy;
+                    assert!(
+                        brightness > previous_brightness,
+                        "brightness at {pitch} Hz, {rate} Hz, strength {strength}"
+                    );
+                    assert!(energy > previous_energy);
+                    previous_brightness = brightness;
+                    previous_energy = energy;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bell_h_v2_overlapping_strikes_keep_independent_expression_and_cutoffs() {
+        let rate = 48_000.0;
+        let mut mixed = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate);
+        let mut soft = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate);
+        let mut hard = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate);
+        mixed.trigger_with_volume_and_cutoff(110.0, 0.2, Some(3000));
+        soft.trigger_with_volume_and_cutoff(110.0, 0.2, Some(3000));
+        for sample in 0..12_000 {
+            if sample == 1000 {
+                mixed.trigger_with_volume_and_cutoff(220.0, 0.9, Some(6000));
+                hard.trigger_with_volume_and_cutoff(220.0, 0.9, Some(6000));
+            }
+            let actual = mixed.sample(rate);
+            let first = soft.sample(rate);
+            let second = hard.sample(rate);
+            assert!((actual.0 - first.0 - second.0).abs() < 1e-6);
+            assert_eq!(actual.1, first.1 || second.1);
+            if sample > 7500 {
+                assert!(!actual.1);
+                assert!(actual.0.abs() < 1e-7);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "writes an expression audition WAV to AHESS_BELL_H_EXPRESSION"]
+    fn render_bell_h_expression() {
+        let path = std::env::var("AHESS_BELL_H_EXPRESSION").expect("set output WAV path");
+        let rate = 48_000;
+        let mut samples = Vec::new();
+        for strength in [0.2, 0.5, 0.8, 1.0] {
+            let mut runtime = RecoveredVoiceRuntime::new(VoiceType::NoitechBellHV2, rate as f32);
+            runtime.trigger_with_volume_and_cutoff(220.0, strength, None);
+            for _ in 0..rate * 5 {
+                samples.push(runtime.sample(rate as f32).0 * 0.8);
+            }
+        }
+        write_audition_wav(path, rate, samples);
+    }
+
+    #[test]
+    #[ignore = "writes an audition WAV to AHESS_BELL_H_AUDITION"]
+    fn render_bell_h_comparison() {
+        let path = std::env::var("AHESS_BELL_H_AUDITION").expect("set output WAV path");
+        let rate = 48_000;
+        let mut samples = Vec::<f32>::new();
+        // Original then v2 at each pitch; same fixed gain, no normalization.
+        for pitch in [110.0, 220.0, 440.0] {
+            for voice in [VoiceType::NoitechBellH, VoiceType::NoitechBellHV2] {
+                let mut runtime = RecoveredVoiceRuntime::new(voice, rate as f32);
+                runtime.trigger(pitch);
+                for _ in 0..rate * 5 {
+                    samples.push(runtime.sample(rate as f32).0 * 0.8);
+                }
+            }
+        }
+        write_audition_wav(path, rate, samples);
+    }
+
+    fn write_audition_wav(path: String, rate: u32, samples: Vec<f32>) {
+        let data_len = samples.len() as u32 * 4;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&3u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&(rate as u32).to_le_bytes());
+        wav.extend_from_slice(&(rate as u32 * 4).to_le_bytes());
+        wav.extend_from_slice(&4u16.to_le_bytes());
+        wav.extend_from_slice(&32u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for sample in samples {
+            assert!(sample.is_finite() && sample.abs() < 1.0);
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        std::fs::write(path, wav).unwrap();
+    }
 
     #[test]
     fn every_recovered_voice_sounds_and_finishes() {

@@ -120,6 +120,7 @@ pub struct Project {
     pub beat_duration_millis: BeatDurationMillis,
     pub timing_variance: u32,
     frequency_variance: FrequencyVariance,
+    mix_normalization_enabled: bool,
     pub seed: Seed,
     pub description: String,
     tuning_system_id: Option<TuningSystemId>,
@@ -175,6 +176,7 @@ impl Project {
             beat_duration_millis: beat_duration_millis.into(),
             timing_variance,
             frequency_variance: FrequencyVariance::default(),
+            mix_normalization_enabled: true,
             seed,
             description: String::new(),
             tuning_system_id: Some(TuningSystemId::default_western()),
@@ -204,6 +206,14 @@ impl Project {
 
     pub fn set_frequency_variance(&mut self, variance: FrequencyVariance) {
         self.frequency_variance = variance;
+    }
+
+    pub fn mix_normalization_enabled(&self) -> bool {
+        self.mix_normalization_enabled
+    }
+
+    pub fn set_mix_normalization_enabled(&mut self, enabled: bool) {
+        self.mix_normalization_enabled = enabled;
     }
 
     pub fn with_pitch_system(mut self, pitch_system: PitchSystem) -> Self {
@@ -381,12 +391,13 @@ impl Project {
 
     pub fn config_file_contents(&self) -> String {
         let mut contents = format!(
-            "name = {}\ndescription = {}\nbeat_duration_millis = {}\ntiming_variance = {}\nfrequency_variance = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
+            "name = {}\ndescription = {}\nbeat_duration_millis = {}\ntiming_variance = {}\nfrequency_variance = {}\nmix_normalization = {}\nseed = {}\nnext_voice_id = {}\nsequence = [",
             toml_string(&self.name),
             toml_string(&self.description),
             self.beat_duration_millis.get(),
             self.timing_variance,
             self.frequency_variance.ratio(),
+            self.mix_normalization_enabled,
             self.seed.value(),
             self.next_voice_id
         );
@@ -1820,6 +1831,8 @@ struct ProjectConfig {
     timing_variance: u32,
     #[serde(default)]
     frequency_variance: FrequencyVariance,
+    #[serde(default = "enabled_by_default")]
+    mix_normalization: bool,
     seed: u64,
     #[serde(default)]
     tuning_system_id: Option<TuningSystemId>,
@@ -2019,6 +2032,7 @@ impl ProjectConfig {
         )
         .with_description(self.description)
         .with_frequency_variance(self.frequency_variance);
+        project.mix_normalization_enabled = self.mix_normalization;
         project.tuning_system_id = selected_tuning.0;
         project.pitch_system = selected_tuning.1;
         project.voice_convolution = self.voice_convolution;
@@ -2047,6 +2061,10 @@ impl ProjectConfig {
         project.sequence = sequence;
         Ok(project)
     }
+}
+
+const fn enabled_by_default() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -2090,6 +2108,7 @@ mod tests {
         assert_eq!(project.beat_duration_millis.get(), 4000);
         assert_eq!(project.timing_variance, 100);
         assert_eq!(project.frequency_variance(), FrequencyVariance::default());
+        assert!(project.mix_normalization_enabled());
         assert_eq!(project.seed, Seed::new(19));
         assert_eq!(project.description, "sketch");
         assert!(project.voices.is_empty());
@@ -2168,9 +2187,24 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0.017\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
+                "name = \"test \\\"score\\\"\"\ndescription = \"line one\\nline two\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0.017\nmix_normalization = true\nseed = 1234\nnext_voice_id = 1\nsequence = []\n{DEFAULT_TUNING_REFERENCE}"
             )
         );
+    }
+
+    #[test]
+    fn mix_normalization_can_be_disabled_and_round_trips() {
+        let root = temp_root("mix-normalization");
+        let mut project = Project::new("test", 4000, 100, Seed::new(1234));
+        project.set_mix_normalization_enabled(false);
+        let project_directory = create_project(&root, &project).unwrap();
+
+        let stored = fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE)).unwrap();
+        let loaded = load_project(&project_directory).unwrap().project;
+
+        assert!(stored.contains("mix_normalization = false"));
+        assert!(!loaded.mix_normalization_enabled());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2183,7 +2217,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nmix_normalization = true\nseed = 1234\nnext_voice_id = 3\nsequence = []\n{DEFAULT_TUNING_REFERENCE}\n[[voices]]\nid = 1\nname = \"lead\"\nvoice_type = \"saw\"\n\n[[voices]]\nid = 2\nname = \"bass\"\nvoice_type = \"sin\"\n"
             )
         );
     }
@@ -2303,7 +2337,7 @@ mod tests {
         assert_eq!(
             project.config_file_contents(),
             format!(
-                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\nsubdivision_pattern = [4, 3, 3]\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
+                "name = \"test\"\ndescription = \"\"\nbeat_duration_millis = 4000\ntiming_variance = 100\nfrequency_variance = 0\nmix_normalization = true\nseed = 1234\nnext_voice_id = 1\nsequence = [\"intro\", \"verse\"]\n{DEFAULT_TUNING_REFERENCE}\n[[parts]]\nname = \"intro\"\nlength = 8\nsubdivision_pattern = [4, 3, 3]\n\n[[parts]]\nname = \"verse\"\nlength = 16\n"
             )
         );
     }
@@ -2660,11 +2694,13 @@ mod tests {
                 < 1e-10
         );
         assert_eq!(project.frequency_variance(), FrequencyVariance::default());
+        assert!(project.mix_normalization_enabled());
         save_project(&project_directory, &project).unwrap();
         let saved_config = fs::read_to_string(project_directory.join(PROJECT_CONFIG_FILE)).unwrap();
         assert!(saved_config.contains("beat_duration_millis = 17"));
         assert!(!saved_config.contains("beat_length ="));
         assert!(saved_config.contains("tuning_system_id = \"western-twelve-tone\""));
+        assert!(saved_config.contains("mix_normalization = true"));
 
         fs::remove_dir_all(root).unwrap();
     }

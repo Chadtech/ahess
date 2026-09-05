@@ -76,6 +76,13 @@ percussive voice, that duration acts as a maximum source gate, so (for example)
 independently. Instrument-internal response processing may complete its short
 tail after the source gate closes.
 
+Recovered voices, including Bell H, fade each explicitly truncated source to
+zero over the last five milliseconds before its gate closes. The smoothstep
+fade is shortened for notes shorter than five milliseconds and leaves natural
+decays unchanged. It runs before summing notes and historical convolution, so
+overlapping notes and response tails continue independently. The source still
+ends at the score's requested duration in both live and offline rendering.
+
 There should not be a long-lived representation in which a triggered voice can
 contain a pitched event or a pitched voice can contain a drum hit. Prepared
 playback data should retain the distinction with enums.
@@ -135,6 +142,29 @@ topology with the 15,328-sample `home_clap_1.wav` response and a factor of
 and preserves the legacy convolver's one-unit negative-PCM decoding asymmetry.
 At output rates other than the source's 44.1 kHz, the immutable response is
 band-limited and resampled before its voice runtime starts.
+
+`Noitech Bell H v2` is a separately persisted (`noitech-bell-h-v2`) native
+variation on Noitech Bell H. It retains H's nine core ratios, phase offsets,
+mode envelopes, four-second duration, and `expensiveE.wav` convolution at 0.25.
+Quiet asymmetric split modes add beating around the unchanged core frequencies;
+upper modes have a small integrated exponential pitch settling at the strike.
+A quiet tierce and inharmonic skirt supply bronze-like body. There is no
+separate clapper or noise-like attack layer. These are musical design choices,
+not a measured church-bell or gong model. All added components obey the safe
+Nyquist boundary. The existing per-note cutoff fade, overlapping-note runtime,
+and shared live/offline convolution path apply unchanged. Original Bell H and
+Iconoclast Bell H retain their existing definitions.
+
+For Bell H v2, each note's validated score volume also controls strike strength.
+Smooth continuous curves attenuate upper modes progressively, soften the first
+8 milliseconds, and reduce split-mode energy and upper-mode
+pitch settling on softer strikes. The hum and fundamental retain their modal
+weight. `FF` uses the full-strength resonant body; `00` is silent, and
+legacy notes use full strength. The ordinary linear note-volume multiplier
+still applies after synthesis. Expression is derived from each active note's
+own volume before notes are summed and convolved, so overlapping strikes keep
+independent timbres. The separate voice volume adjustment remains downstream
+and changes loudness only. No score-format or persistence change is needed.
 
 Each affected voice sums its overlapping dry notes before the convolution
 stage. Convolution is linear, so this is equivalent to processing each note
@@ -628,11 +658,14 @@ Effect algorithms remain Rust code. Configuration may select known effects,
 provide validated parameters, and eventually order an effect chain. A generic
 node-graph language is not required for the initial architecture.
 
-The master mixer retains square-root normalization by the number of
-acoustically active voices. Because starting or ending one voice would otherwise
-rescale every other voice in a single sample, normalization gain moves to each
-new target with a 64-sample linear ramp. During silence it returns to the
-single-voice gain so the next isolated voice starts at the expected level.
+The project can enable or disable master square-root normalization by the
+number of acoustically active voices. It is enabled by default for compatibility.
+When enabled, starting or ending one voice would otherwise rescale every other
+voice in a single sample, so normalization gain moves to each new target with a
+64-sample linear ramp. During silence it returns to the single-voice gain so the
+next isolated voice starts at the expected level. When disabled, the mixer uses
+the single-voice master gain regardless of how many voices are active, allowing
+their contributions to add directly before the final safety clamp.
 
 Each voice may also store a positive finite volume multiplier. When omitted it
 has unity gain. The multiplier is applied to the mono instrument source before
@@ -742,6 +775,7 @@ Compatibility loading should:
 - Interpret sin, saw, and harmonic-saw voices as pitched instrument variants.
 - Interpret a missing voice position as the acoustic center.
 - Interpret a missing acoustic scene as a dry centered stereo scene.
+- Interpret a missing `mix_normalization` setting as enabled.
 - Write the built-in tuning-system reference when a project with no historical
   tuning field is next saved. Preserve an embedded custom definition until the
   user explicitly chooses a library system.

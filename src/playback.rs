@@ -88,6 +88,7 @@ impl Playback {
 pub struct PlaybackLoop {
     beat_duration_millis: BeatDurationMillis,
     timing_variance: u32,
+    mix_normalization_enabled: bool,
     voices: Vec<PlaybackVoice>,
     acoustic_scene: AcousticScene,
     beat_count: usize,
@@ -255,6 +256,7 @@ impl PlaybackLoop {
         Ok(Self {
             beat_duration_millis: project.beat_duration_millis,
             timing_variance: project.timing_variance,
+            mix_normalization_enabled: project.mix_normalization_enabled(),
             voices,
             acoustic_scene: project.acoustic_scene().clone(),
             beat_count: rows.len(),
@@ -692,7 +694,10 @@ impl AudioEngine {
             }
         }
 
-        let mix_gain = self.mix_gain.next(mix_gain_target(sounding_voice_count));
+        let mix_gain = self.mix_gain.next(mix_gain_target(
+            sounding_voice_count,
+            self.playback_loop.mix_normalization_enabled,
+        ));
 
         self.advance_playhead();
         if sounding_voice_count == 0 {
@@ -801,7 +806,10 @@ impl OfflineRenderer {
             return None;
         }
 
-        let mix_gain = self.mix_gain.next(mix_gain_target(sounding_voice_count));
+        let mix_gain = self.mix_gain.next(mix_gain_target(
+            sounding_voice_count,
+            self.playback_loop.mix_normalization_enabled,
+        ));
         let mut mixed = StereoFrame::SILENCE;
         for frame in &mut self.voice_frames {
             *frame = frame.scale(mix_gain);
@@ -831,8 +839,8 @@ fn beat_length_samples(duration: BeatDurationMillis, sample_rate: f32) -> u32 {
     u32::try_from(samples.max(1)).unwrap_or(u32::MAX)
 }
 
-fn mix_gain_target(sounding_voice_count: u32) -> f32 {
-    if sounding_voice_count == 0 {
+fn mix_gain_target(sounding_voice_count: u32, normalization_enabled: bool) -> f32 {
+    if sounding_voice_count == 0 || !normalization_enabled {
         MASTER_GAIN
     } else {
         MASTER_GAIN / (sounding_voice_count as f32).sqrt()
@@ -1193,6 +1201,7 @@ impl SurgeXtRuntime {
             | VoiceType::NoitechBellB
             | VoiceType::NoitechBellG
             | VoiceType::NoitechBellH
+            | VoiceType::NoitechBellHV2
             | VoiceType::NoitechBellI
             | VoiceType::NoitechBellJ
             | VoiceType::NoitechBellK
@@ -1444,6 +1453,7 @@ impl OscillatorRuntime {
             }
             VoiceType::NoitechBellG
             | VoiceType::NoitechBellH
+            | VoiceType::NoitechBellHV2
             | VoiceType::NoitechBellI
             | VoiceType::NoitechBellJ
             | VoiceType::NoitechBellK
@@ -1691,10 +1701,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::collision_free_midi_note;
     use super::{
-        beat_length_samples, frequency_variance_seed, normally_distributed_delay, timing_seed,
-        varied_frequency, write_device_frame, AudioEngine, BeatRange, GainRamp, HarmonicPartial,
-        HarmonicSawRuntime, InstrumentRuntime, OfflineRenderer, PlaybackLoop,
-        HARMONIC_SAW_PARTIAL_COUNT, MIX_GAIN_RAMP_SAMPLES,
+        beat_length_samples, frequency_variance_seed, mix_gain_target, normally_distributed_delay,
+        timing_seed, varied_frequency, write_device_frame, AudioEngine, BeatRange, GainRamp,
+        HarmonicPartial, HarmonicSawRuntime, InstrumentRuntime, OfflineRenderer, PlaybackLoop,
+        HARMONIC_SAW_PARTIAL_COUNT, MASTER_GAIN, MIX_GAIN_RAMP_SAMPLES,
     };
     #[cfg(target_os = "macos")]
     use crate::mts_esp::MtsEspTuningProbe;
@@ -1809,6 +1819,46 @@ mod tests {
                 compared_nonzero_frame = true;
                 assert!((adjusted_frame.left - base_frame.left * 1.5).abs() < 1e-6);
                 assert!((adjusted_frame.right - base_frame.right * 1.5).abs() < 1e-6);
+            }
+        }
+        assert!(compared_nonzero_frame);
+    }
+
+    #[test]
+    fn disabling_mix_normalization_lets_four_voices_add_at_full_master_gain() {
+        let voices = (1..=4)
+            .map(|id| Voice::new(id, format!("voice-{id}"), VoiceType::Sin))
+            .collect::<Vec<_>>();
+        let normalized_project = Project::new("test", 8, 0, Seed::new(1)).with_voices(voices);
+        let mut additive_project = normalized_project.clone();
+        additive_project.set_mix_normalization_enabled(false);
+        let part = Part::new("intro", 1);
+        let score = PartScore::from_rows(vec![vec!["A4".to_string(); 4]]);
+        let normalized_rows = score.resolved_rows(&part, &normalized_project).unwrap();
+        let additive_rows = score.resolved_rows(&part, &additive_project).unwrap();
+        let mut normalized = OfflineRenderer::new(
+            PlaybackLoop::from_rows(&normalized_project, normalized_rows, 1).unwrap(),
+            48_000,
+        )
+        .unwrap();
+        let mut additive = OfflineRenderer::new(
+            PlaybackLoop::from_rows(&additive_project, additive_rows, 1).unwrap(),
+            48_000,
+        )
+        .unwrap();
+
+        let mut compared_nonzero_frame = false;
+        for frame_index in 0..200 {
+            let (_, normalized_voices) = normalized.next_frame().unwrap();
+            let normalized_voice = normalized_voices[0];
+            let (_, additive_voices) = additive.next_frame().unwrap();
+            let additive_voice = additive_voices[0];
+            if frame_index >= MIX_GAIN_RAMP_SAMPLES
+                && (normalized_voice.left != 0.0 || normalized_voice.right != 0.0)
+            {
+                compared_nonzero_frame = true;
+                assert!((additive_voice.left - normalized_voice.left * 2.0).abs() < 1e-6);
+                assert!((additive_voice.right - normalized_voice.right * 2.0).abs() < 1e-6);
             }
         }
         assert!(compared_nonzero_frame);
@@ -2225,6 +2275,93 @@ mod tests {
 
         assert!(active_samples_after_one_beat("60") > 3_000);
         assert!((1..=10).contains(&active_samples_after_one_beat("6001ff")));
+
+        // Exercise the reported notation through the actual score parser and
+        // both output paths, including the cutoff and historical response tail.
+        let part = Part::new("cutoff", 5);
+        let score = PartScore::from_rows(vec![
+            vec!["6104ff".to_string()],
+            vec![String::new()],
+            vec![String::new()],
+            vec![String::new()],
+            vec![String::new()],
+        ]);
+        let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+        let shared = Arc::new(Mutex::new(playback_loop.clone()));
+        let playhead = Arc::new(AtomicU64::new(1));
+        let mut live = AudioEngine::new(48_000.0, shared, playhead).unwrap();
+        let mut offline = OfflineRenderer::new(playback_loop, 48_000).unwrap();
+        let beat_length = beat_length_samples(project.beat_duration_millis, 48_000.0);
+        for _ in 0..beat_length * 4 + 500 {
+            let (frame, _) = offline.next_frame().unwrap();
+            let live_frame = live.next_frame();
+            // The live mixer zeros inactive voices; offline stems can retain
+            // floating-point residue after the convolution tail expires.
+            assert!((live_frame.left - frame.left).abs() < 1e-7);
+            assert!((live_frame.right - frame.right).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn bell_h_v2_expression_matches_live_and_offline_and_ignores_voice_gain() {
+        let pitch_system = PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "bell expression test",
+                FrequencyHz::new(55.0).unwrap(),
+                Interval::cents(1_200.0).unwrap(),
+                (0..7)
+                    .map(|degree| Interval::cents(f64::from(degree) * 100.0).unwrap())
+                    .collect(),
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("test", 100, 0, Seed::new(1))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "bell", VoiceType::NoitechBellHV2)]);
+        let adjusted_project =
+            project
+                .clone()
+                .with_voices(vec![Voice::new(1, "bell", VoiceType::NoitechBellHV2)
+                    .with_volume_adjustment(Some(
+                        VoiceVolumeAdjustment::new(1.5).unwrap(),
+                    ))]);
+        let part = Part::new("expression", 8);
+        let score = PartScore::from_rows(
+            ["600433", "610480", "6204CC", "6304FF", "600100", "", "", ""]
+                .into_iter()
+                .map(|cell| vec![cell.to_string()])
+                .collect(),
+        );
+        for rate in [44_100, 48_000, 96_000] {
+            let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+            let mut live = AudioEngine::new(
+                rate as f32,
+                Arc::new(Mutex::new(playback_loop.clone())),
+                Arc::new(AtomicU64::new(1)),
+            )
+            .unwrap();
+            let mut offline = OfflineRenderer::new(playback_loop, rate).unwrap();
+            let mut adjusted = OfflineRenderer::new(
+                PlaybackLoop::from_part(&adjusted_project, &part, &score).unwrap(),
+                rate,
+            )
+            .unwrap();
+            let frames = beat_length_samples(project.beat_duration_millis, rate as f32) * 8;
+            let mut peak = 0.0_f32;
+            for _ in 0..frames {
+                let (frame, stems) = offline.next_frame().unwrap();
+                let live_frame = live.next_frame();
+                let (_, louder_stems) = adjusted.next_frame().unwrap();
+                assert!((frame.left - live_frame.left).abs() < 1e-7);
+                assert!((frame.right - live_frame.right).abs() < 1e-7);
+                assert!((louder_stems[0].left - stems[0].left * 1.5).abs() < 1e-6);
+                assert!((louder_stems[0].right - stems[0].right * 1.5).abs() < 1e-6);
+                peak = peak.max(frame.left.abs());
+            }
+            assert!(peak > 0.001);
+            assert!(offline.next_frame().is_none());
+        }
     }
 
     #[test]
@@ -2253,6 +2390,7 @@ mod tests {
                 VoiceType::NoitechBellB => Some((160_000, 200_000)),
                 VoiceType::NoitechBellG
                 | VoiceType::NoitechBellH
+                | VoiceType::NoitechBellHV2
                 | VoiceType::NoitechBellI
                 | VoiceType::NoitechBellJ
                 | VoiceType::NoitechBellK
@@ -2564,6 +2702,14 @@ mod tests {
         assert!(first > 0.5);
         assert_eq!(last, 0.5);
         assert_eq!(ramp.next(0.5), 0.5);
+    }
+
+    #[test]
+    fn disabling_mix_normalization_keeps_the_single_voice_master_gain() {
+        assert_eq!(mix_gain_target(4, false), MASTER_GAIN);
+        assert_eq!(mix_gain_target(4, true), MASTER_GAIN / 2.0);
+        assert_eq!(mix_gain_target(0, false), MASTER_GAIN);
+        assert_eq!(mix_gain_target(0, true), MASTER_GAIN);
     }
 
     #[test]

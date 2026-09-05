@@ -272,6 +272,9 @@ impl ProjectSettingsWorkspace {
         project.beat_duration_millis = beat_duration_millis;
         project.timing_variance = timing_variance;
         project.set_frequency_variance(frequency_variance);
+        project.set_mix_normalization_enabled(
+            self.fields.mix_normalization.read(cx).selected_index() == 0,
+        );
         project.seed = seed;
         project.description = description;
         match self
@@ -312,6 +315,8 @@ impl ProjectSettingsWorkspace {
                     .ratio()
                     .to_string()
             || self.fields.seed.read(cx).value() != self.original_project.seed.value().to_string()
+            || (self.fields.mix_normalization.read(cx).selected_index() == 0)
+                != self.original_project.mix_normalization_enabled()
             || self.fields.tuning.read(cx).selected_index() != self.original_tuning_index
             || self
                 .fields
@@ -519,6 +524,7 @@ struct ProjectSettingsFields {
     beat_duration: Entity<TextInput>,
     variance: Entity<TextInput>,
     frequency_variance: Entity<TextInput>,
+    mix_normalization: Entity<Dropdown>,
     seed: Entity<TextInput>,
     tuning: Entity<Dropdown>,
     impulse_response: ImpulseResponseSelection,
@@ -541,6 +547,14 @@ impl ProjectSettingsFields {
             variance: cx.new(|cx| TextInput::new(project.timing_variance.to_string(), "", cx)),
             frequency_variance: cx
                 .new(|cx| TextInput::new(project.frequency_variance().ratio().to_string(), "", cx)),
+            mix_normalization: cx.new(|cx| {
+                Dropdown::new(
+                    "project-settings-mix-normalization",
+                    ["enabled", "disabled"],
+                    usize::from(!project.mix_normalization_enabled()),
+                    cx,
+                )
+            }),
             seed: cx.new(|cx| TextInput::new(project.seed.value().to_string(), "", cx)),
             tuning: cx.new(|cx| {
                 Dropdown::new(
@@ -589,6 +603,12 @@ fn project_settings_workspace(
             ),
             field_group("seed", fields.seed.clone()),
         ]))
+        .child(section_label("master mix"))
+        .child("normalization reduces gain as more voices sound at once")
+        .child(control_group(
+            "mix normalization",
+            fields.mix_normalization.clone(),
+        ))
         .debug_selector(|| "project-settings-project-column".to_string());
 
     let acoustics_column = div()
@@ -761,6 +781,28 @@ mod tests {
         });
 
         assert_eq!(updated.frequency_variance().ratio(), 0.037);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn project_settings_can_disable_mix_normalization(cx: &mut TestAppContext) {
+        let root = temp_root("disable-mix-normalization");
+        let project = Project::new("test project", 800, 0, Seed::new(1));
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let root_for_view = root.clone();
+        let (dialog, cx) = cx.add_window_view(move |_, cx| {
+            ProjectSettingsWorkspace::new(project, project_directory, root_for_view, cx)
+        });
+
+        let updated = cx.update(|_, cx| {
+            let mix_normalization = dialog.read(cx).fields.mix_normalization.clone();
+            mix_normalization.update(cx, |dropdown, cx| dropdown.set_selected_index(1, cx));
+            dialog
+                .update(cx, |dialog, cx| dialog.project_from_fields(cx))
+                .unwrap()
+        });
+
+        assert!(!updated.mix_normalization_enabled());
         fs::remove_dir_all(root).unwrap();
     }
 

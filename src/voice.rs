@@ -133,6 +133,8 @@ pub enum VoiceType {
     NoitechBellB,
     NoitechBellG,
     NoitechBellH,
+    #[serde(rename = "noitech-bell-h-v2")]
+    NoitechBellHV2,
     NoitechBellI,
     NoitechBellJ,
     NoitechBellK,
@@ -158,7 +160,7 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
@@ -167,6 +169,7 @@ impl VoiceType {
         Self::NoitechBellB,
         Self::NoitechBellG,
         Self::NoitechBellH,
+        Self::NoitechBellHV2,
         Self::NoitechBellI,
         Self::NoitechBellJ,
         Self::NoitechBellK,
@@ -190,7 +193,7 @@ impl VoiceType {
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 26] = [
+    pub(crate) const BUILT_IN: [Self; 27] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
@@ -199,6 +202,7 @@ impl VoiceType {
         Self::NoitechBellB,
         Self::NoitechBellG,
         Self::NoitechBellH,
+        Self::NoitechBellHV2,
         Self::NoitechBellI,
         Self::NoitechBellJ,
         Self::NoitechBellK,
@@ -229,6 +233,7 @@ impl VoiceType {
             Self::NoitechBellB => "Noitech Bell B",
             Self::NoitechBellG => "Noitech Bell G",
             Self::NoitechBellH => "Noitech Bell H",
+            Self::NoitechBellHV2 => "Noitech Bell H v2",
             Self::NoitechBellI => "Noitech Bell I",
             Self::NoitechBellJ => "Noitech Bell J",
             Self::NoitechBellK => "Noitech Bell K",
@@ -263,6 +268,7 @@ impl VoiceType {
             Self::NoitechBellB => "noitech-bell-b",
             Self::NoitechBellG => "noitech-bell-g",
             Self::NoitechBellH => "noitech-bell-h",
+            Self::NoitechBellHV2 => "noitech-bell-h-v2",
             Self::NoitechBellI => "noitech-bell-i",
             Self::NoitechBellJ => "noitech-bell-j",
             Self::NoitechBellK => "noitech-bell-k",
@@ -299,6 +305,7 @@ impl VoiceType {
             self,
             Self::NoitechBellG
                 | Self::NoitechBellH
+                | Self::NoitechBellHV2
                 | Self::NoitechBellI
                 | Self::NoitechBellJ
                 | Self::NoitechBellK
@@ -359,6 +366,11 @@ impl VoiceType {
                 description: "A leaner Bell G relative with phase-shifted low components and nested fades.",
                 source: "Chadtech/BellsJobot — buildBellsH.coffee",
                 fidelity: "Native additive core with the source expensiveE.wav dry-plus-convolved response restored at its 0.25 gain.",
+            },
+            Self::NoitechBellHV2 => VoiceDetails {
+                description: "Bell H with gently beating bronze resonances and settling gong-like upper tones. Note volume controls strike strength: soft notes are rounder; hard notes bring out upper tones and shimmer.",
+                source: "Ahess variation on Chadtech/BellsJobot — buildBellsH.coffee; src/recovered_voice.rs",
+                fidelity: "An original church-bell and gong-inspired variation, retaining Bell H's nine core modes and expensiveE.wav convolution at 0.25; not a measured physical model.",
             },
             Self::NoitechBellI => VoiceDetails {
                 description: "A tidy eight-component Bell G descendant with short upper-partial decays.",
@@ -486,6 +498,13 @@ mod tests {
 
         assert_eq!(stored.voice_type, VoiceType::SurgeXtPiano);
         assert_eq!(stored.voice_type.config_value(), "surge-xt-piano");
+    }
+
+    #[test]
+    fn bell_h_v2_has_a_separate_persisted_identity() {
+        let stored: StoredVoiceType = toml::from_str("voice_type = \"noitech-bell-h-v2\"").unwrap();
+        assert_eq!(stored.voice_type, VoiceType::NoitechBellHV2);
+        assert_eq!(stored.voice_type.config_value(), "noitech-bell-h-v2");
     }
 
     #[test]
