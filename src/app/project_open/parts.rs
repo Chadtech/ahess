@@ -18,7 +18,9 @@ use crate::{
     },
 };
 
-pub enum Msg {
+/// Commands passed to the project owner after local form processing.
+/// Project-wide validation and persistence remain the owner's responsibility.
+pub enum Request {
     Add {
         name: String,
         length: u32,
@@ -35,7 +37,7 @@ pub enum Msg {
         subdivision_pattern: Option<SubdivisionPattern>,
         major_subdivision: Option<MajorSubdivision>,
     },
-    DeleteRequested {
+    ConfirmDelete {
         name: PartName,
     },
     Combine {
@@ -46,7 +48,7 @@ pub enum Msg {
         sources: Vec<PartName>,
         suffix: String,
     },
-    SequenceChange {
+    ChangeSequence {
         sequence: Vec<PartName>,
         selected_range: Option<SelectedRange>,
     },
@@ -236,7 +238,7 @@ pub struct PartsWorkspace {
     view: View,
 }
 
-impl EventEmitter<Msg> for PartsWorkspace {}
+impl EventEmitter<Request> for PartsWorkspace {}
 
 impl PartsWorkspace {
     pub fn new(parts: Vec<Part>, sequence: Vec<PartName>, cx: &mut Context<Self>) -> Self {
@@ -596,7 +598,7 @@ impl PartsWorkspace {
             parse_subdivision_pattern(&subdivision_pattern),
             parse_major_subdivision(&major_subdivision),
         ) {
-            (Ok(length), Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Msg::Add {
+            (Ok(length), Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Request::Add {
                 name,
                 length,
                 subdivision_pattern,
@@ -633,7 +635,7 @@ impl PartsWorkspace {
             parse_subdivision_pattern(&subdivision_pattern),
             parse_major_subdivision(&major_subdivision),
         ) {
-            (Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Msg::Update {
+            (Ok(subdivision_pattern), Ok(major_subdivision)) => cx.emit(Request::Update {
                 source: source.clone(),
                 name: name.read(cx).value(),
                 subdivision_pattern,
@@ -657,7 +659,7 @@ impl PartsWorkspace {
         let View::Duplicate { source, name, .. } = &self.view else {
             return;
         };
-        cx.emit(Msg::Duplicate {
+        cx.emit(Request::Duplicate {
             source: source.clone(),
             name: name.read(cx).value(),
         });
@@ -675,7 +677,7 @@ impl PartsWorkspace {
         if sources.len() < 2 {
             return;
         }
-        cx.emit(Msg::Combine {
+        cx.emit(Request::Combine {
             sources: sources.clone(),
             name: name.read(cx).value(),
         });
@@ -701,7 +703,7 @@ impl PartsWorkspace {
             }
             return;
         }
-        cx.emit(Msg::AppendVariants {
+        cx.emit(Request::AppendVariants {
             sources: sources.clone(),
             suffix,
         });
@@ -820,7 +822,7 @@ impl PartsWorkspace {
             return;
         };
 
-        cx.emit(Msg::DeleteRequested { name });
+        cx.emit(Request::ConfirmDelete { name });
     }
 
     fn on_add_to_arrangement_clicked(
@@ -837,7 +839,7 @@ impl PartsWorkspace {
             part_name,
             self.selected_arrangement_range(cx),
         );
-        cx.emit(Msg::SequenceChange {
+        cx.emit(Request::ChangeSequence {
             sequence,
             selected_range: Some(selected_range),
         });
@@ -857,7 +859,7 @@ impl PartsWorkspace {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChange {
+        cx.emit(Request::ChangeSequence {
             sequence,
             selected_range: Some(selected_range),
         });
@@ -877,7 +879,7 @@ impl PartsWorkspace {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChange {
+        cx.emit(Request::ChangeSequence {
             sequence,
             selected_range: Some(selected_range),
         });
@@ -906,7 +908,7 @@ impl PartsWorkspace {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChange {
+        cx.emit(Request::ChangeSequence {
             sequence,
             selected_range: Some(selected_range),
         });
@@ -932,7 +934,7 @@ impl PartsWorkspace {
         else {
             return;
         };
-        cx.emit(Msg::SequenceChange {
+        cx.emit(Request::ChangeSequence {
             sequence,
             selected_range,
         });
@@ -2042,19 +2044,106 @@ fn parse_major_subdivision(value: &str) -> Result<Option<MajorSubdivision>, Stri
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use gpui::{point, px, size, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
 
     use super::{
         combined_subdivision_pattern, next_variant_suffix, parse_part_length,
         parse_subdivision_pattern, sequence_with_inserted_part, sequence_with_moved_range,
         sequence_with_removed_range, sequence_with_repeated_range, ArrangementAction, DeleteDialog,
-        PartsWorkspace, View,
+        PartsWorkspace, Request, View,
     };
     use crate::{
         part::{Part, PartName, SubdivisionPattern},
         style as s,
         view::{button, range_selection_list::SelectedRange},
     };
+
+    #[gpui::test]
+    fn add_click_validates_current_inputs_before_requesting_a_project_change(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, cx) =
+            cx.add_window_view(|_, cx| PartsWorkspace::new(Vec::new(), Vec::new(), cx));
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let received = requests.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&workspace, move |_, request: &Request, _| {
+                let Request::Add {
+                    name,
+                    length,
+                    subdivision_pattern,
+                    major_subdivision,
+                } = request
+                else {
+                    panic!("add should only request an addition");
+                };
+                received.borrow_mut().push((
+                    name.clone(),
+                    *length,
+                    subdivision_pattern.clone(),
+                    *major_subdivision,
+                ));
+            })
+        });
+        let open_add = cx.update(|_, cx| {
+            let View::List(view) = &workspace.read(cx).view else {
+                panic!("expected list");
+            };
+            view.add_new_button.clone()
+        });
+        open_add.update(cx, |_, cx| cx.emit(button::Clicked));
+        let (name, length, pattern, major, add, cancel) = cx.update(|_, cx| {
+            let View::Add {
+                name,
+                length,
+                subdivision_pattern,
+                major_subdivision,
+                add_button,
+                cancel_button,
+                ..
+            } = &workspace.read(cx).view
+            else {
+                panic!("click should open add form");
+            };
+            (
+                name.clone(),
+                length.clone(),
+                subdivision_pattern.clone(),
+                major_subdivision.clone(),
+                add_button.clone(),
+                cancel_button.clone(),
+            )
+        });
+        name.update(cx, |input, cx| input.sync_value("bridge", cx));
+        for (length_value, pattern_value, major_value) in
+            [("0", "", ""), ("8", "4,0", ""), ("8", "4", "0")]
+        {
+            length.update(cx, |input, cx| input.sync_value(length_value, cx));
+            pattern.update(cx, |input, cx| input.sync_value(pattern_value, cx));
+            major.update(cx, |input, cx| input.sync_value(major_value, cx));
+            add.update(cx, |_, cx| cx.emit(button::Clicked));
+            cx.update(|_, cx| {
+                let View::Add { form_error, .. } = &workspace.read(cx).view else {
+                    panic!("invalid input should keep the form open");
+                };
+                assert!(form_error.is_some());
+            });
+            assert!(requests.borrow().is_empty());
+        }
+        major.update(cx, |input, cx| input.sync_value("", cx));
+        add.update(cx, |_, cx| cx.emit(button::Clicked));
+        let requests = requests.borrow();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "bridge");
+        assert_eq!(requests[0].1, 8);
+        assert_eq!(requests[0].2, Some(SubdivisionPattern::new([4]).unwrap()));
+        assert_eq!(requests[0].3, None);
+        drop(requests);
+        cancel.update(cx, |_, cx| cx.emit(button::Clicked));
+        cx.update(|_, cx| assert!(matches!(workspace.read(cx).view, View::List(_))));
+    }
 
     #[test]
     fn part_length_is_a_positive_whole_number() {

@@ -414,7 +414,8 @@ impl Model {
         let parts = project.parts.clone();
         let sequence = project.sequence().to_vec();
         let parts_workspace = cx.new(move |cx| PartsWorkspace::new(parts, sequence, cx));
-        cx.subscribe(&parts_workspace, Self::on_parts_msg).detach();
+        cx.subscribe(&parts_workspace, Self::on_parts_request)
+            .detach();
 
         let voices = project.voices().to_vec();
         let acoustic_scene = project.acoustic_scene().clone();
@@ -2694,14 +2695,14 @@ impl Model {
         cx.notify();
     }
 
-    fn on_parts_msg(
+    fn on_parts_request(
         &mut self,
         dialog: Entity<PartsWorkspace>,
-        msg: &parts::Msg,
+        request: &parts::Request,
         cx: &mut Context<Self>,
     ) {
-        match msg {
-            parts::Msg::Add {
+        match request {
+            parts::Request::Add {
                 name,
                 length,
                 subdivision_pattern,
@@ -2733,7 +2734,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::Duplicate { source, name } => {
+            parts::Request::Duplicate { source, name } => {
                 if let Err(error) = self.flush_part_score_changes(source, cx) {
                     dialog.update(cx, |dialog, cx| {
                         dialog
@@ -2765,7 +2766,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::Update {
+            parts::Request::Update {
                 source,
                 name,
                 subdivision_pattern,
@@ -2834,10 +2835,10 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::DeleteRequested { name } => {
+            parts::Request::ConfirmDelete { name } => {
                 self.open_part_delete_dialog(name.clone(), cx);
             }
-            parts::Msg::Combine { sources, name } => {
+            parts::Request::Combine { sources, name } => {
                 if let Err(error) = self.flush_part_score_changes_for(sources, cx) {
                     dialog.update(cx, |dialog, cx| {
                         dialog.combine_failed(
@@ -2873,7 +2874,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::AppendVariants { sources, suffix } => {
+            parts::Request::AppendVariants { sources, suffix } => {
                 if let Err(error) = self.flush_part_score_changes_for(sources, cx) {
                     dialog.update(cx, |dialog, cx| {
                         dialog.append_variants_failed(
@@ -2922,7 +2923,7 @@ impl Model {
                     }
                 }
             }
-            parts::Msg::SequenceChange {
+            parts::Request::ChangeSequence {
                 sequence,
                 selected_range,
             } => {
@@ -4779,9 +4780,9 @@ mod tests {
         let dialog = cx.new(|cx| PartsWorkspace::new(dialog_parts, dialog_sequence, cx));
 
         model.update(cx, |model, cx| {
-            model.on_parts_msg(
+            model.on_parts_request(
                 dialog,
-                &parts::Msg::Update {
+                &parts::Request::Update {
                     source: intro.name,
                     name: "opening theme".to_string(),
                     subdivision_pattern: Some(SubdivisionPattern::new([4, 3, 3]).unwrap()),
@@ -6044,9 +6045,9 @@ mod tests {
 
         model.update(cx, |model, cx| {
             model.on_parts_clicked(parts_button, &button::Clicked, cx);
-            model.on_parts_msg(
+            model.on_parts_request(
                 parts_workspace,
-                &parts::Msg::DeleteRequested {
+                &parts::Request::ConfirmDelete {
                     name: part_name.clone(),
                 },
                 cx,
@@ -6396,9 +6397,9 @@ mod tests {
         let parts_workspace = cx.update(|_, cx| model.read(cx).workspace.parts.clone());
 
         model.update(cx, |model, cx| {
-            model.on_parts_msg(
+            model.on_parts_request(
                 parts_workspace,
-                &parts::Msg::Add {
+                &parts::Request::Add {
                     name: "verse".to_string(),
                     length: 2,
                     subdivision_pattern: None,
