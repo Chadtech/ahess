@@ -482,8 +482,9 @@ pub struct ProjectEntry {
     pub project_directory: PathBuf,
 }
 
+/// Identifies a project to open; the receiving app still needs to load it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProjectOpened {
+pub struct OpenProjectRequest {
     pub project_name: String,
     pub project_directory: PathBuf,
 }

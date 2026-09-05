@@ -583,7 +583,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::{HistoryChange, ProjectHistory, ProjectState, MAX_CHANGES};
-    use crate::app::project_open::score::ScoreCellEdit;
+    use crate::app::project_session::score::ScoreCellEdit;
     use crate::{
         part::{Part, PartScore},
         project::{Project, Voice, VoiceType},

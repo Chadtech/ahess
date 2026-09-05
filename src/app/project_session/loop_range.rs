@@ -16,8 +16,9 @@ use crate::{
     },
 };
 
-pub enum Msg {
-    Applied(BeatRange),
+/// A validated range for the project owner to apply to playback.
+pub enum Request {
+    SetRange(BeatRange),
 }
 
 // Remember to add any new modes to ALL_SELECTION_MODES below
@@ -59,7 +60,7 @@ pub struct LoopWorkspace {
     error: Option<String>,
 }
 
-impl EventEmitter<Msg> for LoopWorkspace {}
+impl EventEmitter<Request> for LoopWorkspace {}
 
 impl LoopWorkspace {
     pub fn new(
@@ -260,7 +261,7 @@ impl LoopWorkspace {
                     });
                 }
                 self.error = None;
-                cx.emit(Msg::Applied(range));
+                cx.emit(Request::SetRange(range));
                 cx.notify();
             }
             Err(error) => {
@@ -538,7 +539,7 @@ mod tests {
         prelude::*, px, size, Context, Entity, Modifiers, MouseButton, TestAppContext, Window,
     };
 
-    use super::{LoopWorkspace, Msg, SelectionMode};
+    use super::{LoopWorkspace, Request, SelectionMode};
     use crate::{
         part::Part, playback::BeatRange, project, project::Project, seed::Seed, style,
         view::range_selection_list::SelectedRange,
@@ -553,8 +554,8 @@ mod tests {
         fn new(cx: &mut Context<Self>) -> Self {
             let range = BeatRange::new(1, 32, 32).unwrap();
             let workspace = cx.new(|cx| LoopWorkspace::new(occurrences(), Some(range), cx));
-            cx.subscribe(&workspace, |host, _, msg, _| {
-                let Msg::Applied(range) = msg;
+            cx.subscribe(&workspace, |host, _, request, _| {
+                let Request::SetRange(range) = request;
                 host.applied_ranges.push(*range);
             })
             .detach();

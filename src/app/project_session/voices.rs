@@ -19,9 +19,10 @@ use crate::{
     voice_name::VoiceName,
 };
 
-pub enum Msg {
+/// Project changes requested after local form validation, not completed changes.
+pub enum Request {
     Change(Change),
-    DeleteRequested { name: VoiceName },
+    ConfirmDelete { name: VoiceName },
 }
 
 pub enum Change {
@@ -161,7 +162,7 @@ pub struct VoicesWorkspace {
     view: View,
 }
 
-impl EventEmitter<Msg> for VoicesWorkspace {}
+impl EventEmitter<Request> for VoicesWorkspace {}
 
 impl VoicesWorkspace {
     pub fn new(voices: Vec<Voice>, acoustic_scene: AcousticScene, cx: &mut Context<Self>) -> Self {
@@ -296,7 +297,7 @@ impl VoicesWorkspace {
             return;
         };
 
-        cx.emit(Msg::DeleteRequested { name });
+        cx.emit(Request::ConfirmDelete { name });
     }
 
     fn on_add_clicked(&mut self, _: Entity<Button>, _: &button::Clicked, cx: &mut Context<Self>) {
@@ -331,7 +332,7 @@ impl VoicesWorkspace {
                 return;
             }
         };
-        cx.emit(Msg::Change(Change::Add {
+        cx.emit(Request::Change(Change::Add {
             name,
             voice_type,
             position,
@@ -374,7 +375,7 @@ impl VoicesWorkspace {
                 return;
             }
         };
-        cx.emit(Msg::Change(Change::Edit {
+        cx.emit(Request::Change(Change::Edit {
             original_name,
             name,
             voice_type,

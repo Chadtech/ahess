@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::{
-    project::{self, ProjectEntry, ProjectOpened},
+    project::{self, OpenProjectRequest, ProjectEntry},
     style as s,
     view::{
         button::{self, Button},
@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-pub struct OpenProjectDialog {
+pub struct ProjectPickerDialog {
     workspace_root: PathBuf,
     view: DialogView,
 }
@@ -47,9 +47,9 @@ impl BrowseView {
     }
 }
 
-impl EventEmitter<ProjectOpened> for OpenProjectDialog {}
+impl EventEmitter<OpenProjectRequest> for ProjectPickerDialog {}
 
-impl OpenProjectDialog {
+impl ProjectPickerDialog {
     pub fn new(workspace_root: impl Into<PathBuf>, cx: &mut Context<Self>) -> Self {
         let workspace_root = workspace_root.into();
         let view = DialogView::Browse(Self::browse_view(&workspace_root, None, cx));
@@ -124,7 +124,7 @@ impl OpenProjectDialog {
             return;
         };
 
-        cx.emit(ProjectOpened {
+        cx.emit(OpenProjectRequest {
             project_name: project.project.name.clone(),
             project_directory: project.project_directory.clone(),
         });
@@ -195,7 +195,7 @@ impl OpenProjectDialog {
         let name = name.read(cx).value();
 
         match project::duplicate_project(&self.workspace_root, &source, &name) {
-            Ok(duplicated) => cx.emit(ProjectOpened {
+            Ok(duplicated) => cx.emit(OpenProjectRequest {
                 project_name: duplicated.project.name,
                 project_directory: duplicated.project_directory,
             }),
@@ -223,10 +223,10 @@ impl OpenProjectDialog {
     }
 }
 
-impl Render for OpenProjectDialog {
+impl Render for ProjectPickerDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.view {
-            DialogView::Browse(view) => open_project_dialog(
+            DialogView::Browse(view) => project_picker_dialog(
                 &view.projects,
                 view.selected_project,
                 view.selected_project(),
@@ -262,14 +262,14 @@ fn load_projects(workspace_root: &Path) -> (Vec<ProjectEntry>, Option<usize>, Op
     }
 }
 
-fn open_project_dialog(
+fn project_picker_dialog(
     projects: &[ProjectEntry],
     selected_project: Option<usize>,
     selected_project_entry: Option<&ProjectEntry>,
     duplicate_button: Entity<Button>,
     open_button: Entity<Button>,
     open_project_error: Option<String>,
-    cx: &mut Context<OpenProjectDialog>,
+    cx: &mut Context<ProjectPickerDialog>,
 ) -> gpui::Div {
     let body = div()
         .flex()
@@ -346,7 +346,7 @@ fn duplicate_project_dialog(
 fn project_list(
     projects: &[ProjectEntry],
     selected_project: Option<usize>,
-    cx: &mut Context<OpenProjectDialog>,
+    cx: &mut Context<ProjectPickerDialog>,
 ) -> gpui::Div {
     let rows = projects
         .iter()
@@ -385,7 +385,7 @@ fn project_list_row(
     index: usize,
     project: &ProjectEntry,
     selected: bool,
-    cx: &mut Context<OpenProjectDialog>,
+    cx: &mut Context<ProjectPickerDialog>,
 ) -> gpui::Div {
     let background = if selected {
         s::GREEN4
@@ -506,7 +506,7 @@ mod tests {
 
     use gpui::{px, size, TestAppContext};
 
-    use super::{button, DialogView, OpenProjectDialog};
+    use super::{button, DialogView, ProjectPickerDialog};
     use crate::{project, seed::Seed, style as s};
 
     #[gpui::test]
@@ -518,7 +518,7 @@ mod tests {
         )
         .unwrap();
         let dialog_root = root.clone();
-        let (_, cx) = cx.add_window_view(|_, cx| OpenProjectDialog::new(dialog_root, cx));
+        let (_, cx) = cx.add_window_view(|_, cx| ProjectPickerDialog::new(dialog_root, cx));
         cx.simulate_resize(size(px(800.0), px(800.0)));
         cx.run_until_parked();
 
@@ -553,7 +553,7 @@ mod tests {
         )
         .unwrap();
         let dialog_root = root.clone();
-        let (dialog, cx) = cx.add_window_view(|_, cx| OpenProjectDialog::new(dialog_root, cx));
+        let (dialog, cx) = cx.add_window_view(|_, cx| ProjectPickerDialog::new(dialog_root, cx));
 
         let browse_duplicate_button = dialog.read_with(cx, |dialog, _| {
             let DialogView::Browse(view) = &dialog.view else {

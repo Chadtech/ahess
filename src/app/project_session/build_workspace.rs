@@ -14,11 +14,9 @@ use crate::{
     },
 };
 
-pub(crate) enum Msg {
-    Requested {
-        request_id: u64,
-        sample_rate: BuildSampleRate,
-    },
+pub(crate) struct BuildRequest {
+    pub request_id: u64,
+    pub sample_rate: BuildSampleRate,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,7 +40,7 @@ pub(crate) struct BuildWorkspace {
     next_request_id: u64,
 }
 
-impl EventEmitter<Msg> for BuildWorkspace {}
+impl EventEmitter<BuildRequest> for BuildWorkspace {}
 
 impl BuildWorkspace {
     pub(crate) fn new(project: Project, cx: &mut Context<Self>) -> Self {
@@ -161,7 +159,7 @@ impl BuildWorkspace {
         self.build_button.update(cx, |button, cx| {
             button.set_disabled(true, cx);
         });
-        cx.emit(Msg::Requested {
+        cx.emit(BuildRequest {
             request_id,
             sample_rate: self.sample_rate,
         });

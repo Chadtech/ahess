@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, Context, Entity, EventEmitter, Window};
 
 use crate::{
     app::room_form::RoomFields,
-    project::{self, BeatDurationMillis, FrequencyVariance, ProjectOpened},
+    project::{self, BeatDurationMillis, FrequencyVariance, OpenProjectRequest},
     seed::Seed,
     style as s,
     tuning_system::{self, TuningSystem},
@@ -26,7 +26,7 @@ pub struct NewProjectDialog {
     workspace_root: PathBuf,
 }
 
-impl EventEmitter<ProjectOpened> for NewProjectDialog {}
+impl EventEmitter<OpenProjectRequest> for NewProjectDialog {}
 
 impl NewProjectDialog {
     pub fn new(workspace_root: impl Into<PathBuf>, cx: &mut Context<Self>) -> Self {
@@ -88,7 +88,7 @@ impl NewProjectDialog {
     fn create_project_from_fields(
         &self,
         cx: &mut Context<Self>,
-    ) -> Result<ProjectOpened, CreateProjectFormError> {
+    ) -> Result<OpenProjectRequest, CreateProjectFormError> {
         let project_name = self.fields.project_name.read(cx).value().trim().to_string();
         let beat_duration = parse_beat_duration_field(&self.fields.beat_duration.read(cx).value())?;
         let timing_variance =
@@ -115,7 +115,7 @@ impl NewProjectDialog {
             .map_err(|error| CreateProjectFormError::InvalidField(error.to_string()))?;
         let project_directory = project::create_project(&self.workspace_root, &project)?;
 
-        Ok(ProjectOpened {
+        Ok(OpenProjectRequest {
             project_name: project.name,
             project_directory,
         })

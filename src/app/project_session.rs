@@ -36,9 +36,9 @@ use crate::{
 };
 
 use self::{
-    build_workspace::{BuildWorkspace, Msg as BuildWorkspaceMsg},
+    build_workspace::{BuildRequest, BuildWorkspace},
     history::{ProjectHistory, ProjectState as HistoryState},
-    loop_range::{LoopWorkspace, Msg as LoopWorkspaceMsg},
+    loop_range::{LoopWorkspace, Request as LoopRangeRequest},
     parts::PartsWorkspace,
     project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
     score::{
@@ -420,12 +420,12 @@ impl Model {
         let voices = project.voices().to_vec();
         let acoustic_scene = project.acoustic_scene().clone();
         let voices_workspace = cx.new(move |cx| VoicesWorkspace::new(voices, acoustic_scene, cx));
-        cx.subscribe(&voices_workspace, Self::on_voices_msg)
+        cx.subscribe(&voices_workspace, Self::on_voices_request)
             .detach();
 
         let occurrences = project.arrangement_occurrences();
         let loop_workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, loop_range, cx));
-        cx.subscribe(&loop_workspace, Self::on_loop_range_msg)
+        cx.subscribe(&loop_workspace, Self::on_loop_range_request)
             .detach();
         let loop_arrangement_range = loop_workspace.read(cx).arrangement_range();
         cx.subscribe(
@@ -450,8 +450,7 @@ impl Model {
 
         let build_project = project.clone();
         let audio_build = cx.new(move |cx| BuildWorkspace::new(build_project, cx));
-        cx.subscribe(&audio_build, Self::on_build_workspace_msg)
-            .detach();
+        cx.subscribe(&audio_build, Self::on_build_request).detach();
 
         let initial_history = ProjectHistory::new(HistoryState::new(Arc::new(project.clone()), []));
         let mut model = Self {
@@ -2361,16 +2360,16 @@ impl Model {
         self.set_workspace_section(WorkspaceSection::Build, cx);
     }
 
-    fn on_build_workspace_msg(
+    fn on_build_request(
         &mut self,
         workspace: Entity<BuildWorkspace>,
-        msg: &BuildWorkspaceMsg,
+        request: &BuildRequest,
         cx: &mut Context<Self>,
     ) {
-        let BuildWorkspaceMsg::Requested {
+        let BuildRequest {
             request_id,
             sample_rate,
-        } = *msg;
+        } = *request;
         let (playback_loop, arrangement_scores) = match self.full_arrangement_build_data(cx) {
             Ok(build_data) => build_data,
             Err(error) => {
@@ -2409,14 +2408,14 @@ impl Model {
         ));
     }
 
-    fn on_loop_range_msg(
+    fn on_loop_range_request(
         &mut self,
         _: Entity<LoopWorkspace>,
-        msg: &LoopWorkspaceMsg,
+        request: &LoopRangeRequest,
         cx: &mut Context<Self>,
     ) {
-        match msg {
-            LoopWorkspaceMsg::Applied(range) => {
+        match request {
+            LoopRangeRequest::SetRange(range) => {
                 if self.loop_range == Some(*range) {
                     return;
                 }
@@ -2435,7 +2434,8 @@ impl Model {
         let occurrences = self.project.arrangement_occurrences();
         let range = self.loop_range;
         let workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, range, cx));
-        cx.subscribe(&workspace, Self::on_loop_range_msg).detach();
+        cx.subscribe(&workspace, Self::on_loop_range_request)
+            .detach();
         let arrangement_range = workspace.read(cx).arrangement_range();
         cx.subscribe(
             &arrangement_range,
@@ -2520,15 +2520,15 @@ impl Model {
         cx.notify();
     }
 
-    fn on_voices_msg(
+    fn on_voices_request(
         &mut self,
         workspace: Entity<VoicesWorkspace>,
-        msg: &voices::Msg,
+        request: &voices::Request,
         cx: &mut Context<Self>,
     ) {
-        match msg {
-            voices::Msg::Change(change) => self.apply_voice_change(workspace, change, cx),
-            voices::Msg::DeleteRequested { name } => {
+        match request {
+            voices::Request::Change(change) => self.apply_voice_change(workspace, change, cx),
+            voices::Request::ConfirmDelete { name } => {
                 self.open_voice_delete_dialog(name.clone(), cx);
             }
         }
@@ -4187,7 +4187,7 @@ mod tests {
         create_configured_project_part, create_project_part, delete_project_part,
         duplicate_project_part, export_project_part_rows, loop_range_summary, parts,
         playing_arrangement_position, rename_project_part, update_project_sequence, voices,
-        BuildWorkspaceMsg, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
+        BuildRequest, ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartChangeError,
         PartsWorkspace, PlaybackTarget, ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg,
         RowEditRequested, StatusAction, TransportError, UiState, WorkspaceSection,
         WorkspaceSectionKind,
@@ -4309,9 +4309,9 @@ mod tests {
         model.update(cx, |model, cx| {
             model.loop_range = BeatRange::new(1, 1, 2).ok();
             let workspace = model.workspace.audio_build.clone();
-            model.on_build_workspace_msg(
+            model.on_build_request(
                 workspace,
-                &BuildWorkspaceMsg::Requested {
+                &BuildRequest {
                     request_id: 1,
                     sample_rate: BuildSampleRate::Hz48000,
                 },
@@ -6078,9 +6078,9 @@ mod tests {
         model.update(cx, |model, cx| {
             model.on_part_delete_dialog_msg(part_dialog, &parts::DeleteDialogMsg::Cancelled, cx);
             model.on_voices_clicked(voices_button, &button::Clicked, cx);
-            model.on_voices_msg(
+            model.on_voices_request(
                 voices_workspace,
-                &voices::Msg::DeleteRequested {
+                &voices::Request::ConfirmDelete {
                     name: voice_name.clone(),
                 },
                 cx,
@@ -6632,9 +6632,9 @@ mod tests {
         let voices_workspace = cx.update(|_, cx| model.read(cx).workspace.voices.clone());
 
         model.update(cx, |model, cx| {
-            model.on_voices_msg(
+            model.on_voices_request(
                 voices_workspace,
-                &voices::Msg::Change(voices::Change::Add {
+                &voices::Request::Change(voices::Change::Add {
                     name: "harmony".to_string(),
                     voice_type: VoiceType::Sin,
                     position: Point3Meters::default(),

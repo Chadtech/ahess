@@ -1,7 +1,7 @@
 mod new_project;
-mod open_project;
 mod position_form;
-mod project_open;
+mod project_picker;
+mod project_session;
 mod room_form;
 mod tuning_system_editor;
 
@@ -20,7 +20,7 @@ use gpui::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    project::{self, Project, ProjectOpened},
+    project::{self, OpenProjectRequest, Project},
     style as s,
     view::{
         self,
@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-use self::{new_project::NewProjectDialog, open_project::OpenProjectDialog};
+use self::{new_project::NewProjectDialog, project_picker::ProjectPickerDialog};
 
 actions!(ahess, [TogglePlayback, Undo, Redo]);
 
@@ -46,7 +46,7 @@ struct AhessApp {
 
 enum AppMode {
     ProjectStart(ProjectStart),
-    ProjectOpen(Entity<project_open::Model>),
+    ProjectOpen(Entity<project_session::Model>),
     TuningSystems(Entity<tuning_system_editor::Model>),
     Error { message: String },
 }
@@ -54,7 +54,7 @@ enum AppMode {
 struct ProjectStart {
     project_start_mode: ProjectStartMode,
     new_project_dialog: Entity<NewProjectDialog>,
-    open_project_dialog: Entity<OpenProjectDialog>,
+    project_picker_dialog: Entity<ProjectPickerDialog>,
     buttons: ProjectStartButtons,
 }
 
@@ -73,7 +73,7 @@ enum StoredAppMode {
     ProjectOpen {
         project: Box<Project>,
         project_directory: PathBuf,
-        ui_state: project_open::UiState,
+        ui_state: project_session::UiState,
     },
     Error {
         message: String,
@@ -98,17 +98,17 @@ impl AhessApp {
         }
     }
 
-    fn on_project_open_msg(
+    fn on_project_session_msg(
         &mut self,
-        _: Entity<project_open::Model>,
-        msg: &project_open::Msg,
+        _: Entity<project_session::Model>,
+        msg: &project_session::Msg,
         cx: &mut Context<Self>,
     ) {
         match msg {
-            project_open::Msg::CloseRequested => {
+            project_session::Msg::CloseRequested => {
                 self.set_project_start_mode(ProjectStartMode::Existing, cx);
             }
-            project_open::Msg::UiStateChanged => self.persist_storage(cx),
+            project_session::Msg::UiStateChanged => self.persist_storage(cx),
         }
     }
 
@@ -178,36 +178,36 @@ impl AhessApp {
         model.update(cx, |model, cx| model.redo(cx));
     }
 
-    fn on_new_project_opened(
+    fn on_new_project_open_requested(
         &mut self,
         _: Entity<NewProjectDialog>,
-        project: &ProjectOpened,
+        project: &OpenProjectRequest,
         cx: &mut Context<Self>,
     ) {
         self.open_project(project, cx);
     }
 
-    fn on_existing_project_opened(
+    fn on_existing_project_open_requested(
         &mut self,
-        _: Entity<OpenProjectDialog>,
-        project: &ProjectOpened,
+        _: Entity<ProjectPickerDialog>,
+        project: &OpenProjectRequest,
         cx: &mut Context<Self>,
     ) {
         self.open_project(project, cx);
     }
 
-    fn open_project(&mut self, project: &ProjectOpened, cx: &mut Context<Self>) {
+    fn open_project(&mut self, project: &OpenProjectRequest, cx: &mut Context<Self>) {
         self.app_mode = match project::load_project(&project.project_directory) {
             Ok(project) => {
                 let model = cx.new(|cx| {
-                    project_open::Model::new(
+                    project_session::Model::new(
                         project.project,
                         project.project_directory,
                         self.workspace_root.clone(),
                         cx,
                     )
                 });
-                cx.subscribe(&model, Self::on_project_open_msg).detach();
+                cx.subscribe(&model, Self::on_project_session_msg).detach();
                 AppMode::ProjectOpen(model)
             }
             Err(error) => AppMode::Error {
@@ -270,7 +270,7 @@ impl AppMode {
                 ui_state,
             } => {
                 let model = cx.new(|cx| {
-                    project_open::Model::new_with_ui_state(
+                    project_session::Model::new_with_ui_state(
                         *project,
                         project_directory,
                         workspace_root.to_path_buf(),
@@ -278,7 +278,8 @@ impl AppMode {
                         cx,
                     )
                 });
-                cx.subscribe(&model, AhessApp::on_project_open_msg).detach();
+                cx.subscribe(&model, AhessApp::on_project_session_msg)
+                    .detach();
                 Self::ProjectOpen(model)
             }
             StoredAppMode::Error { message } => Self::Error { message },
@@ -293,17 +294,20 @@ impl ProjectStart {
         cx: &mut Context<AhessApp>,
     ) -> Self {
         let new_project_workspace_root = workspace_root.to_path_buf();
-        let open_project_workspace_root = workspace_root.to_path_buf();
+        let project_picker_workspace_root = workspace_root.to_path_buf();
         let new_project_dialog =
             cx.new(move |cx| NewProjectDialog::new(new_project_workspace_root, cx));
-        let open_project_dialog =
-            cx.new(move |cx| OpenProjectDialog::new(open_project_workspace_root, cx));
+        let project_picker_dialog =
+            cx.new(move |cx| ProjectPickerDialog::new(project_picker_workspace_root, cx));
         let buttons = ProjectStartButtons::new(cx, project_start_mode);
 
-        cx.subscribe(&new_project_dialog, AhessApp::on_new_project_opened)
+        cx.subscribe(&new_project_dialog, AhessApp::on_new_project_open_requested)
             .detach();
-        cx.subscribe(&open_project_dialog, AhessApp::on_existing_project_opened)
-            .detach();
+        cx.subscribe(
+            &project_picker_dialog,
+            AhessApp::on_existing_project_open_requested,
+        )
+        .detach();
         cx.subscribe(&buttons.new_project, AhessApp::on_new_project_clicked)
             .detach();
         cx.subscribe(
@@ -317,7 +321,7 @@ impl ProjectStart {
         Self {
             project_start_mode,
             new_project_dialog,
-            open_project_dialog,
+            project_picker_dialog,
             buttons,
         }
     }
@@ -327,7 +331,7 @@ impl ProjectStart {
         self.buttons.set_project_start_mode(mode, cx);
 
         if mode == ProjectStartMode::Existing {
-            self.open_project_dialog.update(cx, |dialog, cx| {
+            self.project_picker_dialog.update(cx, |dialog, cx| {
                 dialog.refresh(cx);
             });
         }
@@ -342,7 +346,7 @@ enum Storage {
     ProjectOpen {
         project_directory: PathBuf,
         #[serde(default)]
-        ui_state: project_open::UiState,
+        ui_state: project_session::UiState,
     },
 }
 
@@ -703,7 +707,10 @@ impl ProjectStartButtons {
 fn project_start_screen(project_start: &ProjectStart) -> gpui::Div {
     let project_dialog = match project_start.project_start_mode {
         ProjectStartMode::New => project_start.new_project_dialog.clone().into_any_element(),
-        ProjectStartMode::Existing => project_start.open_project_dialog.clone().into_any_element(),
+        ProjectStartMode::Existing => project_start
+            .project_picker_dialog
+            .clone()
+            .into_any_element(),
     };
 
     div()
@@ -824,7 +831,7 @@ mod tests {
 
     use gpui::{div, prelude::*, Context, Entity, FocusHandle, TestAppContext, Window};
 
-    use super::project_open::{UiState, WorkspaceSectionKind};
+    use super::project_session::{UiState, WorkspaceSectionKind};
     use super::{
         bind_keys, load_storage, restore_app_mode, save_storage, storage_path, ProjectStartMode,
         Redo, Storage, StoredAppMode, TogglePlayback, Undo,
