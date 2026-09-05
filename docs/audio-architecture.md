@@ -887,7 +887,7 @@ reflections. Surface-dependent damping and the late room response remain.
   for periodic and explicit tuning systems.
 - `src/part.rs`: score preparation must accept project/voice interpretation
   rather than calling a global note parser.
-- `src/app/project_session/score.rs`: parse issues must use the selected voice's
+- `src/app/project_session/score/document.rs`: parse issues must use the selected voice's
   resolver.
 - `src/voice.rs`: voice type becomes the persisted pitched/triggered instrument
   specification.
