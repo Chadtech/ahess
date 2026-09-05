@@ -116,7 +116,7 @@ pub struct Model {
     redo_button: Entity<Button>,
     project_overlay: Option<ProjectOverlay>,
     score_documents: Vec<ScoreDocumentEntry>,
-    score_views: Vec<ScoreViewEntry>,
+    score_views: Vec<ScorePane>,
     active_score_view: usize,
     score_arrangement_visible: bool,
     loop_range: Option<BeatRange>,
@@ -141,9 +141,28 @@ struct ScoreDocumentEntry {
     document: Entity<ScoreDocument>,
 }
 
-struct ScoreViewEntry {
-    part_name: Option<PartName>,
-    editor: Option<Entity<ScoreEditor>>,
+enum ScorePane {
+    Empty,
+    Open {
+        part_name: PartName,
+        editor: Entity<ScoreEditor>,
+    },
+}
+
+impl ScorePane {
+    fn part_name(&self) -> Option<&PartName> {
+        match self {
+            Self::Empty => None,
+            Self::Open { part_name, .. } => Some(part_name),
+        }
+    }
+
+    fn editor(&self) -> Option<&Entity<ScoreEditor>> {
+        match self {
+            Self::Empty => None,
+            Self::Open { editor, .. } => Some(editor),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -485,10 +504,7 @@ impl Model {
             redo_button,
             project_overlay: None,
             score_documents: Vec::new(),
-            score_views: vec![ScoreViewEntry {
-                part_name: None,
-                editor: None,
-            }],
+            score_views: vec![ScorePane::Empty],
             active_score_view: 0,
             score_arrangement_visible: default_score_arrangement_visible(),
             loop_range,
@@ -538,7 +554,7 @@ impl Model {
             open_score_parts: self
                 .score_views
                 .iter()
-                .filter_map(|view| view.part_name.as_ref())
+                .filter_map(|view| view.part_name())
                 .map(|part_name| part_name.as_str().to_string())
                 .collect(),
             active_score_pane: self.active_score_view,
@@ -548,12 +564,7 @@ impl Model {
 
     fn restore_ui_state(&mut self, ui_state: UiState, cx: &mut Context<Self>) {
         let pane_count = ui_state.score_pane_count.clamp(1, 3);
-        self.score_views = (0..pane_count)
-            .map(|_| ScoreViewEntry {
-                part_name: None,
-                editor: None,
-            })
-            .collect();
+        self.score_views = (0..pane_count).map(|_| ScorePane::Empty).collect();
 
         let fallback_part = self.project.parts.first().map(|part| part.name.clone());
         for view_index in 0..pane_count {
@@ -938,7 +949,7 @@ impl Model {
         self.score_documents = restored_documents;
 
         for view_index in 0..self.score_views.len() {
-            let current_name = self.score_views[view_index].part_name.clone();
+            let current_name = self.score_views[view_index].part_name().cloned();
             let desired_name = current_name.as_ref().and_then(|name| {
                 target_project
                     .part(name)
@@ -969,13 +980,15 @@ impl Model {
                 }
                 _ => false,
             };
-            if can_keep_editor {
-                self.score_views[view_index].part_name = desired_name;
-            } else {
-                self.score_views[view_index].part_name = None;
-                self.score_views[view_index].editor = None;
-                if let Some(part_name) = desired_name {
-                    self.assign_part_to_view(view_index, part_name, cx);
+            match (&mut self.score_views[view_index], desired_name) {
+                (ScorePane::Open { part_name, .. }, Some(desired_name)) if can_keep_editor => {
+                    *part_name = desired_name;
+                }
+                (view, desired_name) => {
+                    *view = ScorePane::Empty;
+                    if let Some(part_name) = desired_name {
+                        self.assign_part_to_view(view_index, part_name, cx);
+                    }
                 }
             }
         }
@@ -1295,7 +1308,7 @@ impl Model {
         if self
             .score_views
             .get(self.active_score_view)
-            .is_some_and(|view| view.part_name.as_ref() == Some(&name) && view.editor.is_some())
+            .is_some_and(|view| view.part_name() == Some(&name))
         {
             return;
         }
@@ -1309,7 +1322,7 @@ impl Model {
     fn active_part(&self) -> Option<&PartName> {
         self.score_views
             .get(self.active_score_view)
-            .and_then(|view| view.part_name.as_ref())
+            .and_then(|view| view.part_name())
     }
 
     fn score_document(
@@ -1632,12 +1645,12 @@ impl Model {
                 }
             });
         for view in &self.score_views {
-            let playing_row = view.part_name.as_ref().and_then(|view_part| {
+            let playing_row = view.part_name().and_then(|view_part| {
                 playing_position.as_ref().and_then(|(playing_part, row)| {
                     view_part.eq_ignore_ascii_case(playing_part).then_some(*row)
                 })
             });
-            if let Some(editor) = &view.editor {
+            if let Some(editor) = view.editor() {
                 editor.update(cx, |editor, cx| {
                     editor.set_playing_row(playing_row, cx);
                 });
@@ -1650,11 +1663,7 @@ impl Model {
     }
 
     fn clear_playhead_highlights(&self, cx: &mut Context<Self>) {
-        for editor in self
-            .score_views
-            .iter()
-            .filter_map(|view| view.editor.as_ref())
-        {
+        for editor in self.score_views.iter().filter_map(|view| view.editor()) {
             editor.update(cx, |editor, cx| editor.set_playing_row(None, cx));
         }
         let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
@@ -1700,9 +1709,8 @@ impl Model {
         let Some(view) = self.score_views.get_mut(view_index) else {
             return false;
         };
-        let changed = view.part_name.as_ref() != Some(&part_name) || view.editor.is_none();
-        view.part_name = Some(part_name);
-        view.editor = Some(editor);
+        let changed = view.part_name() != Some(&part_name);
+        *view = ScorePane::Open { part_name, editor };
         if view_index == self.active_score_view {
             self.sync_score_arrangement_active_part(cx);
         }
@@ -1723,7 +1731,7 @@ impl Model {
         let Some(view_index) = self
             .score_views
             .iter()
-            .position(|view| view.editor.as_ref() == Some(&editor))
+            .position(|view| view.editor() == Some(&editor))
         else {
             return;
         };
@@ -1745,7 +1753,7 @@ impl Model {
         if let Some(view_index) = self
             .score_views
             .iter()
-            .position(|view| view.editor.as_ref() == Some(&editor))
+            .position(|view| view.editor() == Some(&editor))
         {
             self.activate_score_view(view_index, cx);
         }
@@ -1778,7 +1786,7 @@ impl Model {
         if let Some(view_index) = self
             .score_views
             .iter()
-            .position(|view| view.editor.as_ref() == Some(&editor))
+            .position(|view| view.editor() == Some(&editor))
         {
             self.activate_score_view(view_index, cx);
         }
@@ -1892,7 +1900,7 @@ impl Model {
         if let Some(view_index) = self
             .score_views
             .iter()
-            .position(|view| view.editor.as_ref() == Some(&editor))
+            .position(|view| view.editor() == Some(&editor))
         {
             self.activate_score_view(view_index, cx);
         }
@@ -1919,7 +1927,7 @@ impl Model {
         if let Some(view_index) = self
             .score_views
             .iter()
-            .position(|view| view.editor.as_ref() == Some(&editor))
+            .position(|view| view.editor() == Some(&editor))
         {
             self.activate_score_view(view_index, cx);
         }
@@ -2112,11 +2120,7 @@ impl Model {
             .iter()
             .map(|part| part.name.clone())
             .collect::<Vec<_>>();
-        for editor in self
-            .score_views
-            .iter()
-            .filter_map(|view| view.editor.as_ref())
-        {
+        for editor in self.score_views.iter().filter_map(|view| view.editor()) {
             let part_names = part_names.clone();
             editor.update(cx, |editor, cx| {
                 editor.set_available_parts(part_names, cx);
@@ -2191,10 +2195,8 @@ impl Model {
             return;
         };
         let already_open = self.score_views.get(panel_index).is_some_and(|view| {
-            view.part_name
-                .as_ref()
+            view.part_name()
                 .is_some_and(|open_part| open_part.eq_ignore_ascii_case(&part_name))
-                && view.editor.is_some()
         });
         if panel_index >= self.score_views.len() {
             return;
@@ -2245,10 +2247,7 @@ impl Model {
 
         while self.score_views.len() < count {
             let view_index = self.score_views.len();
-            self.score_views.push(ScoreViewEntry {
-                part_name: None,
-                editor: None,
-            });
+            self.score_views.push(ScorePane::Empty);
             if let Some(part_name) = template_part.clone() {
                 self.assign_part_to_view(view_index, part_name, cx);
             }
@@ -2813,12 +2812,10 @@ impl Model {
                             }
                         }
                         for view in &mut self.score_views {
-                            if view
-                                .part_name
-                                .as_ref()
-                                .is_some_and(|part_name| part_name.eq_ignore_ascii_case(source))
-                            {
-                                view.part_name = Some(updated_name.clone());
+                            if let ScorePane::Open { part_name, .. } = view {
+                                if part_name.eq_ignore_ascii_case(source) {
+                                    *part_name = updated_name.clone();
+                                }
                             }
                         }
                         cx.emit(Msg::UiStateChanged);
@@ -3009,8 +3006,7 @@ impl Model {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, view)| {
-                        view.part_name
-                            .as_ref()
+                        view.part_name()
                             .is_some_and(|name| name.eq_ignore_ascii_case(&part.name))
                             .then_some(index)
                     })
@@ -3019,8 +3015,7 @@ impl Model {
                 self.remove_score_document(&part.name, cx);
                 for view_index in affected_views {
                     if let Some(view) = self.score_views.get_mut(view_index) {
-                        view.part_name = None;
-                        view.editor = None;
+                        *view = ScorePane::Empty;
                     }
                     if let Some(part_name) = fallback.clone() {
                         self.assign_part_to_view(view_index, part_name, cx);
@@ -3071,7 +3066,7 @@ impl Model {
         let active_view_has_target = self
             .score_views
             .get(self.active_score_view)
-            .and_then(|view| view.part_name.as_ref())
+            .and_then(|view| view.part_name())
             .is_some_and(|name| name.eq_ignore_ascii_case(&part_name));
         let view_index = if active_view_has_target {
             self.active_score_view
@@ -3079,8 +3074,7 @@ impl Model {
             self.score_views
                 .iter()
                 .position(|view| {
-                    view.part_name
-                        .as_ref()
+                    view.part_name()
                         .is_some_and(|name| name.eq_ignore_ascii_case(&part_name))
                 })
                 .unwrap_or(self.active_score_view)
@@ -3088,7 +3082,7 @@ impl Model {
         let target_is_open = self
             .score_views
             .get(view_index)
-            .and_then(|view| view.part_name.as_ref())
+            .and_then(|view| view.part_name())
             .is_some_and(|name| name.eq_ignore_ascii_case(&part_name));
         if target_is_open {
             self.activate_score_view(view_index, cx);
@@ -3099,7 +3093,7 @@ impl Model {
         let Some(editor) = self
             .score_views
             .get(view_index)
-            .and_then(|view| view.editor.clone())
+            .and_then(|view| view.editor().cloned())
         else {
             return;
         };
@@ -3280,7 +3274,7 @@ fn playing_arrangement_position(
 }
 
 fn score_workspace(
-    score_views: &[ScoreViewEntry],
+    score_views: &[ScorePane],
     project: &Project,
     loop_range: Option<BeatRange>,
     arrangement_range: Entity<RangeSelectionList>,
@@ -3292,9 +3286,9 @@ fn score_workspace(
         .iter()
         .enumerate()
         .map(|(index, view)| {
-            let content = match &view.editor {
-                Some(editor) => editor.clone().into_any_element(),
-                None => div()
+            let content = match view {
+                ScorePane::Open { editor, .. } => editor.clone().into_any_element(),
+                ScorePane::Empty => div()
                     .flex()
                     .flex_1()
                     .items_center()
@@ -3672,7 +3666,7 @@ mod tests {
                 "opening theme"
             );
             assert_eq!(
-                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                model.score_views[0].part_name().unwrap().as_str(),
                 "opening theme"
             );
             assert_eq!(
@@ -3710,10 +3704,7 @@ mod tests {
             let model = model.read(cx);
             assert_eq!(model.project.parts()[0].name.as_str(), "intro");
             assert_eq!(model.score_documents[0].document, original_document);
-            assert_eq!(
-                model.score_views[0].part_name.as_ref().unwrap().as_str(),
-                "intro"
-            );
+            assert_eq!(model.score_views[0].part_name().unwrap().as_str(), "intro");
             assert_eq!(
                 model.workspace.loop_editor.read(cx).occurrence_names(),
                 ["intro", "intro"]
@@ -3728,7 +3719,7 @@ mod tests {
             assert_eq!(model.project.parts()[0].name.as_str(), "opening theme");
             assert_eq!(model.score_documents[0].document, original_document);
             assert_eq!(
-                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                model.score_views[0].part_name().unwrap().as_str(),
                 "opening theme"
             );
         });
@@ -3829,8 +3820,7 @@ mod tests {
         cx.simulate_click(first_row.center(), Default::default());
         let actions = cx.update(|_, cx| {
             model.read(cx).score_views[0]
-                .editor
-                .as_ref()
+                .editor()
                 .unwrap()
                 .read(cx)
                 .actions()
@@ -3863,7 +3853,7 @@ mod tests {
             assert!(!model.has_active_overlay());
             assert_eq!(model.project.parts().len(), 2);
             assert_eq!(
-                model.score_views[0].part_name.as_ref().unwrap().as_str(),
+                model.score_views[0].part_name().unwrap().as_str(),
                 "intro excerpt"
             );
         });
@@ -3894,8 +3884,7 @@ mod tests {
         cx.simulate_click(first_row.center(), Default::default());
         let actions = cx.update(|_, cx| {
             model.read(cx).score_views[0]
-                .editor
-                .as_ref()
+                .editor()
                 .unwrap()
                 .read(cx)
                 .actions()
@@ -4302,10 +4291,7 @@ mod tests {
             let model = model.read(cx);
             assert_eq!(model.active_score_view, 1);
             assert_eq!(
-                model.score_views[1]
-                    .part_name
-                    .as_ref()
-                    .map(PartName::as_str),
+                model.score_views[1].part_name().map(PartName::as_str),
                 Some("verse")
             );
             assert_eq!(
@@ -4418,7 +4404,7 @@ mod tests {
 
         let (model, cx) =
             cx.add_window_view(|_, cx| Model::new(project, project_directory, root.clone(), cx));
-        let editor = cx.update(|_, cx| model.read(cx).score_views[0].editor.clone().unwrap());
+        let editor = cx.update(|_, cx| model.read(cx).score_views[0].editor().cloned().unwrap());
         cx.simulate_resize(size(px(1_000.0), px(700.0)));
         cx.run_until_parked();
         assert!(cx.debug_bounds("score-playback-row-0").is_none());
@@ -4473,14 +4459,12 @@ mod tests {
             let model = model.read(cx);
             (
                 model.score_views[0]
-                    .part_name
-                    .as_ref()
+                    .part_name()
                     .unwrap()
                     .as_str()
                     .to_string(),
                 model.score_views[1]
-                    .part_name
-                    .as_ref()
+                    .part_name()
                     .unwrap()
                     .as_str()
                     .to_string(),
@@ -4518,8 +4502,7 @@ mod tests {
         });
         let actions = cx.update(|_, cx| {
             model.read(cx).score_views[0]
-                .editor
-                .as_ref()
+                .editor()
                 .unwrap()
                 .read(cx)
                 .actions()
@@ -4563,7 +4546,7 @@ mod tests {
         });
         let (document, actions) = cx.update(|_, cx| {
             let model = model.read(cx);
-            let editor = model.score_views[0].editor.as_ref().unwrap().read(cx);
+            let editor = model.score_views[0].editor().unwrap().read(cx);
             (model.score_documents[0].document.clone(), editor.actions())
         });
         document.update(cx, |document, cx| {
@@ -5222,6 +5205,93 @@ mod tests {
             fs::read_to_string(project_directory.join("part-a.csv")).unwrap(),
             "lead\nD4\nE4\n"
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn score_panes_transition_together_through_rename_delete_and_history(cx: &mut TestAppContext) {
+        let root = temp_root("score-pane-state");
+        let project = Project::new("test project", 800, 0, Seed::new(12))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)]);
+        let project_directory = project::create_project(&root, &project).unwrap();
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project, project_directory.clone(), root.clone(), cx)
+        });
+
+        model.update(cx, |model, cx| {
+            model.set_view_count(3, cx);
+            assert!(model
+                .score_views
+                .iter()
+                .all(|pane| matches!(pane, super::ScorePane::Empty)));
+            assert!(model.ui_state().open_score_parts.is_empty());
+
+            model.on_parts_request(
+                model.workspace.parts.clone(),
+                &parts::Request::Add {
+                    name: "intro".to_string(),
+                    length: 2,
+                    subdivision_pattern: None,
+                    major_subdivision: None,
+                },
+                cx,
+            );
+            assert!(matches!(
+                model.score_views[0],
+                super::ScorePane::Open { .. }
+            ));
+            // New panes inherit the active part when one is available.
+            model.set_view_count(1, cx);
+            model.set_view_count(3, cx);
+            let editors = model
+                .score_views
+                .iter()
+                .map(|pane| pane.editor().unwrap().clone())
+                .collect::<Vec<_>>();
+
+            model.on_parts_request(
+                model.workspace.parts.clone(),
+                &parts::Request::Update {
+                    source: PartName::new("intro"),
+                    name: "opening".to_string(),
+                    subdivision_pattern: None,
+                    major_subdivision: None,
+                },
+                cx,
+            );
+            for (pane, original_editor) in model.score_views.iter().zip(&editors) {
+                let super::ScorePane::Open { part_name, editor } = pane else {
+                    panic!("renaming must keep every pane open");
+                };
+                assert_eq!(part_name.as_str(), "opening");
+                assert_eq!(editor, original_editor);
+            }
+
+            let name = PartName::new("opening");
+            let confirmation = cx.new(|cx| parts::DeleteDialog::new(name.clone(), cx));
+            model.delete_part_from_dialog(confirmation, &name, cx);
+            assert!(model.project.parts().is_empty());
+            assert!(model
+                .score_views
+                .iter()
+                .all(|pane| matches!(pane, super::ScorePane::Empty)));
+            assert!(model.active_part().is_none());
+            assert!(model.ui_state().open_score_parts.is_empty());
+
+            model.undo(cx);
+            for pane in &model.score_views {
+                let super::ScorePane::Open { part_name, .. } = pane else {
+                    panic!("undoing deletion must reopen the restored part");
+                };
+                assert_eq!(part_name.as_str(), "opening");
+            }
+            model.redo(cx);
+            assert!(model
+                .score_views
+                .iter()
+                .all(|pane| matches!(pane, super::ScorePane::Empty)));
+        });
 
         fs::remove_dir_all(root).unwrap();
     }
