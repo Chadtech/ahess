@@ -1,3 +1,5 @@
+use crate::project::parts::{combined_subdivision_pattern, variant_part_name};
+
 use gpui::{
     div, prelude::*, px, AnyElement, Context, Entity, EventEmitter, MouseButton, MouseDownEvent,
     Window,
@@ -1978,26 +1980,6 @@ fn next_variant_suffix(parts: &[Part], sources: &[PartName]) -> String {
         }
     }
     "variant".to_string()
-}
-
-pub(super) fn variant_part_name(source: &PartName, suffix: &str) -> PartName {
-    PartName::new(format!("{} {}", source.as_str(), suffix.trim()))
-}
-
-pub(super) fn combined_subdivision_pattern(parts: &[Part]) -> Option<SubdivisionPattern> {
-    let first = parts.first()?.subdivision_pattern()?;
-    parts
-        .iter()
-        .all(|part| part.subdivision_pattern() == Some(first))
-        .then(|| first.clone())
-}
-
-pub(super) fn combined_major_subdivision(parts: &[Part]) -> Option<MajorSubdivision> {
-    let first = parts.first()?.major_subdivision()?;
-    parts
-        .iter()
-        .all(|part| part.major_subdivision() == Some(first))
-        .then_some(first)
 }
 
 fn find_part<'a>(parts: &'a [Part], name: &PartName) -> Option<&'a Part> {
