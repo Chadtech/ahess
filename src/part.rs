@@ -825,27 +825,15 @@ impl PartScore {
         part: &Part,
         project: &Project,
     ) -> Result<Vec<Vec<Option<FrequencyHz>>>, ScoreError> {
-        self.validate_shape(part, project.voices())?;
-
-        self.rows
-            .iter()
-            .enumerate()
-            .map(|(beat_index, row)| {
-                row.iter()
-                    .enumerate()
-                    .map(|(voice_index, value)| {
-                        project
-                            .pitch_system()
-                            .resolve_cell(value)
-                            .map_err(|source| ScoreError::InvalidPitch {
-                                beat: beat_index + 1,
-                                voice: project.voices()[voice_index].name.as_str().to_string(),
-                                source,
-                            })
-                    })
-                    .collect()
-            })
-            .collect()
+        self.resolved_strikes(part, project).map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|strike| strike.map(Strike::frequency))
+                        .collect()
+                })
+                .collect()
+        })
     }
 
     pub fn resolved_strikes(
@@ -1907,8 +1895,16 @@ mod tests {
         assert_eq!(
             rows[0],
             vec![
-                project.pitch_system().resolve_cell("C4").unwrap(),
-                project.pitch_system().resolve_cell("36").unwrap(),
+                project
+                    .pitch_system()
+                    .resolve_strike("C4")
+                    .map(|strike| strike.map(|strike| strike.frequency()))
+                    .unwrap(),
+                project
+                    .pitch_system()
+                    .resolve_strike("36")
+                    .map(|strike| strike.map(|strike| strike.frequency()))
+                    .unwrap(),
             ]
         );
         assert_eq!(rows[1], vec![None, None]);
@@ -1955,6 +1951,43 @@ mod tests {
         assert!(!project_directory.join(".intro.csv.recovery").exists());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frequency_rows_use_complete_radler_notes() {
+        use crate::pitch_system::{
+            FrequencyHz, Interval, PeriodicNotation, PeriodicPitchSystem, PitchSystem,
+        };
+        let mut project = Project::new("test", 800, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Saw,
+        )]);
+        project = project.with_pitch_system(PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "test",
+                FrequencyHz::new(25.0).unwrap(),
+                Interval::ratio(2, 1).unwrap(),
+                vec![Interval::ratio(1, 1).unwrap()],
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        ));
+        let part = Part::new("intro", 3);
+        let score = PartScore::from_rows(vec![
+            vec!["40".into()],
+            vec!["4080ff".into()],
+            vec!["".into()],
+        ]);
+        let rows = score.resolved_rows(&part, &project).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                vec![Some(FrequencyHz::new(400.0).unwrap())],
+                vec![Some(FrequencyHz::new(400.0).unwrap())],
+                vec![None]
+            ]
+        );
     }
 
     #[test]

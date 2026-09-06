@@ -1771,12 +1771,20 @@ mod tests {
         assert_eq!(playback_loop.voices.len(), 2);
         assert_eq!(
             playback_loop.voices[0].frequencies[0],
-            project.pitch_system().resolve_cell("C4").unwrap()
+            project
+                .pitch_system()
+                .resolve_strike("C4")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap()
         );
         assert_eq!(playback_loop.voices[0].frequencies[1], None);
         assert_eq!(
             playback_loop.voices[1].frequencies[1],
-            project.pitch_system().resolve_cell("G2").unwrap()
+            project
+                .pitch_system()
+                .resolve_strike("G2")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap()
         );
     }
 
@@ -1905,8 +1913,16 @@ mod tests {
         assert_eq!(
             playback_loop.voices[0].frequencies,
             [
-                project.pitch_system().resolve_cell("C4").unwrap(),
-                project.pitch_system().resolve_cell("D4").unwrap(),
+                project
+                    .pitch_system()
+                    .resolve_strike("C4")
+                    .map(|strike| strike.map(|strike| strike.frequency()))
+                    .unwrap(),
+                project
+                    .pitch_system()
+                    .resolve_strike("D4")
+                    .map(|strike| strike.map(|strike| strike.frequency()))
+                    .unwrap(),
             ]
         );
     }
@@ -1956,7 +1972,12 @@ mod tests {
 
         assert_eq!(first.voices[0].frequencies, second.voices[0].frequencies);
         assert_eq!(first.voices[1].frequencies, second.voices[1].frequencies);
-        let lead_target = project.pitch_system().resolve_cell("A4").unwrap().unwrap();
+        let lead_target = project
+            .pitch_system()
+            .resolve_strike("A4")
+            .map(|strike| strike.map(|strike| strike.frequency()))
+            .unwrap()
+            .unwrap();
         let offsets = first.voices[0]
             .frequencies
             .iter()
@@ -2187,7 +2208,11 @@ mod tests {
         assert_eq!(
             playback_loop.voices[0].frequencies,
             ["D4", "E4", "F4", "G4", "C4"]
-                .map(|pitch| project.pitch_system().resolve_cell(pitch).unwrap())
+                .map(|pitch| project
+                    .pitch_system()
+                    .resolve_strike(pitch)
+                    .map(|strike| strike.map(|strike| strike.frequency()))
+                    .unwrap())
                 .to_vec()
         );
     }

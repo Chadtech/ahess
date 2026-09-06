@@ -648,8 +648,10 @@ impl Element for TextElement {
             cx,
         );
 
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
+        if focus_handle.is_focused(window) {
+            if let Some(selection) = prepaint.selection.take() {
+                window.paint_quad(selection)
+            }
         }
 
         let line = prepaint.line.take().unwrap();

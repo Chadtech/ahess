@@ -32,6 +32,7 @@ or when it defines how a shared component is used.
 
 ## fields
 
+- show text-selection highlights only while the input has keyboard focus.
 - use `view::field_group::field_group` for text fields.
 - use `view::field_group::control_group` for labeled non-text controls such as
   dropdowns.

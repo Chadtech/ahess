@@ -67,6 +67,53 @@ impl StrikeDuration {
     }
 }
 
+/// A parsed pitch, before applying a tuning. Constructed only by the note parser.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pitch(PitchNotation);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PitchNotation {
+    Radler(u64),
+    Western(u8),
+    Named(String),
+}
+
+/// Exact score volume; conversion to amplitude happens during resolution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Volume(u8);
+
+impl Volume {
+    pub const fn from_byte(value: u8) -> Self {
+        Self(value)
+    }
+    pub const fn as_byte(self) -> u8 {
+        self.0
+    }
+    pub fn amplitude(self) -> f32 {
+        f32::from(self.0) / 255.0
+    }
+}
+
+/// Valid notation, independent of its eventual frequency in a tuning.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Note {
+    pitch: Pitch,
+    duration: StrikeDuration,
+    volume: Volume,
+}
+
+impl Note {
+    pub fn pitch(&self) -> &Pitch {
+        &self.pitch
+    }
+    pub const fn duration(&self) -> StrikeDuration {
+        self.duration
+    }
+    pub const fn volume(&self) -> Volume {
+        self.volume
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Strike {
     frequency: FrequencyHz,
@@ -282,48 +329,37 @@ impl PeriodicPitchSystem {
         self.notation
     }
 
-    fn resolve(&self, value: &str) -> Result<Option<FrequencyHz>, ResolvePitchError> {
-        let value = value.trim();
-        if value.is_empty() {
-            return Ok(None);
-        }
-
-        let (period_index, degree_index) = match self.notation {
-            PeriodicNotation::RadlerDigits { place_value } => {
-                let notation = value.parse::<u64>().map_err(|_| {
-                    ResolvePitchError::new(format!(
-                        "expected non-negative place-value-{} pitch notation; got {value:?}",
-                        place_value.get()
-                    ))
-                })?;
+    fn resolve(&self, pitch: &Pitch) -> Result<FrequencyHz, ResolvePitchError> {
+        let (period_index, degree_index) = match (&pitch.0, self.notation) {
+            (PitchNotation::Radler(notation), PeriodicNotation::RadlerDigits { place_value }) => {
                 let degree = notation % place_value.get();
                 if degree >= self.degrees.len() as u64 {
                     return Err(ResolvePitchError::new(format!(
-                        "pitch {value:?} uses degree {degree}, but {:?} has degrees 0 through {}",
+                        "pitch {notation} uses degree {degree}, but {:?} has degrees 0 through {}",
                         self.name,
                         self.degrees.len() - 1
                     )));
                 }
                 (notation / place_value.get(), degree as usize)
             }
-            PeriodicNotation::WesternTwelveTone => {
-                if value == "-" || value.eq_ignore_ascii_case("rest") {
-                    return Ok(None);
-                }
-                let note_number = parse_western_note_number(value)?;
-                (u64::from(note_number / 12), usize::from(note_number % 12))
+            (PitchNotation::Western(note), PeriodicNotation::WesternTwelveTone) => {
+                (u64::from(note / 12), usize::from(note % 12))
+            }
+            _ => {
+                return Err(ResolvePitchError::new(
+                    "pitch notation does not match this tuning",
+                ))
             }
         };
-
         let period_multiplier = self.period.multiplier().powf(period_index as f64);
         let degree_multiplier = self.degrees[degree_index].multiplier();
-        FrequencyHz::new(self.fundamental.as_hz() * period_multiplier * degree_multiplier)
-            .map(Some)
-            .map_err(|err| {
+        FrequencyHz::new(self.fundamental.as_hz() * period_multiplier * degree_multiplier).map_err(
+            |err| {
                 ResolvePitchError::new(format!(
-                    "pitch {value:?} resolves outside the supported frequency range: {err}",
+                    "pitch {pitch:?} resolves outside the supported frequency range: {err}"
                 ))
-            })
+            },
+        )
     }
 }
 
@@ -364,13 +400,14 @@ impl ExplicitPitchSystem {
         &self.pitches
     }
 
-    fn resolve(&self, value: &str) -> Result<Option<FrequencyHz>, ResolvePitchError> {
-        let value = value.trim();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        self.pitches.get(value).copied().map(Some).ok_or_else(|| {
-            ResolvePitchError::new(format!("pitch {value:?} is not defined in {:?}", self.name))
+    fn resolve(&self, pitch: &Pitch) -> Result<FrequencyHz, ResolvePitchError> {
+        let PitchNotation::Named(token) = &pitch.0 else {
+            return Err(ResolvePitchError::new(
+                "pitch notation does not match this tuning",
+            ));
+        };
+        self.pitches.get(token).copied().ok_or_else(|| {
+            ResolvePitchError::new(format!("pitch {token:?} is not defined in {:?}", self.name))
         })
     }
 }
@@ -382,7 +419,24 @@ pub enum PitchSystem {
 }
 
 impl PitchSystem {
+    /// Shared score-text boundary for validation, playback, and export.
     pub fn resolve_strike(&self, value: &str) -> Result<Option<Strike>, ResolvePitchError> {
+        self.parse_note(value)?
+            .as_ref()
+            .map(|note| self.resolve_note(note))
+            .transpose()
+    }
+
+    pub fn resolve_note(&self, note: &Note) -> Result<Strike, ResolvePitchError> {
+        Ok(Strike {
+            frequency: self.resolve_pitch(note.pitch())?,
+            duration: note.duration(),
+            volume: note.volume().amplitude(),
+        })
+    }
+
+    /// Parse notation without calculating frequency. Blank cells are rests.
+    pub fn parse_note(&self, value: &str) -> Result<Option<Note>, ResolvePitchError> {
         let value = value.trim();
         if value.is_empty() {
             return Ok(None);
@@ -392,7 +446,7 @@ impl PitchSystem {
                 if matches!(system.notation(), PeriodicNotation::RadlerDigits { .. }) =>
             {
                 match value.len() {
-                    2 => (value, StrikeDuration::VoiceDefault, 1.0),
+                    2 => (value, StrikeDuration::VoiceDefault, Volume::from_byte(255)),
                     6 if value.is_ascii() => {
                         let duration = u8::from_str_radix(&value[2..4], 16).map_err(|_| {
                             ResolvePitchError::new(format!(
@@ -415,7 +469,7 @@ impl PitchSystem {
                                 NonZeroU8::new(duration)
                                     .expect("zero strike durations were rejected above"),
                             ),
-                            f32::from(volume) / 255.0,
+                            Volume::from_byte(volume),
                         )
                     }
                     _ => {
@@ -425,15 +479,32 @@ impl PitchSystem {
                     }
                 }
             }
-            _ => (value, StrikeDuration::VoiceDefault, 1.0),
+            _ => (value, StrikeDuration::VoiceDefault, Volume::from_byte(255)),
         };
-        self.resolve_cell(pitch).map(|frequency| {
-            frequency.map(|frequency| Strike {
-                frequency,
-                duration,
-                volume,
-            })
-        })
+        let pitch = match self {
+            Self::Periodic(system) => match system.notation() {
+                PeriodicNotation::RadlerDigits { place_value } => {
+                    PitchNotation::Radler(pitch.parse::<u64>().map_err(|_| {
+                        ResolvePitchError::new(format!(
+                            "expected non-negative place-value-{} pitch notation; got {pitch:?}",
+                            place_value.get()
+                        ))
+                    })?)
+                }
+                PeriodicNotation::WesternTwelveTone => {
+                    if pitch == "-" || pitch.eq_ignore_ascii_case("rest") {
+                        return Ok(None);
+                    }
+                    PitchNotation::Western(parse_western_note_number(pitch)?)
+                }
+            },
+            Self::Explicit(_) => PitchNotation::Named(pitch.to_owned()),
+        };
+        Ok(Some(Note {
+            pitch: Pitch(pitch),
+            duration,
+            volume,
+        }))
     }
 
     pub fn periodic(system: PeriodicPitchSystem) -> Self {
@@ -444,10 +515,10 @@ impl PitchSystem {
         Self::Explicit(system)
     }
 
-    pub fn resolve_cell(&self, value: &str) -> Result<Option<FrequencyHz>, ResolvePitchError> {
+    pub fn resolve_pitch(&self, pitch: &Pitch) -> Result<FrequencyHz, ResolvePitchError> {
         match self {
-            Self::Periodic(system) => system.resolve(value),
-            Self::Explicit(system) => system.resolve(value),
+            Self::Periodic(system) => system.resolve(pitch),
+            Self::Explicit(system) => system.resolve(pitch),
         }
     }
 
@@ -736,6 +807,104 @@ mod tests {
         PitchSystem,
     };
 
+    fn radler(fundamental: f64) -> PitchSystem {
+        PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "test",
+                FrequencyHz::new(fundamental).unwrap(),
+                Interval::ratio(2, 1).unwrap(),
+                vec![Interval::ratio(1, 1).unwrap()],
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn parsed_notes_retain_pitch_and_exact_expression_before_tuning() {
+        let system = radler(25.0);
+        let note = system.parse_note(" 4080ff ").unwrap().unwrap();
+        let legacy = system.parse_note("40").unwrap().unwrap();
+        assert_eq!(note.pitch(), legacy.pitch());
+        assert_eq!(note.duration().explicit_beats(), Some(128));
+        assert_eq!(note.volume().as_byte(), 255);
+        assert_eq!(legacy.duration(), super::StrikeDuration::VoiceDefault);
+        assert_eq!(system.resolve_pitch(note.pitch()).unwrap().as_hz(), 400.0);
+        assert_eq!(
+            radler(50.0)
+                .resolve_note(&note)
+                .unwrap()
+                .frequency()
+                .as_hz(),
+            800.0
+        );
+        assert!(PitchSystem::western_twelve_tone()
+            .resolve_note(&note)
+            .is_err());
+
+        for duration in 1..=255u8 {
+            for volume in [0, 1, 128, 255] {
+                let text = format!("40{duration:02x}{volume:02x}");
+                let note = system.parse_note(&text).unwrap().unwrap();
+                assert_eq!(note.duration().explicit_beats(), Some(duration));
+                assert_eq!(note.volume().as_byte(), volume);
+                let strike = system.resolve_note(&note).unwrap();
+                assert_eq!(strike.frequency().as_hz(), 400.0);
+                assert_eq!(strike.volume(), f32::from(volume) / 255.0);
+            }
+        }
+        for invalid in [
+            "4000ff", "40ggff", "4080gg", "4080", "4080fff", "é80ff", "😀ff",
+        ] {
+            assert!(system.parse_note(invalid).is_err(), "{invalid}");
+        }
+        // Syntactic validity is distinct from membership in the selected tuning.
+        let missing_degree = system.parse_note("41").unwrap().unwrap();
+        assert!(system.resolve_note(&missing_degree).is_err());
+    }
+
+    #[test]
+    fn note_parser_preserves_notation_specific_rests_and_named_tokens() {
+        let western = PitchSystem::western_twelve_tone();
+        assert_eq!(
+            western.parse_note("A4").unwrap(),
+            western.parse_note("69").unwrap()
+        );
+        for rest in ["", "  ", "-", "ReSt"] {
+            assert_eq!(western.parse_note(rest).unwrap(), None);
+        }
+        let named = PitchSystem::explicit(
+            ExplicitPitchSystem::new(
+                "named",
+                BTreeMap::from([
+                    ("4080ff".to_owned(), FrequencyHz::new(123.0).unwrap()),
+                    ("rest".to_owned(), FrequencyHz::new(234.0).unwrap()),
+                ]),
+            )
+            .unwrap(),
+        );
+        let note = named.parse_note("4080ff").unwrap().unwrap();
+        assert_eq!(note.duration(), super::StrikeDuration::VoiceDefault);
+        assert_eq!(
+            named.resolve_note(&note).unwrap().frequency().as_hz(),
+            123.0
+        );
+        assert_eq!(
+            named
+                .resolve_strike("rest")
+                .unwrap()
+                .unwrap()
+                .frequency()
+                .as_hz(),
+            234.0
+        );
+        assert!(named.resolve_strike("4080FF").is_err());
+        assert!(radler(25.0).resolve_note(&note).is_err());
+        assert!(named
+            .resolve_note(&western.parse_note("A4").unwrap().unwrap())
+            .is_err());
+    }
+
     #[test]
     fn resolves_radler_digits_with_ratios() {
         let system = PitchSystem::periodic(
@@ -756,11 +925,23 @@ mod tests {
         );
 
         assert_eq!(
-            system.resolve_cell("34").unwrap(),
+            system
+                .resolve_strike("34")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
             Some(FrequencyHz::new(350.0).unwrap())
         );
-        assert_eq!(system.resolve_cell("  ").unwrap(), None);
-        assert!(system.resolve_cell("35").is_err());
+        assert_eq!(
+            system
+                .resolve_strike("  ")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
+            None
+        );
+        assert!(system
+            .resolve_strike("35")
+            .map(|strike| strike.map(|strike| strike.frequency()))
+            .is_err());
 
         let legacy = system.resolve_strike("34").unwrap().unwrap();
         assert_eq!(legacy.frequency(), FrequencyHz::new(350.0).unwrap());
@@ -804,7 +985,12 @@ mod tests {
             .unwrap(),
         );
 
-        let resolved = system.resolve_cell("11").unwrap().unwrap().as_hz();
+        let resolved = system
+            .resolve_strike("11")
+            .map(|strike| strike.map(|strike| strike.frequency()))
+            .unwrap()
+            .unwrap()
+            .as_hz();
         let expected = 200.0 * 2.0_f64.powf(400.0 / 1200.0);
         assert!((resolved - expected).abs() < 1e-10);
     }
@@ -823,22 +1009,69 @@ mod tests {
         );
 
         assert_eq!(
-            system.resolve_cell(" - ").unwrap(),
+            system
+                .resolve_strike(" - ")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
             Some(FrequencyHz::new(197.3).unwrap())
         );
-        assert_eq!(system.resolve_cell(" ").unwrap(), None);
-        assert!(system.resolve_cell("ember").is_err());
+        assert_eq!(
+            system
+                .resolve_strike(" ")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
+            None
+        );
+        assert!(system
+            .resolve_strike("ember")
+            .map(|strike| strike.map(|strike| strike.frequency()))
+            .is_err());
     }
 
     #[test]
     fn western_compatibility_resolves_notes_numbers_and_historical_rests() {
         let system = PitchSystem::western_twelve_tone();
 
-        assert!((system.resolve_cell("A4").unwrap().unwrap().as_hz() - 440.0).abs() < 1e-10);
-        assert!((system.resolve_cell("69").unwrap().unwrap().as_hz() - 440.0).abs() < 1e-10);
-        assert_eq!(system.resolve_cell("rest").unwrap(), None);
-        assert_eq!(system.resolve_cell("-").unwrap(), None);
-        assert!(system.resolve_cell("H4").is_err());
+        assert!(
+            (system
+                .resolve_strike("A4")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap()
+                .unwrap()
+                .as_hz()
+                - 440.0)
+                .abs()
+                < 1e-10
+        );
+        assert!(
+            (system
+                .resolve_strike("69")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap()
+                .unwrap()
+                .as_hz()
+                - 440.0)
+                .abs()
+                < 1e-10
+        );
+        assert_eq!(
+            system
+                .resolve_strike("rest")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            system
+                .resolve_strike("-")
+                .map(|strike| strike.map(|strike| strike.frequency()))
+                .unwrap(),
+            None
+        );
+        assert!(system
+            .resolve_strike("H4")
+            .map(|strike| strike.map(|strike| strike.frequency()))
+            .is_err());
     }
 
     #[test]

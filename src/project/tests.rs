@@ -614,7 +614,8 @@ fn legacy_projects_load_with_western_tuning_and_save_its_library_reference() {
     assert!(
         (project
             .pitch_system()
-            .resolve_cell("A4")
+            .resolve_strike("A4")
+            .map(|strike| strike.map(|strike| strike.frequency()))
             .unwrap()
             .unwrap()
             .as_hz()

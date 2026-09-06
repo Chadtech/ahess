@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-09-01
+Last updated: 2026-09-06
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -81,6 +81,22 @@ reporting editor issues, each column is interpreted according to its voice:
 - A pitched voice resolves notation to a validated frequency.
 - A triggered voice resolves notation to a hit, sample, or other trigger.
 - A blank cell is a rest in either kind of column.
+
+Score interpretation has one text boundary: `PitchSystem::parse_note` produces
+an optional `Note` with a typed `Pitch`, `StrikeDuration`, and exact byte
+`Volume`. Blank cells (and Western rest tokens) produce `None`; malformed
+notation produces an error. A parsed pitch retains its notation identity:
+Radler numeric pitch, Western note number, or an explicit system's named key.
+It does not freeze a frequency, so it can be resolved again when tuning changes.
+
+`resolve_note` applies the tuning and produces the existing frequency-based
+`Strike`. `resolve_pitch` accepts only `&Pitch`, never score text or a complete
+note. Resolution checks notation compatibility, degree/key membership, and
+frequency bounds. `resolve_strike` composes parsing and resolution for editor
+issues, history/save validation, playback, and export. Frequency-only score
+rows project this same result; there is no separate string-to-frequency score
+parser. Editor and persisted score text remain unchanged, including recovery
+of incomplete input. Parsed notes are derived data, not a second editable score.
 
 Radler-digit score cells accept either the legacy two-character pitch or a
 six-character strike. A six-character strike stores two pitch characters, two
