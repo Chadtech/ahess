@@ -266,7 +266,14 @@ impl ScoreEditor {
                     .map(|(column_index, value)| {
                         let background = score_cell_background(part, row_index);
                         let input = cx.new(|cx| {
-                            TextInput::new(value.clone(), "", cx).with_background(background)
+                            TextInput::new(value.clone(), "", cx)
+                                .with_cell_clipboard()
+                                .with_background(background)
+                                .with_six_character_pair_colors([
+                                    s::SCORE_PITCH_TEXT,
+                                    s::SCORE_DURATION_TEXT,
+                                    s::SCORE_VOLUME_TEXT,
+                                ])
                         });
                         cx.subscribe(&input, move |editor, input, _: &Changed, cx| {
                             editor.on_cell_changed(editor_id, row_index, column_index, input, cx);

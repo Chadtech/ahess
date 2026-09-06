@@ -61,6 +61,9 @@ pub const FIELD_LABEL_TEXT: Rgba = GRAY5;
 pub const BUTTON_TEXT: Rgba = GRAY6;
 pub const DIALOG_TITLE_TEXT: Rgba = GRAY2;
 pub const PLAYBACK_ROW_BORDER: Rgba = GRAY5;
+pub const SCORE_PITCH_TEXT: Rgba = BLUE2;
+pub const SCORE_DURATION_TEXT: Rgba = GRAY4;
+pub const SCORE_VOLUME_TEXT: Rgba = GRAY6;
 
 pub const CONTENT_PADDING: Pixels = S5;
 pub const MODAL_BACKDROP: Rgba = Rgba {

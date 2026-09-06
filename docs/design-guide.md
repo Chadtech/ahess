@@ -127,6 +127,10 @@ or when it defines how a shared component is used.
   rows.
 - use compact data-grid columns for short values of up to six monospaced
   characters; column headers truncate within that width.
+- use the shared text input's six-character pair colors for score notation:
+  `SCORE_PITCH_TEXT`, `SCORE_DURATION_TEXT`, and `SCORE_VOLUME_TEXT` distinguish
+  the three pairs. Keep one continuous editable value, including selection and
+  composition underlines. Shorter values and non-ASCII text use ordinary text.
 - when actions operate on whole rows, select rows through the numbered row
   headers. Use click for one row and drag or shift-click for one contiguous
   range. Clicking the sole selected row header again clears the selection.
@@ -141,6 +145,15 @@ or when it defines how a shared component is used.
   and put the remaining commands in a shared action menu rather than adding
   another toolbar row. Keep every menu item visible and disable actions that
   do not apply without a row selection.
+
+- opt score cell inputs into `TextInput::with_cell_clipboard`: command-click
+  copies the complete value and command-shift-click replaces the destination
+  with clipboard text (control on non-macOS platforms). Show brief copy feedback.
+- offer the same whole-cell commands in the shared context menu with their
+  gestures shown. Escape or an outside click dismisses the menu. With no text
+  selected, command-C copies the whole cell; selected-text copying and ordinary
+  editing retain their usual behavior. Whole-cell paste uses the normal change
+  event so validation, undo, and persistence apply.
 
 ## ordered input lists
 

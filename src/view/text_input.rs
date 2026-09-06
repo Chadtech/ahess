@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use gpui::{
     actions, div, fill, point, prelude::*, px, relative, rgba, size, App, Bounds, ClipboardItem,
@@ -9,7 +9,16 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::style as s;
+use crate::{style as s, view::context_menu};
+
+enum CellInteraction {
+    Ready,
+    Menu,
+    Copied {
+        text: SharedString,
+        _dismiss: gpui::Task<()>,
+    },
+}
 
 actions!(
     text_input,
@@ -63,6 +72,8 @@ pub struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     background: Rgba,
+    cell_interaction: Option<CellInteraction>,
+    six_character_pair_colors: Option<[Rgba; 3]>,
 }
 
 pub struct Changed;
@@ -86,11 +97,65 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             background: s::GREEN3,
+            cell_interaction: None,
+            six_character_pair_colors: None,
+        }
+    }
+
+    pub fn with_cell_clipboard(mut self) -> Self {
+        self.cell_interaction = Some(CellInteraction::Ready);
+        self
+    }
+
+    fn copy_cell(&mut self, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(self.content.to_string()));
+        let text = if self.content.is_empty() {
+            "copied empty cell".into()
+        } else {
+            format!("copied {}", self.content).into()
+        };
+        let dismiss = cx.spawn(async move |input, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1200))
+                .await;
+            let _ = input.update(cx, |input, cx| {
+                input.cell_interaction = Some(CellInteraction::Ready);
+                cx.notify();
+            });
+        });
+        self.cell_interaction = Some(CellInteraction::Copied {
+            text,
+            _dismiss: dismiss,
+        });
+        self.is_selecting = false;
+        cx.notify();
+    }
+
+    fn paste_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cell_interaction = Some(CellInteraction::Ready);
+        self.is_selecting = false;
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            let range = self.range_to_utf16(&(0..self.content.len()));
+            self.replace_text_in_range(Some(range), &text.replace('\n', " "), window, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_cell_menu(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.cell_interaction, Some(CellInteraction::Menu)) {
+            self.cell_interaction = Some(CellInteraction::Ready);
+            cx.notify();
         }
     }
 
     pub fn with_background(mut self, background: Rgba) -> Self {
         self.background = background;
+        self
+    }
+
+    /// Color the pairs of a six-character ASCII value without splitting the input.
+    pub fn with_six_character_pair_colors(mut self, colors: [Rgba; 3]) -> Self {
+        self.six_character_pair_colors = Some(colors);
         self
     }
 
@@ -186,6 +251,16 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window);
+        if self.cell_interaction.is_some() && event.modifiers.secondary() {
+            if event.modifiers.shift {
+                self.paste_cell(window, cx);
+            } else {
+                self.copy_cell(cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
+        self.close_cell_menu(cx);
         self.is_selecting = true;
 
         if event.modifiers.shift {
@@ -221,6 +296,10 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() && self.cell_interaction.is_some() {
+            self.copy_cell(cx);
+            return;
+        }
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
@@ -561,7 +640,7 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = if let Some(marked_range) = input.marked_range.as_ref() {
+        let mut runs = if let Some(marked_range) = input.marked_range.as_ref() {
             vec![
                 TextRun {
                     len: marked_range.start,
@@ -587,6 +666,30 @@ impl Element for TextElement {
         } else {
             vec![run]
         };
+
+        if let Some(colors) = input.six_character_pair_colors {
+            if !is_placeholder && display_text.len() == 6 && display_text.is_ascii() {
+                let mut offset = 0;
+                runs = runs
+                    .into_iter()
+                    .flat_map(|run| {
+                        let end = offset + run.len;
+                        let mut pairs = Vec::new();
+                        while offset < end {
+                            let pair = offset / 2;
+                            let next = end.min((pair + 1) * 2);
+                            pairs.push(TextRun {
+                                len: next - offset,
+                                color: colors[pair].into(),
+                                ..run.clone()
+                            });
+                            offset = next;
+                        }
+                        pairs
+                    })
+                    .collect();
+            }
+        }
 
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window
@@ -674,6 +777,88 @@ impl Element for TextElement {
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .relative()
+            .when(self.cell_interaction.is_some(), |input| {
+                input.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|input, _, window, cx| {
+                        input.focus(window);
+                        input.is_selecting = false;
+                        input.cell_interaction = Some(CellInteraction::Menu);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+            })
+            .on_key_down(cx.listener(|input, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    input.close_cell_menu(cx);
+                }
+            }))
+            .children(match &self.cell_interaction {
+                Some(CellInteraction::Menu) => {
+                    let modifier = if cfg!(target_os = "macos") {
+                        "⌘"
+                    } else {
+                        "ctrl"
+                    };
+                    Some(
+                        gpui::deferred(
+                            context_menu::menu(vec![
+                                context_menu::action(0, format!("copy cell   {modifier}-click"))
+                                    .debug_selector(|| "copy-cell".into())
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|input, _, _, cx| {
+                                            input.copy_cell(cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                                context_menu::action(
+                                    1,
+                                    format!("paste cell   {modifier}-shift-click"),
+                                )
+                                .debug_selector(|| "paste-cell".into())
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_mouse_up(
+                                    MouseButton::Left,
+                                    cx.listener(|input, _, window, cx| {
+                                        input.paste_cell(window, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                ),
+                            ])
+                            .left_0()
+                            .right_auto()
+                            .w_auto()
+                            .on_mouse_down_out(
+                                cx.listener(|input, _, _, cx| input.close_cell_menu(cx)),
+                            ),
+                        )
+                        .with_priority(1)
+                        .into_any_element(),
+                    )
+                }
+                Some(CellInteraction::Copied { text, .. }) => Some(
+                    gpui::deferred(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_full()
+                            .px(s::S3)
+                            .bg(s::GRAY2)
+                            .text_color(s::TEXT_DEFAULT)
+                            .whitespace_nowrap()
+                            .child(text.clone()),
+                    )
+                    .with_priority(1)
+                    .into_any_element(),
+                ),
+                _ => None,
+            })
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
@@ -714,5 +899,107 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn cell_gestures_copy_all_and_replace_all(cx: &mut TestAppContext) {
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::new("310880", "", cx).with_cell_clipboard());
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.selected_range = 1..5;
+                input.on_mouse_down(
+                    &MouseDownEvent {
+                        modifiers: gpui::Modifiers::secondary_key(),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "310880");
+                assert!(!input.is_selecting);
+                input.sync_value("6001ff", cx);
+                input.marked_range = Some(1..3);
+                input.on_mouse_down(
+                    &MouseDownEvent {
+                        modifiers: gpui::Modifiers {
+                            shift: true,
+                            ..gpui::Modifiers::secondary_key()
+                        },
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(input.value(), "310880");
+                assert_eq!(input.selected_range, 6..6);
+                assert!(input.marked_range.is_none());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn context_menu_dispatches_whole_cell_commands(cx: &mut TestAppContext) {
+        let (input, cx) =
+            cx.add_window_view(|_, cx| TextInput::new("310880", "", cx).with_cell_clipboard());
+        cx.run_until_parked();
+        cx.simulate_event(MouseDownEvent {
+            button: MouseButton::Right,
+            position: point(px(20.0), px(15.0)),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        let copy = cx.debug_bounds("copy-cell").unwrap();
+        cx.simulate_click(copy.center(), gpui::Modifiers::default());
+        cx.update(|_, cx| {
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "310880");
+            assert!(matches!(
+                input.read(cx).cell_interaction,
+                Some(CellInteraction::Copied { .. })
+            ));
+            input.update(cx, |input, cx| input.sync_value("6001ff", cx));
+        });
+        cx.simulate_event(MouseDownEvent {
+            button: MouseButton::Right,
+            position: point(px(20.0), px(15.0)),
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        let paste = cx.debug_bounds("paste-cell").unwrap();
+        cx.simulate_click(paste.center(), gpui::Modifiers::default());
+        cx.update(|_, cx| {
+            assert_eq!(input.read(cx).value(), "310880");
+            assert!(matches!(
+                input.read(cx).cell_interaction,
+                Some(CellInteraction::Ready)
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn keyboard_copy_respects_selection_and_plain_fields(cx: &mut TestAppContext) {
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("310880", "", cx));
+        cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string("unchanged".into()));
+                input.copy(&Copy, window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().unwrap(),
+                    "unchanged"
+                );
+                input.cell_interaction = Some(CellInteraction::Ready);
+                input.copy(&Copy, window, cx);
+                assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "310880");
+                input.selected_range = 2..4;
+                input.copy(&Copy, window, cx);
+                assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "08");
+            });
+        });
     }
 }
