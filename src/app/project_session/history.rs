@@ -148,6 +148,7 @@ impl ProjectState {
 impl PartialEq for ProjectState {
     fn eq(&self, other: &Self) -> bool {
         self.project == other.project
+            && self.project.same_occurrence_ids(&other.project)
             && self.scores.len() == other.scores.len()
             && self.scores.iter().all(|entry| {
                 other
@@ -432,6 +433,7 @@ impl ProjectHistory {
         let before_scores = changed_scores(&self.current, &after);
         let after_scores = changed_scores(&after, &self.current);
         if self.current.project == after.project
+            && self.current.project.same_occurrence_ids(&after.project)
             && before_scores.is_empty()
             && after_scores.is_empty()
         {

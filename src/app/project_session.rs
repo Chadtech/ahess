@@ -45,7 +45,7 @@ use crate::{
 use self::{
     build_workspace::{BuildRequest, BuildWorkspace},
     history::{ProjectHistory, ProjectState as HistoryState},
-    loop_range::{LoopWorkspace, Request as LoopRangeRequest},
+    loop_range::{LoopSelection, LoopWorkspace, Request as LoopRangeRequest},
     parts::PartsWorkspace,
     project_settings::{ProjectSettingsMsg, ProjectSettingsWorkspace},
     score::{
@@ -119,7 +119,7 @@ pub struct Model {
     score_views: Vec<ScorePane>,
     active_score_view: usize,
     score_arrangement_visible: bool,
-    loop_range: Option<BeatRange>,
+    loop_selection: LoopSelection,
     playback: Option<ActivePlayback>,
     playhead_task: Option<Task<()>>,
     build_task: Option<Task<()>>,
@@ -408,8 +408,6 @@ impl Model {
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
         let score_arrangement_button =
             cx.new(|_| Button::new("toggle-score-arrangement", "arrangement").depressed(true));
-        let arrangement_beat_count = project.arrangement_beat_count();
-        let loop_range = BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok();
         let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
         let transport_button =
             cx.new(|_| Button::new("toggle-playback", "play").variant(ButtonVariant::Primary));
@@ -450,7 +448,9 @@ impl Model {
             .detach();
 
         let occurrences = project.arrangement_occurrences();
-        let loop_workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, loop_range, cx));
+        let loop_workspace = cx.new(move |cx| {
+            LoopWorkspace::for_selection(occurrences, &LoopSelection::EntireArrangement, cx)
+        });
         cx.subscribe(&loop_workspace, Self::on_loop_range_request)
             .detach();
         let loop_arrangement_range = loop_workspace.read(cx).arrangement_range();
@@ -507,7 +507,7 @@ impl Model {
             score_views: vec![ScorePane::Empty],
             active_score_view: 0,
             score_arrangement_visible: default_score_arrangement_visible(),
-            loop_range,
+            loop_selection: LoopSelection::EntireArrangement,
             playback: None,
             playhead_task: None,
             build_task: None,
@@ -879,7 +879,6 @@ impl Model {
 
     fn apply_history_state(&mut self, target: &HistoryState, cx: &mut Context<Self>) {
         let current_project = self.project.clone();
-        let previous_arrangement_beat_count = current_project.arrangement_beat_count();
         let previous_ui_state = self.ui_state();
         let target_project = target.project.as_ref().clone();
         let mut remaining_documents = std::mem::take(&mut self.score_documents);
@@ -993,7 +992,7 @@ impl Model {
             }
         }
 
-        self.reconcile_history_loop_range(previous_arrangement_beat_count);
+        self.reset_loop_workspace(cx);
         self.sync_score_editor_parts(cx);
         self.sync_workspace_project(cx);
         self.sync_score_arrangement_active_part(cx);
@@ -1006,23 +1005,9 @@ impl Model {
         }
     }
 
-    fn reconcile_history_loop_range(&mut self, previous_arrangement_beat_count: u64) {
-        let arrangement_beat_count = self.project.arrangement_beat_count();
-        let followed_entire_arrangement = self.loop_range.is_none_or(|range| {
-            previous_arrangement_beat_count == 0
-                || (range.first() == 1 && range.last() == previous_arrangement_beat_count)
-        });
-        self.loop_range = if arrangement_beat_count == 0 {
-            None
-        } else if followed_entire_arrangement {
-            BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok()
-        } else {
-            self.loop_range.and_then(|range| {
-                let first = range.first().min(arrangement_beat_count);
-                let last = range.last().max(first).min(arrangement_beat_count);
-                BeatRange::new(first, last, arrangement_beat_count).ok()
-            })
-        };
+    fn loop_range(&self) -> Option<BeatRange> {
+        self.loop_selection
+            .resolve(&self.project.arrangement_occurrences())
     }
 
     fn has_active_overlay(&self) -> bool {
@@ -1434,9 +1419,9 @@ impl Model {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<PlaybackLoop, String> {
-        let range = self.loop_range.ok_or_else(|| {
-            "add at least one part to the arrangement before starting playback".to_string()
-        })?;
+        let range = self
+            .loop_range()
+            .ok_or_else(|| "select arranged parts before starting playback".to_string())?;
         self.arrangement_playback_loop_for_range(range, cx)
     }
 
@@ -1507,6 +1492,10 @@ impl Model {
         else {
             return;
         };
+        if matches!(target, PlaybackTarget::Arrangement) && self.loop_range().is_none() {
+            self.stop_playback(cx);
+            return;
+        }
         match self.playback_loop_for_target(&target, cx) {
             Ok(playback_loop) => {
                 if let Some(playback) = &self.playback {
@@ -2073,7 +2062,6 @@ impl Model {
             cx.notify();
             return;
         };
-        let previous_arrangement_beat_count = self.project.arrangement_beat_count();
         match project::edit_part_rows(
             &self.project_directory,
             &self.project,
@@ -2103,7 +2091,7 @@ impl Model {
                         });
                     }
                 }
-                self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                self.reconcile_loop_range(cx);
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
                 self.record_project_history_change(cx);
@@ -2219,11 +2207,17 @@ impl Model {
             return;
         }
         sequence.remove(occurrence_index);
+        let previous_project = self.project.clone();
+        let sources = (0..previous_project.sequence().len())
+            .filter(|i| *i != occurrence_index)
+            .map(Some)
+            .collect::<Vec<_>>();
 
-        let previous_arrangement_beat_count = self.project.arrangement_beat_count();
         match update_project_sequence(&self.project_directory, &mut self.project, sequence) {
             Ok(_) => {
-                self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                self.project
+                    .retain_occurrence_ids(&previous_project, &sources);
+                self.reconcile_loop_range(cx);
                 self.update_score_documents_for_project_settings(cx);
                 self.sync_workspace_project(cx);
                 self.workspace_error = None;
@@ -2421,11 +2415,11 @@ impl Model {
         cx: &mut Context<Self>,
     ) {
         match request {
-            LoopRangeRequest::SetRange(range) => {
-                if self.loop_range == Some(*range) {
+            LoopRangeRequest::SetSelection(range) => {
+                if self.loop_selection == *range {
                     return;
                 }
-                self.loop_range = Some(*range);
+                self.loop_selection = range.clone();
                 if self.playback.is_some() {
                     self.update_live_playback(cx);
                 } else {
@@ -2438,8 +2432,8 @@ impl Model {
 
     fn reset_loop_workspace(&mut self, cx: &mut Context<Self>) {
         let occurrences = self.project.arrangement_occurrences();
-        let range = self.loop_range;
-        let workspace = cx.new(move |cx| LoopWorkspace::new(occurrences, range, cx));
+        let selection = self.loop_selection.clone();
+        let workspace = cx.new(move |cx| LoopWorkspace::for_selection(occurrences, &selection, cx));
         cx.subscribe(&workspace, Self::on_loop_range_request)
             .detach();
         let arrangement_range = workspace.read(cx).arrangement_range();
@@ -2453,27 +2447,7 @@ impl Model {
         self.sync_score_arrangement_context_actions(cx);
     }
 
-    fn reconcile_loop_range(
-        &mut self,
-        previous_arrangement_beat_count: u64,
-        cx: &mut Context<Self>,
-    ) {
-        let arrangement_beat_count = self.project.arrangement_beat_count();
-        let followed_entire_arrangement = self.loop_range.is_none_or(|range| {
-            previous_arrangement_beat_count == 0
-                || (range.first() == 1 && range.last() == previous_arrangement_beat_count)
-        });
-        self.loop_range = if arrangement_beat_count == 0 {
-            None
-        } else if followed_entire_arrangement {
-            BeatRange::new(1, arrangement_beat_count, arrangement_beat_count).ok()
-        } else {
-            self.loop_range.and_then(|range| {
-                let first = range.first().min(arrangement_beat_count);
-                let last = range.last().max(first).min(arrangement_beat_count);
-                BeatRange::new(first, last, arrangement_beat_count).ok()
-            })
-        };
+    fn reconcile_loop_range(&mut self, cx: &mut Context<Self>) {
         self.reset_loop_workspace(cx);
         if self.playback.is_some() {
             self.update_live_playback(cx);
@@ -2888,7 +2862,6 @@ impl Model {
                     });
                     return;
                 }
-                let previous_arrangement_beat_count = self.project.arrangement_beat_count();
                 match append_project_variants(
                     &self.project_directory,
                     &mut self.project,
@@ -2912,7 +2885,7 @@ impl Model {
                                 cx,
                             );
                         });
-                        self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                        self.reconcile_loop_range(cx);
                         self.update_score_documents_for_project_settings(cx);
                         self.select_part(first_variant, cx);
                         self.sync_score_editor_parts(cx);
@@ -2928,20 +2901,23 @@ impl Model {
                 }
             }
             parts::Request::ChangeSequence {
+                sources,
                 sequence,
                 selected_range,
             } => {
-                let previous_arrangement_beat_count = self.project.arrangement_beat_count();
+                let previous_project = self.project.clone();
                 match update_project_sequence(
                     &self.project_directory,
                     &mut self.project,
                     sequence.clone(),
                 ) {
                     Ok(sequence) => {
+                        self.project
+                            .retain_occurrence_ids(&previous_project, sources);
                         dialog.update(cx, |dialog, cx| {
                             dialog.sequence_changed(sequence, *selected_range, cx);
                         });
-                        self.reconcile_loop_range(previous_arrangement_beat_count, cx);
+                        self.reconcile_loop_range(cx);
                         self.update_score_documents_for_project_settings(cx);
                         self.sync_workspace_project(cx);
                         self.record_project_history_change(cx);
@@ -3195,7 +3171,7 @@ impl Render for Model {
                 score_workspace(
                     &self.score_views,
                     &self.project,
-                    self.loop_range,
+                    &self.loop_selection,
                     arrangement_range,
                     self.score_arrangement_visible,
                     project_status,
@@ -3212,12 +3188,12 @@ impl Render for Model {
     }
 }
 
-fn loop_range_summary(project: &Project, range: Option<BeatRange>) -> String {
-    let Some(range) = range else {
+fn loop_range_summary(project: &Project, selection: &LoopSelection) -> String {
+    let occurrences = project.arrangement_occurrences();
+    let Some(range) = selection.resolve(&occurrences) else {
         return "set loop".to_string();
     };
-    let occurrences = project.arrangement_occurrences();
-    if range.first() == 1 && range.last() == project.arrangement_beat_count() {
+    if matches!(selection, LoopSelection::EntireArrangement) {
         return "loop all".to_string();
     }
     let first = occurrences
@@ -3276,7 +3252,7 @@ fn playing_arrangement_position(
 fn score_workspace(
     score_views: &[ScorePane],
     project: &Project,
-    loop_range: Option<BeatRange>,
+    loop_selection: &LoopSelection,
     arrangement_range: Entity<RangeSelectionList>,
     arrangement_visible: bool,
     project_status: ProjectStatus,
@@ -3328,7 +3304,7 @@ fn score_workspace(
         .when(arrangement_visible, |editors| {
             editors.child(score_arrangement_panel(
                 project,
-                loop_range,
+                loop_selection,
                 arrangement_range,
             ))
         });
@@ -3388,7 +3364,7 @@ fn score_workspace(
 
 fn score_arrangement_panel(
     project: &Project,
-    loop_range: Option<BeatRange>,
+    loop_selection: &LoopSelection,
     arrangement_range: Entity<RangeSelectionList>,
 ) -> gpui::Div {
     let occurrences = project.arrangement_occurrences();
@@ -3432,7 +3408,7 @@ fn score_arrangement_panel(
                         .debug_selector(|| "score-arrangement-loop-summary".to_string())
                         .min_w(s::S0)
                         .truncate()
-                        .child(loop_range_summary(project, loop_range)),
+                        .child(loop_range_summary(project, loop_selection)),
                 ),
         )
         .child(
@@ -3470,9 +3446,10 @@ mod tests {
     use super::{
         arrangement_duration_summary, create_project_part, loop_range_summary, parts,
         playing_arrangement_position, update_project_sequence, voices, BuildRequest,
-        ExportRowsConfirmed, ExportRowsDialogMsg, Model, PartsWorkspace, PlaybackTarget,
-        ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg, RowEditRequested, StatusAction,
-        TransportError, UiState, WorkspaceSection, WorkspaceSectionKind,
+        ExportRowsConfirmed, ExportRowsDialogMsg, LoopSelection, Model, PartsWorkspace,
+        PlaybackTarget, ProjectOverlay, ProjectSettingsMsg, RowEditConfirmationMsg,
+        RowEditRequested, StatusAction, TransportError, UiState, WorkspaceSection,
+        WorkspaceSectionKind,
     };
     use crate::{
         acoustics::Point3Meters,
@@ -3525,28 +3502,38 @@ mod tests {
     }
 
     #[test]
-    fn loop_summaries_describe_part_aligned_and_exact_ranges() {
+    fn loop_summaries_describe_selected_parts() {
         let project = Project::new("test project", 800, 0, Seed::new(12))
             .with_parts(vec![Part::new("intro", 8), Part::new("verse", 16)])
             .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
 
         assert_eq!(
-            loop_range_summary(&project, BeatRange::new(1, 40, 40).ok()),
+            loop_range_summary(&project, &LoopSelection::EntireArrangement),
             "loop all"
         );
         assert_eq!(
-            loop_range_summary(&project, BeatRange::new(9, 24, 40).ok()),
+            loop_range_summary(
+                &project,
+                &LoopSelection::Occurrences(vec![project.arrangement_occurrences()[1].id()])
+            ),
             "loop 2. verse"
         );
         assert_eq!(
-            loop_range_summary(&project, BeatRange::new(9, 40, 40).ok()),
+            loop_range_summary(
+                &project,
+                &LoopSelection::Occurrences(
+                    project.arrangement_occurrences()[1..]
+                        .iter()
+                        .map(|o| o.id())
+                        .collect()
+                )
+            ),
             "loop parts 2–3"
         );
         assert_eq!(
-            loop_range_summary(&project, BeatRange::new(10, 23, 40).ok()),
-            "loop beats 10–23"
+            loop_range_summary(&project, &LoopSelection::Occurrences(Vec::new())),
+            "set loop"
         );
-        assert_eq!(loop_range_summary(&project, None), "set loop");
     }
 
     #[test]
@@ -3576,11 +3563,12 @@ mod tests {
         let root = temp_root("full-arrangement-audio-build");
         let project_directory = root.join("project");
         fs::create_dir_all(&project_directory).unwrap();
-        let part = Part::new("intro", 2);
+        let part = Part::new("intro", 1);
         let project = Project::new("test project", 8, 0, Seed::new(12))
             .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
-            .with_parts(vec![part.clone()]);
-        PartScore::from_rows(vec![vec!["C4".to_string()], vec!["D4".to_string()]])
+            .with_parts(vec![part.clone()])
+            .with_sequence(vec![part.name.clone(), part.name.clone()]);
+        PartScore::from_rows(vec![vec!["C4".to_string()]])
             .save(&project_directory, &part, &project)
             .unwrap();
         let output_files = planned_audio_files(&project);
@@ -3589,7 +3577,8 @@ mod tests {
         });
 
         model.update(cx, |model, cx| {
-            model.loop_range = BeatRange::new(1, 1, 2).ok();
+            model.loop_selection =
+                LoopSelection::Occurrences(vec![model.project.arrangement_occurrences()[0].id()]);
             let workspace = model.workspace.audio_build.clone();
             model.on_build_request(
                 workspace,
@@ -3608,7 +3597,7 @@ mod tests {
             assert_eq!(
                 u32::from_le_bytes(bytes[46..50].try_into().unwrap()),
                 768,
-                "two eight-millisecond beats should be rendered even when playback loops one beat"
+                "two eight-millisecond beats should be rendered even when playback loops only one occurrence"
             );
         }
 
@@ -4236,7 +4225,7 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(
-            cx.update(|_, cx| model.read(cx).loop_range),
+            cx.update(|_, cx| model.read(cx).loop_range()),
             BeatRange::new(3, 8, 8).ok()
         );
 
@@ -4385,6 +4374,43 @@ mod tests {
             2
         );
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn removing_repeated_occurrences_preserves_loop_identity_through_undo(cx: &mut TestAppContext) {
+        let root = temp_root("loop-occurrence-undo");
+        let project_directory = root.join("project");
+        fs::create_dir_all(&project_directory).unwrap();
+        let a = Part::new("a", 4);
+        let b = Part::new("b", 8);
+        let project = Project::new("loops", 800, 0, Seed::new(1))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Saw)])
+            .with_parts(vec![a.clone(), b.clone()])
+            .with_sequence(vec!["a".into(), "b".into(), "a".into()]);
+        for part in [&a, &b] {
+            PartScore::from_rows(vec![vec![String::new()]; part.length as usize])
+                .save(&project_directory, part, &project)
+                .unwrap();
+        }
+        project::save_project(&project_directory, &project).unwrap();
+        let selected = LoopSelection::Occurrences(vec![project.arrangement_occurrences()[2].id()]);
+        let model = cx.new(|cx| Model::new(project, project_directory, root.clone(), cx));
+        model.update(cx, |model, cx| {
+            model.loop_selection = selected;
+            model.remove_score_arrangement_occurrence(0, cx);
+            assert_eq!(model.loop_range(), BeatRange::new(9, 12, 12).ok());
+            assert!(model.arrangement_playback_loop(cx).is_ok());
+            model.remove_score_arrangement_occurrence(1, cx);
+            assert_eq!(model.loop_range(), None);
+            assert!(model.arrangement_playback_loop(cx).is_err());
+            model.undo(cx);
+            assert_eq!(model.loop_range(), BeatRange::new(9, 12, 12).ok());
+            model.undo(cx);
+            assert_eq!(model.loop_range(), BeatRange::new(13, 16, 16).ok());
+            model.redo(cx);
+            assert_eq!(model.loop_range(), BeatRange::new(9, 12, 12).ok());
+        });
         fs::remove_dir_all(root).unwrap();
     }
 

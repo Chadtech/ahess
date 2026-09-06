@@ -379,11 +379,11 @@ pub(crate) fn update_project_sequence(
                 .ok_or_else(|| ArrangementChangeError::MissingPart(name.as_str().to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let original_sequence = project.sequence().to_vec();
+    let original_project = project.clone();
     project.set_sequence(sequence.clone());
 
     if let Err(error) = project::save_project(project_directory, project) {
-        project.set_sequence(original_sequence);
+        *project = original_project;
         return Err(ArrangementChangeError::Save(error));
     }
 
@@ -781,6 +781,7 @@ pub(crate) fn update_project_part_settings(
         .clone()
         .with_subdivision_pattern(subdivision_pattern)
         .with_major_subdivision(major_subdivision);
+    let original_project = project.clone();
     let original_sequence = project.sequence().to_vec();
     let updated_sequence = original_sequence
         .iter()
@@ -794,10 +795,13 @@ pub(crate) fn update_project_part_settings(
         .collect();
     project.parts[index] = renamed_part.clone();
     project.set_sequence(updated_sequence);
+    project.retain_occurrence_ids(
+        &original_project,
+        &(0..original_sequence.len()).map(Some).collect::<Vec<_>>(),
+    );
 
     if let Err(source) = project::save_project(project_directory, project) {
-        project.parts[index] = source_part;
-        project.set_sequence(original_sequence);
+        *project = original_project;
         return Err(PartChangeError::SaveRenamed {
             source,
             rollback_error: renamed.rollback().err(),

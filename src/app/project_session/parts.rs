@@ -51,6 +51,7 @@ pub enum Request {
         suffix: String,
     },
     ChangeSequence {
+        sources: Vec<Option<usize>>,
         sequence: Vec<PartName>,
         selected_range: Option<SelectedRange>,
     },
@@ -842,6 +843,11 @@ impl PartsWorkspace {
             self.selected_arrangement_range(cx),
         );
         cx.emit(Request::ChangeSequence {
+            sources: {
+                let mut sources = (0..self.sequence.len()).map(Some).collect::<Vec<_>>();
+                sources.insert(selected_range.first(), None);
+                sources
+            },
             sequence,
             selected_range: Some(selected_range),
         });
@@ -862,6 +868,11 @@ impl PartsWorkspace {
             return;
         };
         cx.emit(Request::ChangeSequence {
+            sources: {
+                let mut sources = (0..self.sequence.len()).map(Some).collect::<Vec<_>>();
+                sources[selected_range.first()..=selected_range.last() + 1].rotate_left(1);
+                sources
+            },
             sequence,
             selected_range: Some(selected_range),
         });
@@ -882,6 +893,11 @@ impl PartsWorkspace {
             return;
         };
         cx.emit(Request::ChangeSequence {
+            sources: {
+                let mut sources = (0..self.sequence.len()).map(Some).collect::<Vec<_>>();
+                sources[selected_range.first() - 1..=selected_range.last()].rotate_right(1);
+                sources
+            },
             sequence,
             selected_range: Some(selected_range),
         });
@@ -911,6 +927,14 @@ impl PartsWorkspace {
             return;
         };
         cx.emit(Request::ChangeSequence {
+            sources: {
+                let mut sources = (0..self.sequence.len()).map(Some).collect::<Vec<_>>();
+                sources.splice(
+                    selected_range.first()..selected_range.first(),
+                    (selected_range.first()..=selected_range.last()).map(|_| None),
+                );
+                sources
+            },
             sequence,
             selected_range: Some(selected_range),
         });
@@ -937,6 +961,13 @@ impl PartsWorkspace {
             return;
         };
         cx.emit(Request::ChangeSequence {
+            sources: {
+                let removed = self.selected_arrangement_range(cx).expect("selected range");
+                (0..self.sequence.len())
+                    .filter(|i| *i < removed.first() || *i > removed.last())
+                    .map(Some)
+                    .collect()
+            },
             sequence,
             selected_range,
         });
@@ -2026,6 +2057,7 @@ fn parse_major_subdivision(value: &str) -> Result<Option<MajorSubdivision>, Stri
 
 #[cfg(test)]
 mod tests {
+    use gpui::AppContext;
     use std::{cell::RefCell, rc::Rc};
 
     use gpui::{point, px, size, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext};
@@ -2041,6 +2073,50 @@ mod tests {
         style as s,
         view::{button, range_selection_list::SelectedRange},
     };
+
+    #[gpui::test]
+    fn arrangement_actions_map_identical_copies_by_position(cx: &mut TestAppContext) {
+        let expected = [
+            vec![Some(0), Some(1), Some(2), None, Some(3)],
+            vec![Some(1), Some(2), Some(0), Some(3)],
+            vec![Some(0), Some(3), Some(1), Some(2)],
+            vec![Some(0), Some(1), Some(2), None, None, Some(3)],
+            vec![Some(0), Some(3)],
+        ];
+        for (action, expected) in expected.into_iter().enumerate() {
+            let (workspace, cx) = cx.add_window_view(|_, cx| {
+                PartsWorkspace::new(vec![Part::new("a", 4)], names(["a", "a", "a", "a"]), cx)
+            });
+            let requests = Rc::new(RefCell::new(Vec::new()));
+            let received = requests.clone();
+            let _subscription = cx.update(|_, cx| {
+                cx.subscribe(&workspace, move |_, request: &Request, _| {
+                    if let Request::ChangeSequence {
+                        sources, sequence, ..
+                    } = request
+                    {
+                        assert_eq!(sources.len(), sequence.len());
+                        received.borrow_mut().push(sources.clone());
+                    }
+                })
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.arrangement_range.update(cx, |list, cx| {
+                    list.sync_selected_range(SelectedRange::new(1, 2, 4), cx)
+                });
+                let button = cx.new(|_| button::Button::new("test-action", "test"));
+                match action {
+                    0 => workspace.on_add_to_arrangement_clicked(button, &button::Clicked, cx),
+                    1 => workspace.on_move_earlier_clicked(button, &button::Clicked, cx),
+                    2 => workspace.on_move_later_clicked(button, &button::Clicked, cx),
+                    3 => workspace.repeat_selected_range(cx),
+                    _ => workspace.remove_selected_range(cx),
+                }
+            });
+            cx.run_until_parked();
+            assert_eq!(*requests.borrow(), vec![expected]);
+        }
+    }
 
     #[gpui::test]
     fn add_click_validates_current_inputs_before_requesting_a_project_change(

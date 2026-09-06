@@ -762,7 +762,7 @@ impl ProjectConfig {
             .unwrap_or(minimum_next_voice_id)
             .max(minimum_next_voice_id);
         project.parts = self.parts;
-        project.sequence = sequence;
+        project.set_sequence(sequence);
         Ok(project)
     }
 }

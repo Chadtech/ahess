@@ -28,6 +28,29 @@ that every type name or configuration shape below is final.
 
 ## Core decisions
 
+### Loop intent follows arrangement occurrences
+
+The project session owns a `LoopSelection`: the entire arrangement or selected
+arrangement occurrence identities.
+Part selections retain session-local identities rather than storing beat bounds
+or matching part names. Repeated copies have distinct identities. Insert, repeat,
+remove, and move actions explicitly map surviving occurrences from their old
+positions; rename and part-length edits preserve identities. Project clones and
+undo/redo retain identities. They are not persisted because loop selection is
+also session-local.
+
+Playback bounds are derived from the current arrangement each time a loop is
+prepared. A selection spans the first through last surviving selected occurrence
+in current order, including anything between them. Removing an endpoint shrinks
+the span to the surviving selections. Removing every selected occurrence (or
+emptying the arrangement) stops arrangement playback instead of retaining stale
+audio. Undo can restore the selected identities without automatically restarting
+playback. Entire-arrangement mode follows growth; selecting all current rows
+still selects those occurrences only. Loop controls select whole parts; beat
+bounds are derived playback data, not editable selection state.
+The audio engine continues to schedule beats and samples and restarts at the loop
+start when the resolved beat bounds change.
+
 ### Tuning systems are reusable workspace resources
 
 The workspace owns named tuning-system definitions with stable

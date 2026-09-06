@@ -396,6 +396,7 @@ fn renamed_parts_keep_their_score_and_update_every_arrangement_occurrence() {
     )
     .unwrap();
 
+    let before_rename = project.clone();
     let renamed = rename_project_part(
         &project_directory,
         &mut project,
@@ -404,6 +405,7 @@ fn renamed_parts_keep_their_score_and_update_every_arrangement_occurrence() {
     )
     .unwrap();
 
+    assert!(project.same_occurrence_ids(&before_rename));
     assert_eq!(renamed.name.as_str(), "opening theme");
     assert_eq!(
         project

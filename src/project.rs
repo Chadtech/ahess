@@ -125,7 +125,7 @@ impl fmt::Display for FrequencyVarianceError {
 
 impl Error for FrequencyVarianceError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Project {
     pub name: String,
     pub beat_duration_millis: BeatDurationMillis,
@@ -142,18 +142,57 @@ pub struct Project {
     voices: Vec<Voice>,
     pub parts: Vec<Part>,
     sequence: Vec<PartName>,
+    occurrence_ids: Vec<OccurrenceId>,
 }
+
+// Project content equality excludes session identities; undo history compares those separately.
+impl PartialEq for Project {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.beat_duration_millis == other.beat_duration_millis
+            && self.timing_variance == other.timing_variance
+            && self.frequency_variance == other.frequency_variance
+            && self.mix_normalization_enabled == other.mix_normalization_enabled
+            && self.seed == other.seed
+            && self.description == other.description
+            && self.tuning_system_id == other.tuning_system_id
+            && self.pitch_system == other.pitch_system
+            && self.voice_convolution == other.voice_convolution
+            && self.acoustic_scene == other.acoustic_scene
+            && self.next_voice_id == other.next_voice_id
+            && self.voices == other.voices
+            && self.parts == other.parts
+            && self.sequence == other.sequence
+    }
+}
+impl Eq for Project {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArrangementOccurrence {
     index: usize,
+    id: OccurrenceId,
     part_name: PartName,
     length: u32,
     first_beat: u64,
     last_beat: u64,
 }
 
+/// Session identity, retained by project clones and undo history; never inferred from a part name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct OccurrenceId(u64);
+
+impl OccurrenceId {
+    fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 impl ArrangementOccurrence {
+    pub fn id(&self) -> OccurrenceId {
+        self.id
+    }
+
     pub fn index(&self) -> usize {
         self.index
     }
@@ -198,6 +237,7 @@ impl Project {
             voices: Vec::new(),
             parts: Vec::new(),
             sequence: Vec::new(),
+            occurrence_ids: Vec::new(),
         }
     }
 
@@ -321,14 +361,14 @@ impl Project {
 
     #[cfg(test)]
     pub(crate) fn with_parts(mut self, parts: Vec<Part>) -> Self {
-        self.sequence = parts.iter().map(|part| part.name.clone()).collect();
+        self.set_sequence(parts.iter().map(|part| part.name.clone()).collect());
         self.parts = parts;
         self
     }
 
     #[cfg(test)]
     pub(crate) fn with_sequence(mut self, sequence: Vec<PartName>) -> Self {
-        self.sequence = sequence;
+        self.set_sequence(sequence);
         self
     }
 
@@ -363,6 +403,7 @@ impl Project {
                 next_beat = last_beat + 1;
                 Some(ArrangementOccurrence {
                     index,
+                    id: self.occurrence_ids[index],
                     part_name: part.name.clone(),
                     length: part.length,
                     first_beat,
@@ -373,7 +414,32 @@ impl Project {
     }
 
     pub fn set_sequence(&mut self, sequence: Vec<PartName>) {
+        // This replacement API retains the unchanged prefix (including append operations).
+        let prefix = self
+            .sequence
+            .iter()
+            .zip(&sequence)
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.occurrence_ids.truncate(prefix);
+        self.occurrence_ids
+            .extend((prefix..sequence.len()).map(|_| OccurrenceId::fresh()));
         self.sequence = sequence;
+    }
+
+    pub(crate) fn same_occurrence_ids(&self, other: &Self) -> bool {
+        self.occurrence_ids == other.occurrence_ids
+    }
+
+    /// Apply the explicit old-position mapping from an arrangement edit. New entries get new IDs.
+    pub(crate) fn retain_occurrence_ids(&mut self, previous: &Self, sources: &[Option<usize>]) {
+        assert_eq!(sources.len(), self.sequence.len());
+        self.occurrence_ids = sources
+            .iter()
+            .map(|source| {
+                source.map_or_else(OccurrenceId::fresh, |index| previous.occurrence_ids[index])
+            })
+            .collect();
     }
 
     pub fn add_part(&mut self, part: Part) {
