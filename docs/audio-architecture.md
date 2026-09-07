@@ -126,7 +126,42 @@ There should not be a long-lived representation in which a triggered voice can
 contain a pitched event or a pitched voice can contain a drum hit. Prepared
 playback data should retain the distinction with enums.
 
+### Score transformations are atomic part edits
+
+The transformations workspace edits the underlying selected parts once each, even
+when the arrangement contains repeated occurrences. All affected scores are
+prepared and validated before the existing project file transaction publishes
+any of them. A single history change captures the batch; undo restores all parts
+and redo restores the exact generated score text without drawing new randomness.
+
+Transpose advances through a periodic tuning's declared degrees, carrying into
+the next period; Western notation advances in semitones. Explicit keys advance
+in frequency order, with key names breaking ties. Out-of-range or invalid notes
+reject the entire operation. Rests, durations, and volumes are preserved.
+
+Volume randomization independently samples a uniform percentage per note, either
+multiplying its existing level by `1 + percentage / 100` or setting a percentage
+of full volume. Results round to the nearest byte and clamp to `00` through `FF`.
+The adjust-volume transformation adds a fixed signed number of percentage points
+of full volume to every note, then rounds to the nearest byte and clamps to the
+same limits. It preserves pitch, duration, and rests and uses the same atomic
+batch and history path as randomization.
+Six-character Radler strikes retain their duration pair and replace only volume.
+For example, adding 20 percentage points changes `40ff80` to `40ffB3`,
+preserving the first four characters and the six-character format.
+Other notes use an optional `@VV` hexadecimal volume suffix (for example `40@80`
+or `C4@80`), preserving `StrikeDuration::VoiceDefault`. The shared parser handles
+this suffix for validation, playback, and export. Existing exact explicit pitch
+keys take precedence over suffix syntax; an ambiguous generated expression is
+rejected. Existing score files retain their interpretation.
+
 ### Handwritten code defines DSP behavior
+
+Instrument implementations and their specialized rendering support live under
+`src/voice_rendering/`: clarinet, gamelan metallophone, Noitech bells, recovered
+voices and their historical convolution, and the macOS Surge host. `src/voice.rs`
+owns voice definitions and configuration; `src/playback.rs` schedules and mixes
+the instrument runtimes for both live playback and offline builds.
 
 Project configuration should select an implemented instrument and provide its
 meaningful parameters. It should not become a general-purpose DSP programming
@@ -239,6 +274,74 @@ characteristics of Balinese gamelan metallophones," JASA 127 (2010),
 doi:10.1121/1.3397234; Carterette, Kendall, and DeVale, "Comparative acoustical
 and psychoacoustical analyses of gamelan instrument tones," J. Acoust. Soc. Jpn.
 (E) 14 (1993).
+
+`clarinet` is a separately persisted native single-reed instrument; the existing
+`surge-xt-clarinet` remains unchanged. A nonlinear closing-reed reflection curve
+couples mouth pressure to a sign-inverting cylindrical-bore delay. Fractional
+round-trip delay compensates the bore loss filter's phase at the target frequency.
+The reed runs at four times the output rate; an eighth-order low-pass filter
+precedes decimation. DC removal and a radiation filter shape the dry output.
+A bounded, register- and volume-dependent soft shaper restores upper harmonics
+that the simplified bore underproduces. An asymmetric radiation term adds even
+harmonics in higher registers. Three broad peaking filters near 900, 1450, and
+2650 Hz model body coloration; score volume also strengthens this coloration.
+These radiation stages are empirical voicing, not a simulation of a register
+hole or tone-hole lattice. The instrument is an original reduced physical model, not a recording
+or a claim to reproduce a measured instrument/player.
+
+Score volume controls both amplitude and mouth pressure, with a stable minimum
+pressure so quiet notes still speak. Each note seeds the requested fundamental
+coherently in the preallocated delay history and begins with supported pressure.
+A separate 5–8 ms output ramp represents tonguing and prevents a discontinuity;
+it is capped at one fifth of the gate for very short notes. Soft notes use the
+longer end of that small range. This avoids waiting for an initially silent bore
+to self-excite, which previously delayed low-note onset by hundreds of milliseconds
+and could swallow a 313-ms staccato note. The seed is an initial condition of the
+existing physical model, not an added oscillator or a pre-rendered sample. A restrained
+65-ms breath-noise transient and band-limited ongoing turbulence give the attack
+and sustain different textures. Smooth deterministic noise at 2.3 and 7.1 Hz
+provides small aperiodic breath-expression changes, applied outside the bore's
+feedback loop. Trials modulating excitation pressure during startup could favor
+a higher mode at certain pitches, so the stable original excitation is retained.
+There is no random vibrato, detuning, external plugin, or wall-clock state. Filter
+and bore state and the fixed turbulence seed reset for each note, making repeated renders
+at the same rate and with the same prepared events identical. Project timing and
+frequency variance still apply through the ordinary deterministic score path.
+
+The voice is monophonic with two preallocated bore slots for short outgoing
+releases on articulation. It allocates neither on note-on nor per sample. Default
+notes blow for one beat; explicit durations set the breath gate, including the
+existing timing-offset subtraction. Breath tapers before that gate and the bore
+may ring for up to 80 milliseconds afterward. Retriggers release the previous
+note over 12 milliseconds. Live output and offline builds use the same runtime,
+including releases and downstream voice gain, spatialization, and room acoustics.
+
+The intended acoustic range is approximately concert D3–G6 (147–1568 Hz).
+Extensions are accepted from 20 Hz up to 40% of the output sample rate; outside
+that range the voice is silent, bounding delay memory and avoiding ultrasonic
+foldback. Realism outside the acoustic range is not implied. Automated tests
+measure pitch within three cents over the intended range at 44.1, 48, and 96 kHz,
+including very soft dynamics and non-twelve-tone frequencies. Perceptual realism
+still requires listening; period accuracy alone does not establish it.
+
+Design references: [Smith, Digital Waveguide Single-Reed Implementation](https://dsprelated.com/freebooks/pasp/Digital_Waveguide_Single_Reed_Implementation.html)
+and [UNSW, Clarinet acoustics](https://www.phys.unsw.edu.au/jw/clarinetacoustics.html).
+
+The September 6 realism revision also inspected the installed John Valentine
+`Winds/Clarinet.fxp` (revision 22, metadata license CC0) and Surge's general
+[Modern oscillator](https://github.com/surge-synthesizer/surge/blob/main/src/common/dsp/oscillators/ModernOscillator.cpp),
+[parameter definitions](https://github.com/surge-synthesizer/surge/blob/main/src/common/SurgeStorage.h),
+and [filter mapping](https://github.com/surge-synthesizer/surge/blob/main/src/common/FilterConfiguration.h).
+The patch is a synth recipe, not a dedicated clarinet source module. Its active
+Modern oscillator combines a narrow pulse with a small negative saw component,
+two unison voices, and retrigger disabled. The oscillator code selects a random
+starting phase in that mode. Colored noise, positive-comb and K35 low-pass filters,
+soft shaping, EQ, and a resonator effect further shape the patch. Macros include
+Breath, Overblow, Higher modes, and Bell Aah controls. The preset's Reverb 2 and
+Airwindows slots are disabled (`fx_disable = 49152`); they do not explain its
+sound. This inspection identifies mechanisms, not a proof of which one caused a
+particular unwanted Surge performance. Ahess adopts the broad voicing ideas in
+original Rust DSP; it neither imports Surge source nor changes the Surge preset.
 
 Each `VoiceType` owns immutable `VoiceDetails`: a description, exact source
 repository and path, and fidelity note. This metadata describes the instrument

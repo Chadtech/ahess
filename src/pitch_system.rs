@@ -441,6 +441,7 @@ impl PitchSystem {
         if value.is_empty() {
             return Ok(None);
         }
+        let (value, volume_override) = self.split_volume_suffix(value)?;
         let (pitch, duration, volume) = match self {
             Self::Periodic(system)
                 if matches!(system.notation(), PeriodicNotation::RadlerDigits { .. }) =>
@@ -503,8 +504,134 @@ impl PitchSystem {
         Ok(Some(Note {
             pitch: Pitch(pitch),
             duration,
-            volume,
+            volume: volume_override.unwrap_or(volume),
         }))
+    }
+
+    // An exact explicit key always wins over expression syntax.
+    fn split_volume_suffix<'a>(
+        &self,
+        value: &'a str,
+    ) -> Result<(&'a str, Option<Volume>), ResolvePitchError> {
+        if matches!(self, Self::Explicit(system) if system.pitches.contains_key(value)) {
+            return Ok((value, None));
+        }
+        let Some((pitch, suffix)) = value.rsplit_once('@') else {
+            return Ok((value, None));
+        };
+        let volume = if suffix.len() == 2 {
+            u8::from_str_radix(suffix, 16).ok()
+        } else {
+            None
+        }
+        .ok_or_else(|| {
+            ResolvePitchError::new("volume suffix must be @ followed by two hexadecimal digits")
+        })?;
+        Ok((pitch, Some(Volume::from_byte(volume))))
+    }
+
+    pub fn with_note_volume(
+        &self,
+        value: &str,
+        volume: Volume,
+    ) -> Result<String, ResolvePitchError> {
+        let Some(note) = self.parse_note(value)? else {
+            return Ok(value.to_owned());
+        };
+        self.resolve_note(&note)?;
+        if note.volume == volume {
+            return Ok(value.to_owned());
+        }
+        let (base, _) = self.split_volume_suffix(value.trim())?;
+        let text = if matches!(&note.pitch.0, PitchNotation::Radler(_)) && base.len() == 6 {
+            format!("{}{:02X}", &base[..4], volume.as_byte())
+        } else {
+            format!("{base}@{:02X}", volume.as_byte())
+        };
+        let parsed = self.parse_note(&text)?;
+        if parsed.as_ref().is_none_or(|parsed| {
+            parsed.pitch != note.pitch
+                || parsed.duration != note.duration
+                || parsed.volume != volume
+        }) {
+            return Err(ResolvePitchError::new(
+                "volume expression conflicts with a named pitch",
+            ));
+        }
+        Ok(text)
+    }
+
+    pub fn transpose_note(&self, value: &str, steps: i32) -> Result<String, ResolvePitchError> {
+        let Some(note) = self.parse_note(value)? else {
+            return Ok(value.to_owned());
+        };
+        self.resolve_note(&note)?;
+        if steps == 0 {
+            return Ok(value.to_owned());
+        }
+        let outside =
+            || ResolvePitchError::new("transposition is outside the notation's pitch range");
+        let (base, override_volume) = self.split_volume_suffix(value.trim())?;
+        let mut text = match (self, &note.pitch.0) {
+            (Self::Periodic(system), PitchNotation::Radler(number)) => {
+                let PeriodicNotation::RadlerDigits { place_value } = system.notation else {
+                    return Err(outside());
+                };
+                let count = system.degrees.len() as i64;
+                let index = (number / place_value.get()) as i64 * count
+                    + (number % place_value.get()) as i64
+                    + i64::from(steps);
+                if index < 0 {
+                    return Err(outside());
+                }
+                let pitch = (index / count) as u64 * place_value.get() + (index % count) as u64;
+                if pitch > 99 {
+                    return Err(outside());
+                }
+                format!("{pitch:02}{}", &base[2..])
+            }
+            (Self::Periodic(_), PitchNotation::Western(number)) => {
+                let pitch = i32::from(*number) + steps;
+                if !(0..=127).contains(&pitch) {
+                    return Err(outside());
+                }
+                if base.parse::<u8>().is_ok() {
+                    pitch.to_string()
+                } else {
+                    let names = [
+                        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+                    ];
+                    format!("{}{}", names[pitch as usize % 12], pitch / 12 - 1)
+                }
+            }
+            (Self::Explicit(system), PitchNotation::Named(name)) => {
+                let mut pitches = system.pitches.iter().collect::<Vec<_>>();
+                pitches.sort_by(|a, b| {
+                    a.1.as_hz()
+                        .total_cmp(&b.1.as_hz())
+                        .then_with(|| a.0.cmp(b.0))
+                });
+                let index = pitches
+                    .iter()
+                    .position(|(key, _)| *key == name)
+                    .ok_or_else(outside)? as i64
+                    + i64::from(steps);
+                if index < 0 {
+                    return Err(outside());
+                }
+                pitches
+                    .get(index as usize)
+                    .ok_or_else(outside)?
+                    .0
+                    .to_string()
+            }
+            _ => return Err(outside()),
+        };
+        if let Some(volume) = override_volume {
+            text = self.with_note_volume(&text, volume)?;
+        }
+        self.resolve_strike(&text)?;
+        Ok(text)
     }
 
     pub fn periodic(system: PeriodicPitchSystem) -> Self {
@@ -818,6 +945,35 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn transformations_preserve_expression_and_cross_radler_periods() {
+        use super::{StrikeDuration, Volume};
+        let system = radler(25.0);
+        let last = if let PitchSystem::Periodic(p) = &system {
+            p.degrees().len() - 1
+        } else {
+            unreachable!()
+        };
+        let pitch = format!("{}", 40 + last);
+        assert_eq!(system.transpose_note(&pitch, 1).unwrap(), "50");
+        assert_eq!(system.transpose_note("40027F", 1).unwrap(), "50027F");
+        assert!(system.transpose_note("00", -1).is_err());
+        assert_eq!(system.transpose_note("", 1).unwrap(), "");
+        let volume = system
+            .with_note_volume("40", Volume::from_byte(128))
+            .unwrap();
+        assert_eq!(volume, "40@80");
+        let parsed = system.parse_note(&volume).unwrap().unwrap();
+        assert_eq!(parsed.duration(), StrikeDuration::VoiceDefault);
+        assert_eq!(parsed.volume().as_byte(), 128);
+        assert_eq!(system.transpose_note(&volume, 1).unwrap(), "50@80");
+        let western = PitchSystem::western_twelve_tone();
+        assert_eq!(western.transpose_note("B4@80", 1).unwrap(), "C5@80");
+        assert_eq!(western.transpose_note("rest", 1).unwrap(), "rest");
+        assert!(western.transpose_note("127", 1).is_err());
+        assert!(western.parse_note("C4@GG").is_err());
     }
 
     #[test]

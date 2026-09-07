@@ -638,7 +638,7 @@ fn project_bar(project_title: SharedString, actions: Vec<AnyElement>) -> impl In
         .items_center()
         .justify_between()
         .gap(s::S5)
-        .border_b_2()
+        .border_b(s::BORDER_WIDTH)
         .border_color(s::GRAY1)
         .bg(s::GRAY2)
         .px(s::S5)

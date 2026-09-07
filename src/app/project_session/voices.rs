@@ -932,6 +932,7 @@ mod tests {
         });
         cx.run_until_parked();
 
+        assert!(cx.debug_bounds("voice-type-clarinet").is_some());
         assert!(cx.debug_bounds("voice-type-surge-xt-clarinet").is_some());
         assert!(cx.debug_bounds("voice-type-sin").is_none());
 

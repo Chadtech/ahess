@@ -65,6 +65,8 @@ pub const SCORE_PITCH_TEXT: Rgba = BLUE2;
 pub const SCORE_DURATION_TEXT: Rgba = GRAY4;
 pub const SCORE_VOLUME_TEXT: Rgba = GRAY6;
 
+pub const BORDER_WIDTH: Pixels = S1;
+pub const MENU_BORDER_WIDTH: Pixels = S2;
 pub const CONTENT_PADDING: Pixels = S5;
 pub const MODAL_BACKDROP: Rgba = Rgba {
     r: GREEN1.r,
@@ -116,7 +118,7 @@ fn bevel_top(color: Rgba) -> impl IntoElement {
         .top_0()
         .left_0()
         .right_0()
-        .h(S2)
+        .h(BORDER_WIDTH)
         .bg(color)
 }
 
@@ -126,7 +128,7 @@ fn bevel_left(color: Rgba) -> impl IntoElement {
         .top_0()
         .bottom_0()
         .left_0()
-        .w(S2)
+        .w(BORDER_WIDTH)
         .bg(color)
 }
 
@@ -136,7 +138,7 @@ fn bevel_bottom(color: Rgba) -> impl IntoElement {
         .bottom_0()
         .left_0()
         .right_0()
-        .h(S2)
+        .h(BORDER_WIDTH)
         .bg(color)
 }
 
@@ -146,6 +148,6 @@ fn bevel_right(color: Rgba) -> impl IntoElement {
         .top_0()
         .bottom_0()
         .right_0()
-        .w(S2)
+        .w(BORDER_WIDTH)
         .bg(color)
 }

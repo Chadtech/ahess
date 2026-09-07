@@ -23,6 +23,15 @@ or when it defines how a shared component is used.
 - use `DIALOG_TITLE_TEXT` for text in a dialog title bar. It is the same dark
   gray as the panel surrounding the title bar.
 
+## borders
+
+- use `BORDER_WIDTH` (1 pixel) for interface borders, including raised and
+  sunken bevels, separators, focus, validation, and playback outlines.
+- use `MENU_BORDER_WIDTH` (2 pixels) for dropdown, action, and context menus
+  so their edges remain distinct from the surrounding controls.
+- keep the existing light and dark bevel colors to distinguish raised and
+  sunken surfaces.
+
 ## spacing
 
 - use `CONTENT_PADDING` (`S5`) for padding around workspace and dialog content
@@ -79,7 +88,7 @@ or when it defines how a shared component is used.
 - use `view::dropdown::Dropdown` for a compact choice among a short list of
   mutually exclusive options.
 - the trigger displays the selected option and the menu uses a solid `GRAY1`
-  border.
+  border using `MENU_BORDER_WIDTH`.
 - the menu is at least as wide as its trigger, expands to keep concise option
   labels on one line, and scrolls vertically when its contents exceed `S9`.
 - use the dropdown's capped-trigger variant in dense horizontal toolbars. It
@@ -175,6 +184,10 @@ or when it defines how a shared component is used.
   a form. It places a full-width search field above a roomy, sunken, vertically
   scrollable list; filter the rows as the user types and show a useful empty
   message when there are no matches.
+- use `view::multi_selection_list::MultiSelectionList` for independent inclusion
+  of multiple resources. Clicking or pressing space/enter toggles just that row;
+  arrows move keyboard focus. Use ordinary selected-row highlighting and show
+  the selection count and a concise toggle hint in the containing form.
 - use `view::range_selection_list::RangeSelectionList` when an ordered list
   selects one contiguous range rather than independent rows.
 - a range selection starts with a single clicked row and extends by dragging,
@@ -199,7 +212,8 @@ or when it defines how a shared component is used.
 - use `view::status_bar::bar` for a fixed-height status area at the bottom of a
   workspace.
 - keep the bar present in its neutral, blank state so status changes never
-  reflow the workspace.
+  reflow the workspace. Blend its empty-state border into its background; show
+  the separator only when there is a message.
 - place workspace status bars outside content padding so they span the full
   width and meet the bottom and side edges of the window.
 - separate the bar from workspace content with a top border only; do not frame

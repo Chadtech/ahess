@@ -475,7 +475,7 @@ fn playback_row_border(id: ElementId, row: usize) -> gpui::Div {
     gpui::div()
         .absolute()
         .inset_0()
-        .border_2()
+        .border(s::BORDER_WIDTH)
         .border_color(s::PLAYBACK_ROW_BORDER)
         .debug_selector(move || format!("{id}-playback-row-{row}"))
 }

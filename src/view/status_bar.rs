@@ -30,8 +30,12 @@ pub fn bar<T>(status: Status<T>) -> gpui::Div {
         .min_w(s::S0)
         .h(s::S6)
         .overflow_hidden()
-        .border_t_2()
-        .border_color(s::GRAY1)
+        .border_t(s::BORDER_WIDTH)
+        .border_color(if message.is_some() {
+            s::GRAY1
+        } else {
+            background
+        })
         .bg(background)
         .px(s::S4)
         .text_color(text_color)

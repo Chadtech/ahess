@@ -3,29 +3,23 @@ mod app;
 mod audio_build;
 pub mod convolution;
 mod cpal_spike;
-mod gamelan_metallophone;
 mod gpui_spike;
-mod historical_convolution;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 mod mts_esp;
-mod noitech_bell_a;
-mod noitech_bell_b;
 mod palette;
 pub mod part;
 pub mod pitch_system;
 mod playback;
 pub mod project;
-mod recovered_voice;
 pub mod seed;
 mod style;
-#[cfg(target_os = "macos")]
-mod surge_xt;
 pub mod tuning_system;
 mod view;
 pub mod voice;
 pub mod voice_name;
+mod voice_rendering;
 
 use clap::{Parser, Subcommand};
 

@@ -58,5 +58,11 @@ fn input_field(input: Entity<TextInput>, invalid: bool) -> gpui::Div {
         .w_full()
         .min_w(s::S0)
         .child(s::sunken(input).overflow_hidden())
-        .children(invalid.then(|| div().absolute().inset_0().border_2().border_color(s::RED2)))
+        .children(invalid.then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .border(s::BORDER_WIDTH)
+                .border_color(s::RED2)
+        }))
 }

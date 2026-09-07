@@ -11,7 +11,7 @@ pub fn menu(actions: Vec<gpui::Div>) -> gpui::Div {
         .top_0()
         .w(s::S9)
         .bg(s::GREEN3)
-        .border_2()
+        .border(s::MENU_BORDER_WIDTH)
         .border_color(s::GRAY1)
         .whitespace_nowrap()
         .occlude()

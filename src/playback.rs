@@ -15,19 +15,20 @@ use cpal::{
 
 use crate::{
     acoustics::{AcousticScene, Point3Meters, StereoFrame, VoiceSpatializer},
-    gamelan_metallophone::GamelanMetallophoneRuntime,
-    noitech_bell_a::NoitechBellARuntime,
-    noitech_bell_b::NoitechBellBRuntime,
     part::{Part, PartScore},
     pitch_system::{FrequencyHz, Strike, StrikeDuration},
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
-    recovered_voice::RecoveredVoiceRuntime,
     seed::{standard_normal, Seed},
+    voice_rendering::clarinet::ClarinetRuntime,
+    voice_rendering::gamelan_metallophone::GamelanMetallophoneRuntime,
+    voice_rendering::noitech_bell_a::NoitechBellARuntime,
+    voice_rendering::noitech_bell_b::NoitechBellBRuntime,
+    voice_rendering::recovered_voice::RecoveredVoiceRuntime,
 };
 #[cfg(target_os = "macos")]
 use crate::{
     mts_esp::{MtsEspMaster, MtsNoteAddress},
-    surge_xt::{SurgeXt, SurgeXtPatch},
+    voice_rendering::surge_xt::{SurgeXt, SurgeXtPatch},
 };
 
 const MASTER_GAIN: f32 = 0.22;
@@ -953,6 +954,7 @@ impl VoiceRuntime {
 
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
+    Clarinet(ClarinetRuntime),
     GamelanMetallophone(GamelanMetallophoneRuntime),
     NoitechBellA(NoitechBellARuntime),
     NoitechBellB(NoitechBellBRuntime),
@@ -981,6 +983,7 @@ impl InstrumentRuntime {
             | VoiceType::HarmonicSaw
             | VoiceType::RadlerDullSaw
             | VoiceType::RadlerHarmonics => Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type))),
+            VoiceType::Clarinet => Ok(Self::Clarinet(ClarinetRuntime::new(sample_rate))),
             VoiceType::GamelanMetallophone => {
                 Ok(Self::GamelanMetallophone(GamelanMetallophoneRuntime::new()))
             }
@@ -1021,6 +1024,7 @@ impl InstrumentRuntime {
     fn matches(&self, voice_type: VoiceType, voice_index: usize, voice_count: usize) -> bool {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
+            Self::Clarinet(_) => voice_type == VoiceType::Clarinet,
             Self::GamelanMetallophone(_) => voice_type == VoiceType::GamelanMetallophone,
             Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
             Self::NoitechBellB(_) => voice_type == VoiceType::NoitechBellB,
@@ -1098,6 +1102,21 @@ impl InstrumentRuntime {
                     }
                 }
                 runtime.sample(sample_rate)
+            }
+            Self::Clarinet(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(strike) = voice.strikes[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            let gate = u32::from(strike.duration.beats_or_one())
+                                .saturating_mul(beat_length)
+                                .saturating_sub(delay)
+                                .max(1);
+                            runtime.trigger(strike.frequency.as_hz_f32(), strike.volume, gate);
+                        }
+                    }
+                }
+                runtime.sample()
             }
             Self::GamelanMetallophone(runtime) => {
                 if let Some(beat_index) = beat_index {
@@ -1196,6 +1215,7 @@ impl SurgeXtRuntime {
             VoiceType::Sin
             | VoiceType::Saw
             | VoiceType::HarmonicSaw
+            | VoiceType::Clarinet
             | VoiceType::GamelanMetallophone
             | VoiceType::NoitechBellA
             | VoiceType::NoitechBellB
@@ -1448,6 +1468,7 @@ impl OscillatorRuntime {
             VoiceType::RadlerHarmonics => Self::RadlerHarmonics { phase: 0.0 },
             VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
             VoiceType::NoitechBellB => unreachable!("Noitech Bell B has a tail-aware runtime"),
+            VoiceType::Clarinet => unreachable!("clarinet has a reed-and-bore runtime"),
             VoiceType::GamelanMetallophone => {
                 unreachable!("gamelan metallophone has a tail-aware runtime")
             }
@@ -2390,6 +2411,60 @@ mod tests {
     }
 
     #[test]
+    fn clarinet_radler_articulation_and_releases_match_live_and_offline() {
+        let pitch_system = PitchSystem::periodic(
+            PeriodicPitchSystem::new(
+                "clarinet test",
+                FrequencyHz::new(16.0).unwrap(),
+                Interval::ratio(2, 1).unwrap(),
+                vec![
+                    Interval::ratio(1, 1).unwrap(),
+                    Interval::ratio(5, 4).unwrap(),
+                    Interval::ratio(3, 2).unwrap(),
+                    Interval::ratio(15, 8).unwrap(),
+                ],
+                PeriodicNotation::radler_digits(10).unwrap(),
+            )
+            .unwrap(),
+        );
+        let project = Project::new("clarinet", 100, 9, Seed::new(17))
+            .with_pitch_system(pitch_system)
+            .with_voices(vec![Voice::new(1, "wind", VoiceType::Clarinet)]);
+        let part = Part::new("phrase", 12);
+        let score = PartScore::from_rows(
+            [
+                "430304", "", "", "4202ff", "", "400180", "410100", "", "40", "", "", "",
+            ]
+            .into_iter()
+            .map(|cell| vec![cell.to_string()])
+            .collect(),
+        );
+        for rate in [44_100, 48_000, 96_000] {
+            let playback_loop = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+            let mut live = AudioEngine::new(
+                rate as f32,
+                Arc::new(Mutex::new(playback_loop.clone())),
+                Arc::new(AtomicU64::new(1)),
+            )
+            .unwrap();
+            let mut offline = OfflineRenderer::new(playback_loop.clone(), rate).unwrap();
+            let mut repeat = OfflineRenderer::new(playback_loop, rate).unwrap();
+            let frames = beat_length_samples(project.beat_duration_millis, rate as f32) * 12;
+            let mut peak = 0.0_f32;
+            for _ in 0..frames {
+                let (frame, stems) = offline.next_frame().unwrap();
+                let (repeated, _) = repeat.next_frame().unwrap();
+                assert_eq!(frame, repeated);
+                assert_eq!(frame, live.next_frame());
+                assert_eq!(frame, stems[0]);
+                peak = peak.max(frame.left.abs());
+            }
+            assert!(peak > 0.02);
+            assert!(offline.next_frame().is_none());
+        }
+    }
+
+    #[test]
     fn every_voice_type_matches_between_live_and_offline_rendering() {
         for voice_type in VoiceType::BUILT_IN {
             let project = Project::new("test", 8, 0, Seed::new(1))
@@ -2411,6 +2486,7 @@ mod tests {
                 assert_eq!(voice_frames[0], live_frame);
             }
             let tail_bounds = match voice_type {
+                VoiceType::Clarinet => Some((3_800, 3_900)),
                 VoiceType::NoitechBellA => Some((200_000, 250_000)),
                 VoiceType::NoitechBellB => Some((160_000, 200_000)),
                 VoiceType::NoitechBellG

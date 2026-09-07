@@ -890,7 +890,7 @@ impl Render for TextInput {
             .text_size(s::TEXT_SIZE)
             .text_color(s::TEXT_DEFAULT)
             .bg(self.background)
-            .border_1()
+            .border(s::BORDER_WIDTH)
             .border_color(s::GREEN3)
             .child(TextElement { input: cx.entity() })
     }

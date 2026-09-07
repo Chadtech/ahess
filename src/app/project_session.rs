@@ -12,6 +12,7 @@ mod loop_range;
 mod parts;
 mod project_settings;
 mod score;
+mod transformations;
 mod voices;
 
 use std::{
@@ -106,6 +107,7 @@ pub struct Model {
     settings_button: Entity<Button>,
     parts_button: Entity<Button>,
     voices_button: Entity<Button>,
+    transformations_button: Entity<Button>,
     build_button: Entity<Button>,
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
@@ -227,6 +229,7 @@ struct Workspace {
     loop_editor: Entity<LoopWorkspace>,
     project_settings: Entity<ProjectSettingsWorkspace>,
     audio_build: Entity<BuildWorkspace>,
+    transformations: Entity<transformations::TransformationsWorkspace>,
 }
 
 impl Workspace {
@@ -244,6 +247,7 @@ enum WorkspaceSection {
     Loop,
     Project,
     Build,
+    Transformations,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -256,6 +260,7 @@ pub(super) enum WorkspaceSectionKind {
     Loop,
     Project,
     Build,
+    Transformations,
 }
 
 impl WorkspaceSection {
@@ -267,6 +272,7 @@ impl WorkspaceSection {
             WorkspaceSectionKind::Loop => Self::Loop,
             WorkspaceSectionKind::Project => Self::Project,
             WorkspaceSectionKind::Build => Self::Build,
+            WorkspaceSectionKind::Transformations => Self::Transformations,
         }
     }
 
@@ -278,6 +284,7 @@ impl WorkspaceSection {
             Self::Loop => WorkspaceSectionKind::Loop,
             Self::Project => WorkspaceSectionKind::Project,
             Self::Build => WorkspaceSectionKind::Build,
+            Self::Transformations => WorkspaceSectionKind::Transformations,
         }
     }
 
@@ -286,7 +293,7 @@ impl WorkspaceSection {
             Self::Score { overlay } => overlay.is_some(),
             Self::Parts { overlay } => overlay.is_some(),
             Self::Voices { overlay } => overlay.is_some(),
-            Self::Loop | Self::Project | Self::Build => false,
+            Self::Loop | Self::Project | Self::Build | Self::Transformations => false,
         }
     }
 
@@ -306,7 +313,8 @@ impl WorkspaceSection {
             | Self::Voices { overlay: None }
             | Self::Loop
             | Self::Project
-            | Self::Build => None,
+            | Self::Build
+            | Self::Transformations => None,
         }
     }
 }
@@ -402,6 +410,8 @@ impl Model {
         let settings_button = cx.new(|_| Button::new("project-settings", "project"));
         let parts_button = cx.new(|_| Button::new("parts", "parts"));
         let voices_button = cx.new(|_| Button::new("voices", "voices"));
+        let transformations_button =
+            cx.new(|_| Button::new("transformations-workspace", "transformations"));
         let build_button = cx.new(|_| Button::new("build-workspace", "build"));
         let close_button = cx.new(|_| Button::new("close-project", "close project"));
         let pane_count_dropdown =
@@ -420,6 +430,13 @@ impl Model {
         cx.subscribe(&parts_button, Self::on_parts_clicked).detach();
         cx.subscribe(&voices_button, Self::on_voices_clicked)
             .detach();
+        cx.subscribe(
+            &transformations_button,
+            |this, _, _: &button::Clicked, cx| {
+                this.set_workspace_section(WorkspaceSection::Transformations, cx);
+            },
+        )
+        .detach();
         cx.subscribe(&build_button, Self::on_build_clicked).detach();
         cx.subscribe(&close_button, Self::on_close_clicked).detach();
         cx.subscribe(&pane_count_dropdown, Self::on_pane_count_selected)
@@ -478,6 +495,17 @@ impl Model {
         let audio_build = cx.new(move |cx| BuildWorkspace::new(build_project, cx));
         cx.subscribe(&audio_build, Self::on_build_request).detach();
 
+        let transformation_parts = project
+            .parts()
+            .iter()
+            .map(|part| part.name.clone())
+            .collect();
+        let transformations = cx.new(|cx| {
+            transformations::TransformationsWorkspace::new(transformation_parts, Vec::new(), cx)
+        });
+        cx.subscribe(&transformations, Self::on_transformation)
+            .detach();
+
         let initial_history = ProjectHistory::new(HistoryState::new(Arc::new(project.clone()), []));
         let mut model = Self {
             project,
@@ -489,11 +517,13 @@ impl Model {
                 loop_editor: loop_workspace,
                 project_settings,
                 audio_build,
+                transformations,
             },
             score_button,
             settings_button,
             parts_button,
             voices_button,
+            transformations_button,
             build_button,
             close_button,
             pane_count_dropdown,
@@ -616,6 +646,7 @@ impl Model {
                     self.score_button.clone(),
                     self.parts_button.clone(),
                     self.voices_button.clone(),
+                    self.transformations_button.clone(),
                     self.loop_button.clone(),
                     self.settings_button.clone(),
                     self.build_button.clone(),
@@ -627,8 +658,10 @@ impl Model {
     }
 
     pub fn active_overlay(&self) -> Option<AnyElement> {
-        if let Some(ProjectOverlay::ConfirmClose(overlay)) = &self.project_overlay {
-            return Some(overlay.clone().into_any_element());
+        if let Some(overlay) = &self.project_overlay {
+            return Some(match overlay {
+                ProjectOverlay::ConfirmClose(dialog) => dialog.clone().into_any_element(),
+            });
         }
         self.workspace.section.overlay_element()
     }
@@ -872,7 +905,45 @@ impl Model {
         .map_err(|error| error.to_string())?;
 
         self.history_activity = HistoryActivity::Restoring;
-        self.apply_history_state(target, cx);
+        if !project_changed && self.project.same_occurrence_ids(&target.project) {
+            // Keep unrelated documents and their pending autosaves intact for score-only batches.
+            for entry in &self.score_documents {
+                if !affected_parts
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&entry.part_name))
+                {
+                    continue;
+                }
+                let score = target
+                    .score(&entry.part_name)
+                    .expect("restored score exists");
+                let saved = target
+                    .saved_score(&entry.part_name)
+                    .expect("restored saved score exists");
+                let part = target
+                    .project
+                    .part(&entry.part_name)
+                    .expect("restored part exists")
+                    .clone();
+                entry.document.update(cx, |document, cx| {
+                    document.restore_history_content(
+                        target.project.as_ref().clone(),
+                        part,
+                        score.as_ref().clone(),
+                        score != saved,
+                        cx,
+                    )
+                });
+            }
+            self.workspace
+                .audio_build
+                .update(cx, |workspace, cx| workspace.mark_project_changed(cx));
+            if self.playback.is_some() {
+                self.update_live_playback(cx);
+            }
+        } else {
+            self.apply_history_state(target, cx);
+        }
         self.history_activity = HistoryActivity::Recording;
         Ok(())
     }
@@ -1069,6 +1140,10 @@ impl Model {
             (
                 &self.voices_button,
                 selected == WorkspaceSectionKind::Voices,
+            ),
+            (
+                &self.transformations_button,
+                selected == WorkspaceSectionKind::Transformations,
             ),
             (&self.loop_button, selected == WorkspaceSectionKind::Loop),
             (
@@ -2294,6 +2369,17 @@ impl Model {
     }
 
     fn sync_workspace_project(&self, cx: &mut Context<Self>) {
+        self.workspace.transformations.update(cx, |workspace, cx| {
+            workspace.sync_parts(
+                self.project
+                    .parts()
+                    .iter()
+                    .map(|part| part.name.clone())
+                    .collect(),
+                cx,
+            );
+        });
+
         let project = self.project.clone();
         let parts = project.parts().to_vec();
         let sequence = project.sequence().to_vec();
@@ -3184,6 +3270,9 @@ impl Render for Model {
             WorkspaceSection::Loop => self.workspace.loop_editor.clone().into_any_element(),
             WorkspaceSection::Project => self.workspace.project_settings.clone().into_any_element(),
             WorkspaceSection::Build => self.workspace.audio_build.clone().into_any_element(),
+            WorkspaceSection::Transformations => {
+                self.workspace.transformations.clone().into_any_element()
+            }
         }
     }
 }

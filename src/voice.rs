@@ -129,6 +129,7 @@ pub enum VoiceType {
     Saw,
     HarmonicSaw,
     GamelanMetallophone,
+    Clarinet,
     NoitechBellA,
     NoitechBellB,
     NoitechBellG,
@@ -160,11 +161,12 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 31] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::GamelanMetallophone,
+        Self::Clarinet,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -193,11 +195,12 @@ impl VoiceType {
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 27] = [
+    pub(crate) const BUILT_IN: [Self; 28] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::GamelanMetallophone,
+        Self::Clarinet,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -228,6 +231,7 @@ impl VoiceType {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic saw",
+            Self::Clarinet => "clarinet",
             Self::GamelanMetallophone => "gamelan metallophone",
             Self::NoitechBellA => "Noitech Bell A",
             Self::NoitechBellB => "Noitech Bell B",
@@ -263,6 +267,7 @@ impl VoiceType {
             Self::Sin => "sin",
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic-saw",
+            Self::Clarinet => "clarinet",
             Self::GamelanMetallophone => "gamelan-metallophone",
             Self::NoitechBellA => "noitech-bell-a",
             Self::NoitechBellB => "noitech-bell-b",
@@ -342,6 +347,11 @@ impl VoiceType {
                 source: "Ahess built-in voice",
                 fidelity: "Native Ahess implementation.",
             },
+            Self::Clarinet => VoiceDetails {
+                description: "A native clarinet with a nonlinear reed, resonant air column, shaped body resonances, breathy articulation, and repeatable breath expression.",
+                source: "Ahess original DSP — src/voice_rendering/clarinet.rs; informed by single-reed acoustics and John Valentine’s CC0 Surge Clarinet preset",
+                fidelity: "Deterministic reduced physical model with empirical register voicing; no samples or external plugin. Designed for the acoustic clarinet range, with synthesized extensions from 20 Hz to 40% of the sample rate.",
+            },
             Self::GamelanMetallophone => VoiceDetails {
                 description: "A bronze-bar voice with a dense sine-built mallet-noise impulse, measured gamelan-like inharmonic modes, resonator tones, independent fade-outs, and restrained four-hertz ombak shimmer.",
                 source: "Ahess original voice informed by published measurements of Balinese gangsa and Javanese gender/saron spectra",
@@ -369,7 +379,7 @@ impl VoiceType {
             },
             Self::NoitechBellHV2 => VoiceDetails {
                 description: "Bell H with gently beating bronze resonances and settling gong-like upper tones. Note volume controls strike strength: soft notes are rounder; hard notes bring out upper tones and shimmer.",
-                source: "Ahess variation on Chadtech/BellsJobot — buildBellsH.coffee; src/recovered_voice.rs",
+                source: "Ahess variation on Chadtech/BellsJobot — buildBellsH.coffee; src/voice_rendering/recovered_voice.rs",
                 fidelity: "An original church-bell and gong-inspired variation, retaining Bell H's nine core modes and expensiveE.wav convolution at 0.25; not a measured physical model.",
             },
             Self::NoitechBellI => VoiceDetails {
@@ -505,6 +515,17 @@ mod tests {
         let stored: StoredVoiceType = toml::from_str("voice_type = \"noitech-bell-h-v2\"").unwrap();
         assert_eq!(stored.voice_type, VoiceType::NoitechBellHV2);
         assert_eq!(stored.voice_type.config_value(), "noitech-bell-h-v2");
+    }
+
+    #[test]
+    fn native_and_surge_clarinets_have_distinct_persisted_identities() {
+        for voice_type in [VoiceType::Clarinet, VoiceType::SurgeXtClarinet] {
+            let stored: StoredVoiceType =
+                toml::from_str(&format!("voice_type = {:?}", voice_type.config_value())).unwrap();
+            assert_eq!(stored.voice_type, voice_type);
+        }
+        assert!(!VoiceType::Clarinet.uses_surge_xt());
+        assert!(VoiceType::SurgeXtClarinet.uses_surge_xt());
     }
 
     #[test]

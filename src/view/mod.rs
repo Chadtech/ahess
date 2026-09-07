@@ -13,3 +13,5 @@ pub mod status_bar;
 pub mod text_input;
 pub mod workspace;
 pub mod workspace_tile;
+
+pub mod multi_selection_list;

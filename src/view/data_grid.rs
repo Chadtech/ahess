@@ -300,7 +300,7 @@ fn playback_row_border(row: usize) -> gpui::Div {
     div()
         .absolute()
         .inset_0()
-        .border_2()
+        .border(s::BORDER_WIDTH)
         .border_color(s::PLAYBACK_ROW_BORDER)
         .debug_selector(move || format!("score-playback-row-{row}"))
 }
@@ -356,7 +356,13 @@ fn input_cell(input: Entity<TextInput>, invalid: bool, cell_width: Pixels) -> gp
         .h(row_height())
         .bg(s::GREEN3)
         .child(s::sunken(input).size_full())
-        .children(invalid.then(|| div().absolute().inset_0().border_2().border_color(s::RED2)))
+        .children(invalid.then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .border(s::BORDER_WIDTH)
+                .border_color(s::RED2)
+        }))
 }
 
 fn row_height() -> Pixels {

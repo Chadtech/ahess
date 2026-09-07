@@ -6,9 +6,9 @@ use crate::voice::VoiceType;
 const SOURCE_SAMPLE_RATE: usize = 44_100;
 const CONVOLUTION_BLOCK_SIZE: usize = 128;
 const EXPENSIVE_E_WAV: &[u8] =
-    include_bytes!("../assets/impulse-responses/recovered-noitech/expensiveE.wav");
+    include_bytes!("../../assets/impulse-responses/recovered-noitech/expensiveE.wav");
 const HOME_CLAP_1_WAV: &[u8] =
-    include_bytes!("../assets/impulse-responses/recovered-noitech/home_clap_1.wav");
+    include_bytes!("../../assets/impulse-responses/recovered-noitech/home_clap_1.wav");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HistoricalImpulse {

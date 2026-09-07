@@ -201,7 +201,7 @@ impl ActionMenu {
             .flex()
             .flex_col()
             .bg(s::GREEN3)
-            .border_2()
+            .border(s::MENU_BORDER_WIDTH)
             .border_color(s::GRAY1)
             .children(rows)
             .absolute()

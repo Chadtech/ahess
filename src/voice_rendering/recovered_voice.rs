@@ -1,4 +1,5 @@
-use crate::{historical_convolution::HistoricalBellConvolver, voice::VoiceType};
+use super::historical_convolution::HistoricalBellConvolver;
+use crate::voice::VoiceType;
 
 const SOURCE_SAMPLE_RATE: f32 = 44_100.0;
 const SOURCE_RAMP_SAMPLES: f32 = 60.0;
@@ -270,6 +271,7 @@ fn voice_sample(
         VoiceType::Sin
         | VoiceType::Saw
         | VoiceType::HarmonicSaw
+        | VoiceType::Clarinet
         | VoiceType::GamelanMetallophone
         | VoiceType::NoitechBellA
         | VoiceType::NoitechBellB
