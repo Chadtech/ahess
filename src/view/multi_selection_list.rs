@@ -1,7 +1,8 @@
 //! Independent row selection with the same surfaces as ordinary selection lists.
 use crate::{style as s, view::selection_list};
 use gpui::{
-    prelude::*, Context, EventEmitter, FocusHandle, KeyDownEvent, MouseButton, SharedString, Window,
+    prelude::*, Context, EventEmitter, FocusHandle, KeyDownEvent, MouseButton, MouseUpEvent,
+    SharedString, Window,
 };
 use std::collections::BTreeSet;
 
@@ -10,9 +11,15 @@ struct Row {
     label: SharedString,
     focus: FocusHandle,
 }
+struct DragSelection {
+    anchor: usize,
+    include: bool,
+    original: BTreeSet<usize>,
+}
 pub struct MultiSelectionList {
     rows: Vec<Row>,
     selected: BTreeSet<usize>,
+    drag: Option<DragSelection>,
 }
 impl EventEmitter<Changed> for MultiSelectionList {}
 impl MultiSelectionList {
@@ -34,6 +41,7 @@ impl MultiSelectionList {
                 })
                 .collect(),
             selected,
+            drag: None,
         }
     }
     pub fn sync_rows(
@@ -42,6 +50,7 @@ impl MultiSelectionList {
         selected: impl IntoIterator<Item = usize>,
         cx: &mut Context<Self>,
     ) {
+        self.drag = None;
         let mut previous = std::mem::take(&mut self.rows);
         self.selected = selected
             .into_iter()
@@ -64,6 +73,33 @@ impl MultiSelectionList {
     }
     pub fn selected(&self) -> impl Iterator<Item = usize> + '_ {
         self.selected.iter().copied()
+    }
+    fn start_drag(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.drag = Some(DragSelection {
+            anchor: index,
+            include: !self.selected.contains(&index),
+            original: self.selected.clone(),
+        });
+        self.extend_drag(index, cx);
+    }
+    fn extend_drag(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(drag) = &self.drag else { return };
+        let mut selected = drag.original.clone();
+        for row in drag.anchor.min(index)..=drag.anchor.max(index) {
+            if drag.include {
+                selected.insert(row);
+            } else {
+                selected.remove(&row);
+            }
+        }
+        if self.selected != selected {
+            self.selected = selected;
+            cx.emit(Changed);
+            cx.notify();
+        }
+    }
+    fn end_drag(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.drag = None;
     }
     fn toggle(&mut self, index: usize, cx: &mut Context<Self>) {
         if !self.selected.remove(&index) {
@@ -90,9 +126,18 @@ impl Render for MultiSelectionList {
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
                                 this.rows[index].focus.focus(window);
-                                this.toggle(index, cx);
+                                this.start_drag(index, cx);
                             }),
                         )
+                        .on_mouse_move(cx.listener(
+                            move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                if event.dragging() {
+                                    this.extend_drag(index, cx);
+                                } else {
+                                    this.drag = None;
+                                }
+                            },
+                        ))
                         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                             match event.keystroke.key.as_str() {
                                 "space" | "enter" => {
@@ -109,7 +154,10 @@ impl Render for MultiSelectionList {
                 )
             })
             .collect();
-        selection_list::list("multi-selection", "no items", rows).w_full()
+        selection_list::list("multi-selection", "no items", rows)
+            .w_full()
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_drag))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::end_drag))
     }
 }
 

@@ -73,7 +73,7 @@ pub struct TextInput {
     is_selecting: bool,
     background: Rgba,
     cell_interaction: Option<CellInteraction>,
-    six_character_pair_colors: Option<[Rgba; 3]>,
+    score_note_colors: Option<[Rgba; 3]>,
 }
 
 pub struct Changed;
@@ -98,7 +98,7 @@ impl TextInput {
             is_selecting: false,
             background: s::GREEN3,
             cell_interaction: None,
-            six_character_pair_colors: None,
+            score_note_colors: None,
         }
     }
 
@@ -153,9 +153,10 @@ impl TextInput {
         self
     }
 
-    /// Color the pairs of a six-character ASCII value without splitting the input.
-    pub fn with_six_character_pair_colors(mut self, colors: [Rgba; 3]) -> Self {
-        self.six_character_pair_colors = Some(colors);
+    /// Color six-character note pairs or five-character pitch@volume notation.
+    /// Keep the value as one continuous editable input.
+    pub fn with_score_note_colors(mut self, colors: [Rgba; 3]) -> Self {
+        self.score_note_colors = Some(colors);
         self
     }
 
@@ -667,8 +668,13 @@ impl Element for TextElement {
             vec![run]
         };
 
-        if let Some(colors) = input.six_character_pair_colors {
-            if !is_placeholder && display_text.len() == 6 && display_text.is_ascii() {
+        if let Some(colors) = input.score_note_colors {
+            let boundaries = match display_text.as_bytes() {
+                [_, _, _, _, _, _] if display_text.is_ascii() => Some([2, 4, 6]),
+                [_, _, b'@', _, _] if display_text.is_ascii() => Some([2, 3, 5]),
+                _ => None,
+            };
+            if let Some(boundaries) = boundaries.filter(|_| !is_placeholder) {
                 let mut offset = 0;
                 runs = runs
                     .into_iter()
@@ -676,8 +682,8 @@ impl Element for TextElement {
                         let end = offset + run.len;
                         let mut pairs = Vec::new();
                         while offset < end {
-                            let pair = offset / 2;
-                            let next = end.min((pair + 1) * 2);
+                            let pair = boundaries.partition_point(|boundary| *boundary <= offset);
+                            let next = end.min(boundaries[pair]);
                             pairs.push(TextRun {
                                 len: next - offset,
                                 color: colors[pair].into(),

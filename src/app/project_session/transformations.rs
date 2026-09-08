@@ -450,7 +450,7 @@ impl Render for TransformationsWorkspace {
                                 .max_w(s::S10)
                                 .gap(s::S4)
                                 .debug_selector(|| "transformation-instructions".into())
-                                .child("click a part to include or exclude it")
+                                .child("click or drag across parts to include or exclude them")
                                 .child("edits each selected part everywhere it appears"),
                         ),
                 )
@@ -536,6 +536,47 @@ mod tests {
         voice::{Voice, VoiceType},
     };
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn workspace_drag_selects_and_deselects_part_spans(cx: &mut TestAppContext) {
+        let (workspace, cx) = cx.add_window_view(|_, cx| {
+            TransformationsWorkspace::new(
+                vec![
+                    "intro".into(),
+                    "theme".into(),
+                    "bridge".into(),
+                    "ending".into(),
+                ],
+                vec!["intro".into()],
+                cx,
+            )
+        });
+        let selected = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                workspace
+                    .read(cx)
+                    .selection
+                    .read(cx)
+                    .selected()
+                    .collect::<Vec<_>>()
+            })
+        };
+        let second = cx.debug_bounds("multi-selection-row-1").unwrap().center();
+        let third = cx.debug_bounds("multi-selection-row-2").unwrap().center();
+        let fourth = cx.debug_bounds("multi-selection-row-3").unwrap().center();
+        cx.simulate_mouse_down(second, gpui::MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(fourth, Some(gpui::MouseButton::Left), Default::default());
+        assert_eq!(selected(cx), [0, 1, 2, 3]);
+        cx.simulate_mouse_move(third, Some(gpui::MouseButton::Left), Default::default());
+        assert_eq!(selected(cx), [0, 1, 2]);
+        cx.simulate_mouse_up(third, gpui::MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(fourth, None, Default::default());
+        assert_eq!(selected(cx), [0, 1, 2]);
+        cx.simulate_mouse_down(third, gpui::MouseButton::Left, Default::default());
+        cx.simulate_mouse_move(second, Some(gpui::MouseButton::Left), Default::default());
+        cx.simulate_mouse_up(second, gpui::MouseButton::Left, Default::default());
+        assert_eq!(selected(cx), [0]);
+    }
 
     #[gpui::test]
     fn workspace_toggles_parts_and_switches_volume_controls(cx: &mut TestAppContext) {

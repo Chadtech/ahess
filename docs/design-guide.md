@@ -136,10 +136,12 @@ or when it defines how a shared component is used.
   rows.
 - use compact data-grid columns for short values of up to six monospaced
   characters; column headers truncate within that width.
-- use the shared text input's six-character pair colors for score notation:
+- use the shared text input's score note colors for score notation:
   `SCORE_PITCH_TEXT`, `SCORE_DURATION_TEXT`, and `SCORE_VOLUME_TEXT` distinguish
-  the three pairs. Keep one continuous editable value, including selection and
-  composition underlines. Shorter values and non-ASCII text use ordinary text.
+  the three pairs of six-character notes. Five-character `40@EE` notation uses
+  the pitch color for `40`, the middle gray for `@`, and the volume color for
+  `EE`. Keep one continuous editable value, including selection and composition
+  underlines. Other lengths and non-ASCII text use ordinary text.
 - when actions operate on whole rows, select rows through the numbered row
   headers. Use click for one row and drag or shift-click for one contiguous
   range. Clicking the sole selected row header again clears the selection.
@@ -186,7 +188,8 @@ or when it defines how a shared component is used.
   message when there are no matches.
 - use `view::multi_selection_list::MultiSelectionList` for independent inclusion
   of multiple resources. Clicking or pressing space/enter toggles just that row;
-  arrows move keyboard focus. Use ordinary selected-row highlighting and show
+  dragging extends that inclusion or exclusion across a contiguous span, preserving
+  selections outside it; arrows move keyboard focus. Use ordinary selected-row highlighting and show
   the selection count and a concise toggle hint in the containing form.
 - use `view::range_selection_list::RangeSelectionList` when an ordered list
   selects one contiguous range rather than independent rows.

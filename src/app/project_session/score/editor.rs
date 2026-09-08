@@ -269,7 +269,7 @@ impl ScoreEditor {
                             TextInput::new(value.clone(), "", cx)
                                 .with_cell_clipboard()
                                 .with_background(background)
-                                .with_six_character_pair_colors([
+                                .with_score_note_colors([
                                     s::SCORE_PITCH_TEXT,
                                     s::SCORE_DURATION_TEXT,
                                     s::SCORE_VOLUME_TEXT,
