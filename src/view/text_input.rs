@@ -9,7 +9,10 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{style as s, view::context_menu};
+use crate::{
+    style as s,
+    view::{context_menu, detail_marker},
+};
 
 enum CellInteraction {
     Ready,
@@ -74,9 +77,14 @@ pub struct TextInput {
     background: Rgba,
     cell_interaction: Option<CellInteraction>,
     score_note_colors: Option<[Rgba; 3]>,
+    details_summary: Option<fn(&str) -> Option<String>>,
+    vertical_neighbors: Option<(gpui::WeakEntity<TextInput>, gpui::WeakEntity<TextInput>)>,
+    tab_neighbors: Option<(gpui::WeakEntity<TextInput>, gpui::WeakEntity<TextInput>)>,
 }
 
 pub struct Changed;
+pub struct DetailsRequested;
+impl EventEmitter<DetailsRequested> for TextInput {}
 
 impl EventEmitter<Changed> for TextInput {}
 
@@ -99,7 +107,28 @@ impl TextInput {
             background: s::GREEN3,
             cell_interaction: None,
             score_note_colors: None,
+            details_summary: None,
+            vertical_neighbors: None,
+            tab_neighbors: None,
         }
+    }
+
+    pub fn set_tab_neighbors(&mut self, previous: &Entity<TextInput>, next: &Entity<TextInput>) {
+        self.tab_neighbors = Some((previous.downgrade(), next.downgrade()));
+    }
+    pub fn set_vertical_neighbors(
+        &mut self,
+        previous: &Entity<TextInput>,
+        next: &Entity<TextInput>,
+    ) {
+        self.vertical_neighbors = Some((previous.downgrade(), next.downgrade()));
+    }
+    pub fn with_details(mut self, summary: fn(&str) -> Option<String>) -> Self {
+        self.details_summary = Some(summary);
+        self
+    }
+    fn detail_summary(&self) -> Option<String> {
+        self.details_summary.and_then(|f| f(&self.content))
     }
 
     pub fn with_cell_clipboard(mut self) -> Self {
@@ -112,7 +141,12 @@ impl TextInput {
         let text = if self.content.is_empty() {
             "copied empty cell".into()
         } else {
-            format!("copied {}", self.content).into()
+            format!(
+                "copied {}",
+                self.detail_summary()
+                    .unwrap_or_else(|| self.content.to_string())
+            )
+            .into()
         };
         let dismiss = cx.spawn(async move |input, cx| {
             cx.background_executor()
@@ -262,6 +296,13 @@ impl TextInput {
             return;
         }
         self.close_cell_menu(cx);
+        if self.details_summary.is_some()
+            && (event.click_count == 2 || self.detail_summary().is_some())
+        {
+            cx.emit(DetailsRequested);
+            cx.stop_propagation();
+            return;
+        }
         self.is_selecting = true;
 
         if event.modifiers.shift {
@@ -317,12 +358,28 @@ impl TextInput {
         }
     }
 
-    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(next) = self
+            .tab_neighbors
+            .as_ref()
+            .and_then(|(_, next)| next.upgrade())
+        {
+            next.read(cx).focus(window);
+        } else {
+            window.focus_next();
+        }
     }
 
-    fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_prev();
+    fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous) = self
+            .tab_neighbors
+            .as_ref()
+            .and_then(|(previous, _)| previous.upgrade())
+        {
+            previous.read(cx).focus(window);
+        } else {
+            window.focus_prev();
+        }
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -477,6 +534,17 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.detail_summary().is_some() && range_utf16.is_none() {
+            if new_text.is_empty() {
+                self.content = "".into();
+                self.selected_range = 0..0;
+                cx.emit(Changed);
+                cx.notify();
+            } else {
+                cx.emit(DetailsRequested);
+            }
+            return;
+        }
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -501,6 +569,10 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.detail_summary().is_some() {
+            cx.emit(DetailsRequested);
+            return;
+        }
         let range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -796,11 +868,38 @@ impl Render for TextInput {
                     }),
                 )
             })
-            .on_key_down(cx.listener(|input, event: &gpui::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" {
-                    input.close_cell_menu(cx);
-                }
-            }))
+            .on_key_down(
+                cx.listener(|input, event: &gpui::KeyDownEvent, window, cx| {
+                    if let Some((previous, next)) = &input.vertical_neighbors {
+                        let neighbor = match event.keystroke.key.as_str() {
+                            "up" => Some(previous),
+                            "down" => Some(next),
+                            "enter"
+                                if !event.keystroke.modifiers.alt
+                                    && !event.keystroke.modifiers.secondary() =>
+                            {
+                                Some(next)
+                            }
+                            _ => None,
+                        };
+                        if let Some(neighbor) = neighbor.and_then(|n| n.upgrade()) {
+                            neighbor.read(cx).focus(window);
+                            cx.stop_propagation();
+                            return;
+                        }
+                    }
+                    if event.keystroke.key == "escape" {
+                        input.close_cell_menu(cx);
+                    }
+                    if event.keystroke.key == "enter"
+                        && event.keystroke.modifiers.alt
+                        && input.details_summary.is_some()
+                    {
+                        cx.emit(DetailsRequested);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .children(match &self.cell_interaction {
                 Some(CellInteraction::Menu) => {
                     let modifier = if cfg!(target_os = "macos") {
@@ -810,8 +909,12 @@ impl Render for TextInput {
                     };
                     Some(
                         gpui::deferred(
-                            context_menu::menu(vec![
-                                context_menu::action(0, format!("copy cell   {modifier}-click"))
+                            context_menu::menu({
+                                let mut actions = vec![
+                                    context_menu::action(
+                                        0,
+                                        format!("copy cell   {modifier}-click"),
+                                    )
                                     .debug_selector(|| "copy-cell".into())
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
@@ -823,20 +926,41 @@ impl Render for TextInput {
                                             cx.stop_propagation();
                                         }),
                                     ),
-                                context_menu::action(
-                                    1,
-                                    format!("paste cell   {modifier}-shift-click"),
-                                )
-                                .debug_selector(|| "paste-cell".into())
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_mouse_up(
-                                    MouseButton::Left,
-                                    cx.listener(|input, _, window, cx| {
-                                        input.paste_cell(window, cx);
-                                        cx.stop_propagation();
-                                    }),
-                                ),
-                            ])
+                                    context_menu::action(
+                                        1,
+                                        format!("paste cell   {modifier}-shift-click"),
+                                    )
+                                    .debug_selector(|| "paste-cell".into())
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|input, _, window, cx| {
+                                            input.paste_cell(window, cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    ),
+                                ];
+                                if self.details_summary.is_some() {
+                                    actions.push(
+                                        context_menu::action(2, "note details   double-click")
+                                            .debug_selector(|| "note-details".into())
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            })
+                                            .on_mouse_up(
+                                                MouseButton::Left,
+                                                cx.listener(|input, _, _, cx| {
+                                                    input.close_cell_menu(cx);
+                                                    cx.emit(DetailsRequested);
+                                                    cx.stop_propagation();
+                                                }),
+                                            ),
+                                    );
+                                }
+                                actions
+                            })
                             .left_0()
                             .right_auto()
                             .w_auto()
@@ -898,7 +1022,20 @@ impl Render for TextInput {
             .bg(self.background)
             .border(s::BORDER_WIDTH)
             .border_color(s::GREEN3)
-            .child(TextElement { input: cx.entity() })
+            .when(self.detail_summary().is_some(), |input| {
+                input.child(detail_marker::corner())
+            })
+            .child(if let Some(summary) = self.detail_summary() {
+                div()
+                    .relative()
+                    .w_full()
+                    .truncate()
+                    .text_color(s::SCORE_PITCH_TEXT)
+                    .child(summary)
+                    .into_any_element()
+            } else {
+                TextElement { input: cx.entity() }.into_any_element()
+            })
     }
 }
 

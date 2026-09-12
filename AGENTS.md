@@ -1,5 +1,9 @@
 # Repository instructions
 
+## Code style
+
+- Follow `docs/code-style.md` when changing Rust code.
+
 ## UI work
 
 - Read `docs/design-guide.md` before changing the interface.

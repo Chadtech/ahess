@@ -1,0 +1,506 @@
+[
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_A2_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "ad696c6ad3cbacb37b6d9cf4f26da4a54521e7ce",
+    "size": 3082676,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/ad696c6ad3cbacb37b6d9cf4f26da4a54521e7ce"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_B1_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "56c81412c60a2b04b8556dfa26a7e0127357c5cb",
+    "size": 3372962,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/56c81412c60a2b04b8556dfa26a7e0127357c5cb"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_B3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "3b1685e657db57bd71c979da8c2d9d35d2d0d197",
+    "size": 2865086,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/3b1685e657db57bd71c979da8c2d9d35d2d0d197"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_C1_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "d3820a6d57daf9a202a000bff0fa082a3f77acf6",
+    "size": 3335948,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/d3820a6d57daf9a202a000bff0fa082a3f77acf6"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_C3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "a192845091cb8e669c72d3ff4a88eb1c5968e626",
+    "size": 3019394,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/a192845091cb8e669c72d3ff4a88eb1c5968e626"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_D2_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "fdb46242bb68876ad275b9b8ed10c4b8508b9292",
+    "size": 3291368,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/fdb46242bb68876ad275b9b8ed10c4b8508b9292"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_D4_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "9189549dab9d3e0928fc7e42f94c04d66d28c52b",
+    "size": 2801210,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/9189549dab9d3e0928fc7e42f94c04d66d28c52b"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_E1_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "666f0d1ba1a76133c12c9859222c1c7094b613cf",
+    "size": 3080426,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/666f0d1ba1a76133c12c9859222c1c7094b613cf"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_E3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "7711cb67795d692b0d732eb8fd234c41d5980f42",
+    "size": 3278270,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/7711cb67795d692b0d732eb8fd234c41d5980f42"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_F2_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "a384e84a342ab9be12ca55b92c845a3c351b75bf",
+    "size": 3062696,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/a384e84a342ab9be12ca55b92c845a3c351b75bf"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_F4_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "074f12a91124e13ea0e4fb34d9ecbe7279ec0806",
+    "size": 2726342,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/074f12a91124e13ea0e4fb34d9ecbe7279ec0806"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_G1_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "35971538059e18b8f38cdc556630967777a0a0d5",
+    "size": 3370496,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/35971538059e18b8f38cdc556630967777a0a0d5"
+  },
+  {
+    "instrument": "cello",
+    "path": "Strings/Cello Section/susvib/susvib_G3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "732d0c80596fdfc593f55b5a24f65c07cd3191cd",
+    "size": 3335768,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/732d0c80596fdfc593f55b5a24f65c07cd3191cd"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_A3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "75a6dbb605779e3eaef2a265b6857142211a5837",
+    "size": 2765718,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/75a6dbb605779e3eaef2a265b6857142211a5837"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_A4_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "fa6e9dc8429dc62ae37eb6e61cf63aed8ca38529",
+    "size": 2147490,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/fa6e9dc8429dc62ae37eb6e61cf63aed8ca38529"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_A5_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "cbcfcd8aef190cf811e141bf9c602953a4c2d935",
+    "size": 2100774,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/cbcfcd8aef190cf811e141bf9c602953a4c2d935"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_C3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "18b1fa490327f38057a2edbaca4f000cffbf633d",
+    "size": 2729730,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/18b1fa490327f38057a2edbaca4f000cffbf633d"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_C4_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "850db1f598b5ba7a88ec2f929f8b832fb83cdd66",
+    "size": 2539512,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/850db1f598b5ba7a88ec2f929f8b832fb83cdd66"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_C5_v2_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "c781084689262db0267e3b888ac9a9244f32dbd7",
+    "size": 2382720,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/c781084689262db0267e3b888ac9a9244f32dbd7"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_C6_v1_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "8b69c3cd65834619ad9c1389b3c9f8d50fab15f5",
+    "size": 1618152,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/8b69c3cd65834619ad9c1389b3c9f8d50fab15f5"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_E3_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "66390898fca3d96f65bbc2bffd26c55af56db11e",
+    "size": 2814822,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/66390898fca3d96f65bbc2bffd26c55af56db11e"
+  },
+  {
+    "instrument": "flute",
+    "path": "Woodwinds/Flute/susNV/LDFlute_susNV_E4_v3_1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "67357c844a8c88034431d83438bd8ddea729e805",
+    "size": 2449278,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/67357c844a8c88034431d83438bd8ddea729e805"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#2_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "4ab307dd0c82ce0900eb7439bdb8d0a1008d4034",
+    "size": 1909388,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/4ab307dd0c82ce0900eb7439bdb8d0a1008d4034"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#3_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "c80415402c31b050eb51796e17fba541a24a57a0",
+    "size": 1791140,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/c80415402c31b050eb51796e17fba541a24a57a0"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#4_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "4250227b229f8f94ea73ecb3ff4e996bfa1cf91b",
+    "size": 1823220,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/4250227b229f8f94ea73ecb3ff4e996bfa1cf91b"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_D2_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "e435f825232aff390c93e0462d9e93e9e488d7ed",
+    "size": 1689164,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/e435f825232aff390c93e0462d9e93e9e488d7ed"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "dfffae60b3793d9687b2cb2c9b3850f593c723c6",
+    "size": 1876188,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/dfffae60b3793d9687b2cb2c9b3850f593c723c6"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_D4_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "9efaf747591d3c39b7b6e87a077963a1ac71ae45",
+    "size": 2047596,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/9efaf747591d3c39b7b6e87a077963a1ac71ae45"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_D5_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "d2c1fa23c73a15d50b581b6f83aa9e56e7e01a0c",
+    "size": 1772224,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/d2c1fa23c73a15d50b581b6f83aa9e56e7e01a0c"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_F#5_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "5e103799bb30ef1afa405511230c852b942a9d7c",
+    "size": 1252444,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/5e103799bb30ef1afa405511230c852b942a9d7c"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_F2_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "090db5da13fb0ec67673b6a656887644c923d341",
+    "size": 1835164,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/090db5da13fb0ec67673b6a656887644c923d341"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_F3_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "1a445b0610a060c571574916d140344fc60922b2",
+    "size": 2069572,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/1a445b0610a060c571574916d140344fc60922b2"
+  },
+  {
+    "instrument": "clarinet",
+    "path": "Woodwinds/Clarinet/susLong/DCClar_susLong_F4_v2_rr1_sum.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "9188e6eb2204ec227bac95cf254b9ce20e5d9d58",
+    "size": 2142808,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/9188e6eb2204ec227bac95cf254b9ce20e5d9d58"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_A2_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "265383d75cb23b2882ca297e6c50908e3ec8247a",
+    "size": 2007670,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/265383d75cb23b2882ca297e6c50908e3ec8247a"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_A4_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "acbece38a84e886cb5516e0f29d6ff5d38900fe1",
+    "size": 2143618,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/acbece38a84e886cb5516e0f29d6ff5d38900fe1"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_A6_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "9fc9959804954e24e6837c426d702031fd2a3b7f",
+    "size": 636870,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/9fc9959804954e24e6837c426d702031fd2a3b7f"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_B1_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "bb26292fd8b4d4d7f95703c69667c8f2234eebc8",
+    "size": 2284022,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/bb26292fd8b4d4d7f95703c69667c8f2234eebc8"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_B3_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "8d06cd55bc871d19f25a2bb1b56c7a567aabbc6b",
+    "size": 1981130,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/8d06cd55bc871d19f25a2bb1b56c7a567aabbc6b"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_B5_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "2d2689e8ca023cd685ed5a29161f3d641f109da9",
+    "size": 779058,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/2d2689e8ca023cd685ed5a29161f3d641f109da9"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_B6_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "d350ad472b663c9c239802f10228cd0073cf698d",
+    "size": 483966,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/d350ad472b663c9c239802f10228cd0073cf698d"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_C3_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "20e91e167e86132bb16601f682c90444779d8a23",
+    "size": 1586172,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/20e91e167e86132bb16601f682c90444779d8a23"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_C5_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "748b4b1366616972c2a22e81fc48a86178801c45",
+    "size": 1237142,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/748b4b1366616972c2a22e81fc48a86178801c45"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_D2_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "2a9d5a18ceb32459a29995a4e68e06c8f78dff5d",
+    "size": 1741118,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/2a9d5a18ceb32459a29995a4e68e06c8f78dff5d"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_D4_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "342eec5072e2c0a7fb7cb03b6f5b46d84ed6ac69",
+    "size": 1921690,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/342eec5072e2c0a7fb7cb03b6f5b46d84ed6ac69"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_D6_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "f66e88f651740695e4971c3197e6a1d61d6380c1",
+    "size": 687750,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/f66e88f651740695e4971c3197e6a1d61d6380c1"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_D7_f.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "096a6d12f2a4e01c952d85100d11030b8ab2fdf9",
+    "size": 396134,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/096a6d12f2a4e01c952d85100d11030b8ab2fdf9"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_E1_f.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "483714bd64ecf4947fe70d0ae0da6f2292c958f2",
+    "size": 4001190,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/483714bd64ecf4947fe70d0ae0da6f2292c958f2"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_E3_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "5c6c7410ae0ff7800214931f9db9a7f52db5987e",
+    "size": 2461138,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/5c6c7410ae0ff7800214931f9db9a7f52db5987e"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_E5_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "20675907d698db011d0c8bc72cf9af4e7a1ac971",
+    "size": 1171586,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/20675907d698db011d0c8bc72cf9af4e7a1ac971"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_F2_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "03c3ce65453dc79a0b36805126b57574ff7dc654",
+    "size": 3086590,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/03c3ce65453dc79a0b36805126b57574ff7dc654"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_F4_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "a1966639b165b623ac533270d616814cbc5389ef",
+    "size": 1913498,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/a1966639b165b623ac533270d616814cbc5389ef"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_F6_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "5d80932f790a28c088fab5dc2727c01ef2a130fc",
+    "size": 413126,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/5d80932f790a28c088fab5dc2727c01ef2a130fc"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_F7_f.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "2451907b2acc4cdf9b371111c760abc9bb866926",
+    "size": 332482,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/2451907b2acc4cdf9b371111c760abc9bb866926"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_G1_mp.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "b7935d0f8828a40be189f960960d4cb8d3235328",
+    "size": 1189890,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/b7935d0f8828a40be189f960960d4cb8d3235328"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_G3_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "a2f7fcc2bce81d039d9c0c529a94159f589f36e1",
+    "size": 1806874,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/a2f7fcc2bce81d039d9c0c529a94159f589f36e1"
+  },
+  {
+    "instrument": "harp",
+    "path": "Strings/Harp/KSHarp_G5_mf.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "8e3593345c95368ae9d74591c1046d21de6a8e60",
+    "size": 1049778,
+    "url": "https://api.github.com/repos/sgossner/VSCO-2-CE/git/blobs/8e3593345c95368ae9d74591c1046d21de6a8e60"
+  }
+]

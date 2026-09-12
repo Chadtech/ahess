@@ -1403,3 +1403,82 @@ fn temp_root(test_name: &str) -> PathBuf {
     fs::create_dir_all(&root).unwrap();
     root
 }
+
+#[test]
+fn attack_defaults_persist_and_ordinary_voice_edits_preserve_them() {
+    let root = temp_root("attack-defaults");
+    let attack = crate::voice::AttackSharpness::new(84).unwrap();
+    let project =
+        Project::new("attack defaults", 500, 0, Seed::new(42)).with_voices(vec![Voice::new(
+            1,
+            "flute",
+            VoiceType::VscoFlute,
+        )
+        .with_attack_sharpness(attack)]);
+    let directory = create_project(&root, &project).unwrap();
+    assert_eq!(
+        load_project(&directory).unwrap().project.voices()[0].attack_sharpness(),
+        attack
+    );
+    let edited = edit_voice_with_adjustment_at(
+        &directory,
+        &project,
+        &project.voices()[0].name,
+        "renamed flute",
+        VoiceType::VscoFlute,
+        Point3Meters::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(edited.voices()[0].attack_sharpness(), attack);
+    assert_eq!(load_project(&directory).unwrap().project, edited);
+    let config = directory.join(PROJECT_CONFIG_FILE);
+    let text = fs::read_to_string(&config).unwrap();
+    fs::write(&config, text.replace("attack_sharpness = 84\n", "")).unwrap();
+    assert_eq!(
+        load_project(&directory).unwrap().project.voices()[0]
+            .attack_sharpness()
+            .percent(),
+        0
+    );
+    fs::write(
+        &config,
+        text.replace("attack_sharpness = 84", "attack_sharpness = 101"),
+    )
+    .unwrap();
+    assert!(load_project(&directory).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn duplicate_voice_preserves_raw_cells_and_rejects_conflicts_without_writes() {
+    let root = temp_root("duplicate-voice");
+    let mut project = Project::new("copy", 800, 0, Seed::new(1)).with_voices(vec![
+        Voice::new(1, "A", VoiceType::Sin),
+        Voice::new(2, "C", VoiceType::Saw),
+    ]);
+    let directory = create_project(&root, &project).unwrap();
+    add_test_part(&directory, &mut project, "intro", 2);
+    let path = directory.join("intro.csv");
+    let raw = b"A,C\nC4,unfinished note\nrest,\n";
+    fs::write(&path, raw).unwrap();
+    let before = fs::read(directory.join(PROJECT_CONFIG_FILE)).unwrap();
+    for name in ["", "a", " C "] {
+        assert!(super::voices::duplicate_voice(&directory, &project, &"C".into(), name).is_err());
+        assert_eq!(fs::read(&path).unwrap(), raw);
+        assert_eq!(
+            fs::read(directory.join(PROJECT_CONFIG_FILE)).unwrap(),
+            before
+        );
+    }
+    let copied = super::voices::duplicate_voice(&directory, &project, &"C".into(), "D").unwrap();
+    let part = &copied.parts()[0];
+    let score = PartScore::load(&directory, part, copied.voices()).unwrap();
+    assert_eq!(
+        score.rows()[0],
+        ["C4", "unfinished note", "unfinished note"]
+    );
+    assert_eq!(score.rows()[1], ["rest", "", ""]);
+    assert_eq!(load_project(&directory).unwrap().project, copied);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -1,3 +1,5 @@
+use crate::score_cell;
+
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -45,17 +47,44 @@ impl FrequencyHz {
 // `FrequencyHz::new` excludes NaN, so equality is reflexive.
 impl Eq for FrequencyHz {}
 
+/// Validated positive duration, bounded to the score's 255-beat maximum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BeatDurationTicks(std::num::NonZeroU32);
+impl BeatDurationTicks {
+    pub fn new(ticks: u32) -> Result<Self, ResolvePitchError> {
+        if !(1..=255 * 96).contains(&ticks) {
+            return Err(ResolvePitchError::new(
+                "duration must be between 1/96 and 255 beats",
+            ));
+        }
+        Ok(Self(std::num::NonZeroU32::new(ticks).unwrap()))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StrikeDuration {
     VoiceDefault,
     ExplicitBeats(NonZeroU8),
+    FractionalBeats(BeatDurationTicks),
 }
 
 impl StrikeDuration {
+    pub fn beats(self) -> f64 {
+        match self {
+            Self::VoiceDefault => 1.0,
+            Self::ExplicitBeats(n) => f64::from(n.get()),
+            Self::FractionalBeats(n) => f64::from(n.0.get()) / 96.0,
+        }
+    }
+    pub fn samples(self, beat_length: u32) -> u32 {
+        (self.beats() * f64::from(beat_length)).round().max(1.0) as u32
+    }
+
     pub const fn beats_or_one(self) -> u8 {
         match self {
             Self::VoiceDefault => 1,
             Self::ExplicitBeats(beats) => beats.get(),
+            Self::FractionalBeats(ticks) => ticks.0.get().div_ceil(96) as u8,
         }
     }
 
@@ -63,6 +92,7 @@ impl StrikeDuration {
         match self {
             Self::VoiceDefault => None,
             Self::ExplicitBeats(beats) => Some(beats.get()),
+            Self::FractionalBeats(ticks) => Some(ticks.0.get().div_ceil(96) as u8),
         }
     }
 }
@@ -103,6 +133,12 @@ pub struct Note {
 }
 
 impl Note {
+    pub fn with_details(mut self, duration: StrikeDuration, volume: Volume) -> Self {
+        self.duration = duration;
+        self.volume = volume;
+        self
+    }
+
     pub fn pitch(&self) -> &Pitch {
         &self.pitch
     }
@@ -419,8 +455,31 @@ pub enum PitchSystem {
 }
 
 impl PitchSystem {
+    pub fn is_exact_key(&self, value: &str) -> bool {
+        match self {
+            Self::Explicit(system) => system.pitches.contains_key(value),
+            Self::Periodic(_) => false,
+        }
+    }
+    pub fn pitch_text(&self, pitch: &Pitch) -> String {
+        match &pitch.0 {
+            PitchNotation::Radler(n) => format!("{n:02}"),
+            PitchNotation::Western(n) => n.to_string(),
+            PitchNotation::Named(n) => n.clone(),
+        }
+    }
+
     /// Shared score-text boundary for validation, playback, and export.
     pub fn resolve_strike(&self, value: &str) -> Result<Option<Strike>, ResolvePitchError> {
+        if score_cell::has_details(value) && !self.is_exact_key(value.trim()) {
+            let events = score_cell::parse(self, value)?;
+            return events
+                .iter()
+                .find(|e| e.offset.ticks() == 0)
+                .or(events.first())
+                .map(|e| e.strike(self))
+                .transpose();
+        }
         self.parse_note(value)?
             .as_ref()
             .map(|note| self.resolve_note(note))
@@ -513,7 +572,10 @@ impl PitchSystem {
         &self,
         value: &'a str,
     ) -> Result<(&'a str, Option<Volume>), ResolvePitchError> {
-        if matches!(self, Self::Explicit(system) if system.pitches.contains_key(value)) {
+        if match self {
+            Self::Explicit(system) => system.pitches.contains_key(value),
+            Self::Periodic(_) => false,
+        } {
             return Ok((value, None));
         }
         let Some((pitch, suffix)) = value.rsplit_once('@') else {
@@ -832,7 +894,7 @@ pub struct ResolvePitchError {
 }
 
 impl ResolvePitchError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }

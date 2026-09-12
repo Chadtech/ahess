@@ -15,3 +15,7 @@ pub mod workspace;
 pub mod workspace_tile;
 
 pub mod multi_selection_list;
+
+pub mod detail_marker;
+
+pub mod attack_control;

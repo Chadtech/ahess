@@ -1,0 +1,2486 @@
+[
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_C1_v3_1.wav",
+    "source_git_blob": "d3820a6d57daf9a202a000bff0fa082a3f77acf6",
+    "nominal_midi": 36,
+    "reference_hz": 65.40298599958186,
+    "pitch_spread_cents": 0.2845431794701723,
+    "trimmed_frames": 0,
+    "gain": 0.9091930690964668,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-36-0.pcm",
+        "frames": 167580,
+        "sha256": "3648b3c43b9dd8426e96b0962d08d387f8a2dc5effa2d289a24bf525d5e889c2"
+      },
+      {
+        "file": "cello-36-1.pcm",
+        "frames": 83790,
+        "sha256": "96b2356ae75e716469761369a47eff11a766277df85e14d09bd204e183b963aa"
+      },
+      {
+        "file": "cello-36-2.pcm",
+        "frames": 41895,
+        "sha256": "362b2875a504b0cd1840dc1525a2d8d10d9d9ae74b9cdd3301fd5b10fa79d881"
+      },
+      {
+        "file": "cello-36-3.pcm",
+        "frames": 20948,
+        "sha256": "3be35f29f76bdb7c3b9316a56461d7f9487cddc26018e757ad69de2a7fbe03ba"
+      },
+      {
+        "file": "cello-36-4.pcm",
+        "frames": 10474,
+        "sha256": "88d044d259e116b717dde9987849cb221cca998601c059a23d30069d6dfea4de"
+      },
+      {
+        "file": "cello-36-5.pcm",
+        "frames": 5237,
+        "sha256": "ca68c9f4a4f9d92f72756e4d0eaceb87c8c9a0d54ce38aaf7381dfd1a1e55383"
+      },
+      {
+        "file": "cello-36-6.pcm",
+        "frames": 2619,
+        "sha256": "530ee8881e2abe36b5769152710e4895feb36b262412ca7a0f4cc029b348f0f9"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_E1_v3_1.wav",
+    "source_git_blob": "666f0d1ba1a76133c12c9859222c1c7094b613cf",
+    "nominal_midi": 40,
+    "reference_hz": 82.18327628185472,
+    "pitch_spread_cents": 0.9210972586885868,
+    "trimmed_frames": 0,
+    "gain": 1.1578029247247057,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-40-0.pcm",
+        "frames": 167580,
+        "sha256": "8853b7fb595fe3acc27d6a06c3ca345f37802211816c4e1684f6e989f7f55e43"
+      },
+      {
+        "file": "cello-40-1.pcm",
+        "frames": 83790,
+        "sha256": "e4721c30a314c48e719c42d21699e42f17d3734a9e759c295a3aedaddd45cac1"
+      },
+      {
+        "file": "cello-40-2.pcm",
+        "frames": 41895,
+        "sha256": "15754aeeb2d45c96b450068ad0042e595fd080770675a9ee39bc0299bc325ba2"
+      },
+      {
+        "file": "cello-40-3.pcm",
+        "frames": 20948,
+        "sha256": "4fec0a035059dab10278b1333fe284d570a217f10caddc1b7848d06bbc254a7a"
+      },
+      {
+        "file": "cello-40-4.pcm",
+        "frames": 10474,
+        "sha256": "cd534a4868dfeae9f6e7424fec691f462d7e1641a9a79ecfe60f502ddf1d0aa3"
+      },
+      {
+        "file": "cello-40-5.pcm",
+        "frames": 5237,
+        "sha256": "137da252d0d2476a3d67d4d5fe8c8150e90076e2a0a6e05ec79ff277b096b009"
+      },
+      {
+        "file": "cello-40-6.pcm",
+        "frames": 2619,
+        "sha256": "53f91935d72de97f3c0d9c78df14bfcf8e9db07393d27fd75133b39b065392e3"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_G1_v3_1.wav",
+    "source_git_blob": "35971538059e18b8f38cdc556630967777a0a0d5",
+    "nominal_midi": 43,
+    "reference_hz": 97.9874658489979,
+    "pitch_spread_cents": 1.2886700806404008,
+    "trimmed_frames": 0,
+    "gain": 0.7654126803289235,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-43-0.pcm",
+        "frames": 167580,
+        "sha256": "3a2186f041e659ed19809f64dfe5e99ce61463d5bf72cbfaf6bf893192c73fff"
+      },
+      {
+        "file": "cello-43-1.pcm",
+        "frames": 83790,
+        "sha256": "1cd3428eda596e0044596432ac6785a2fc19b492aa19344923f3c07c0e4e2a28"
+      },
+      {
+        "file": "cello-43-2.pcm",
+        "frames": 41895,
+        "sha256": "c23cf40f7fbc63a17b9ae079487dcf672d0b5b19ca429ace7017678d8b08a824"
+      },
+      {
+        "file": "cello-43-3.pcm",
+        "frames": 20948,
+        "sha256": "0a71e52c183411b6906f12d772ad8a92ac752a32ef4742bc84f827952748ac87"
+      },
+      {
+        "file": "cello-43-4.pcm",
+        "frames": 10474,
+        "sha256": "70cee58e1f160694f97b520102fb071e2fc352d27acc993da6743fbd42060f54"
+      },
+      {
+        "file": "cello-43-5.pcm",
+        "frames": 5237,
+        "sha256": "9712bf54e716f741a622d0a729ddb211743ceaaa663133693b6fabc750b91667"
+      },
+      {
+        "file": "cello-43-6.pcm",
+        "frames": 2619,
+        "sha256": "77c0734b269d4dfaf51d0eb9c321dbf42ed2838e3f39328f948520efcc6c9880"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_B1_v3_1.wav",
+    "source_git_blob": "56c81412c60a2b04b8556dfa26a7e0127357c5cb",
+    "nominal_midi": 47,
+    "reference_hz": 123.45629433155474,
+    "pitch_spread_cents": 1.0369411312431795,
+    "trimmed_frames": 0,
+    "gain": 0.8448666258082268,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-47-0.pcm",
+        "frames": 167580,
+        "sha256": "3206e20e217b7335f3e117bf8eb69b54144ee90f77538abd0b8517c28b5efe0b"
+      },
+      {
+        "file": "cello-47-1.pcm",
+        "frames": 83790,
+        "sha256": "8340d7a50aa816c08739c2b9a023fe98706622409a76cd3799c51a3efd887e52"
+      },
+      {
+        "file": "cello-47-2.pcm",
+        "frames": 41895,
+        "sha256": "128b583cfed6be3ee58e3cdf2d17a5fe133fffd87300552d47bc9587557d4f79"
+      },
+      {
+        "file": "cello-47-3.pcm",
+        "frames": 20948,
+        "sha256": "b0ba3c38c02a3fb86152bf871d07cbdda6ce583b8cf657fb9db65a184156171a"
+      },
+      {
+        "file": "cello-47-4.pcm",
+        "frames": 10474,
+        "sha256": "4a3fd722511c951f3b84418b43059e4f338451f9287f1955b712789aaa41c0c0"
+      },
+      {
+        "file": "cello-47-5.pcm",
+        "frames": 5237,
+        "sha256": "a863f7ac348b0b084564b5e365acbf45365bd075366c11a05853ee4762939f52"
+      },
+      {
+        "file": "cello-47-6.pcm",
+        "frames": 2619,
+        "sha256": "8a98c03285fed907dbb399f553228a976a2a4b756f5516a7c5dcd92368f33c47"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_D2_v3_1.wav",
+    "source_git_blob": "fdb46242bb68876ad275b9b8ed10c4b8508b9292",
+    "nominal_midi": 50,
+    "reference_hz": 146.83992257162146,
+    "pitch_spread_cents": 0.908014125427813,
+    "trimmed_frames": 0,
+    "gain": 0.8825727780135256,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-50-0.pcm",
+        "frames": 167580,
+        "sha256": "200cfa2a73f26ce86f4ada4a3ddf92257dbbe61a43f6688471a2305ac3ac9136"
+      },
+      {
+        "file": "cello-50-1.pcm",
+        "frames": 83790,
+        "sha256": "6c7d8f667626ea187615900e99105c950bbb55107b6f4079e15275d2ddb7392a"
+      },
+      {
+        "file": "cello-50-2.pcm",
+        "frames": 41895,
+        "sha256": "79884fd8bda73fdc5eee579b1ffa82c02fb17f99a193fa9471d2780d17bed3b0"
+      },
+      {
+        "file": "cello-50-3.pcm",
+        "frames": 20948,
+        "sha256": "fe7401979c4e4a7a8940117c8ef0609c536ff4a4fc1f4a82f42a0cca6705fba6"
+      },
+      {
+        "file": "cello-50-4.pcm",
+        "frames": 10474,
+        "sha256": "ce30f77fd76d4d3400d30828b854bfd603b836c6c1ffe1d86fb7d8cd184789b4"
+      },
+      {
+        "file": "cello-50-5.pcm",
+        "frames": 5237,
+        "sha256": "e528f07d3208e04fe0eb1194d86c3bb02582ea8549c8829c66903bf45e3888c3"
+      },
+      {
+        "file": "cello-50-6.pcm",
+        "frames": 2619,
+        "sha256": "d519a2980b5a0fb81cd5f6197a252b550636a667a76f19299b0747960f0efae1"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_F2_v3_1.wav",
+    "source_git_blob": "a384e84a342ab9be12ca55b92c845a3c351b75bf",
+    "nominal_midi": 53,
+    "reference_hz": 174.71489195240616,
+    "pitch_spread_cents": 1.6155920561728403,
+    "trimmed_frames": 0,
+    "gain": 1.6088731005500057,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-53-0.pcm",
+        "frames": 167580,
+        "sha256": "295b05625e671ccc27c4a03d81c6ba33b387a55ad96f46d4b04bb07c564a5c52"
+      },
+      {
+        "file": "cello-53-1.pcm",
+        "frames": 83790,
+        "sha256": "dce4340514b1013801acc1c62973622de564692f38fb5d673a203a9eae048f04"
+      },
+      {
+        "file": "cello-53-2.pcm",
+        "frames": 41895,
+        "sha256": "cdfa4240a95384bb313e5c8f3d7edc1365bafc547491772367a8381b31e355e9"
+      },
+      {
+        "file": "cello-53-3.pcm",
+        "frames": 20948,
+        "sha256": "c0b000beb3f3361c229459412f4612ba83b61142ee796225db4d425a56fab48c"
+      },
+      {
+        "file": "cello-53-4.pcm",
+        "frames": 10474,
+        "sha256": "750ac7c36a07590b6ff271cfba27bacd8f1671f9261fc7a341ecd23ff5cbd82d"
+      },
+      {
+        "file": "cello-53-5.pcm",
+        "frames": 5237,
+        "sha256": "0a1eded407970be6d1e5f90857e8dba822ae6de0cb2f61c4b4a6e479c271fdd2"
+      },
+      {
+        "file": "cello-53-6.pcm",
+        "frames": 2619,
+        "sha256": "d1a2bc8e078e023886fad6fbf3eab049aafbc72f9a0a396b0fa5b93d05db0c51"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_A2_v3_1.wav",
+    "source_git_blob": "ad696c6ad3cbacb37b6d9cf4f26da4a54521e7ce",
+    "nominal_midi": 57,
+    "reference_hz": 219.85692506535844,
+    "pitch_spread_cents": 1.0808346081046984,
+    "trimmed_frames": 0,
+    "gain": 1.3913757150621182,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-57-0.pcm",
+        "frames": 167580,
+        "sha256": "0d7c93e831a333ad854f67dd36ce2ad440461074faf0ae860b9c7f152d59fe64"
+      },
+      {
+        "file": "cello-57-1.pcm",
+        "frames": 83790,
+        "sha256": "28312e8cbc05d8cdd9c83b738b24b96ab91c690646752f1c8e6f908c804e66da"
+      },
+      {
+        "file": "cello-57-2.pcm",
+        "frames": 41895,
+        "sha256": "ce76bcfda0104204eecbcc259bfe9a0c178a3da896313648a6d46434a04620cb"
+      },
+      {
+        "file": "cello-57-3.pcm",
+        "frames": 20948,
+        "sha256": "4d3d2121233c40d071a50ceff8ffdded052fb3241b465a8655e2fd150b466ea2"
+      },
+      {
+        "file": "cello-57-4.pcm",
+        "frames": 10474,
+        "sha256": "00e6a2771cc3dc8b843ecdc5a2ebd40036b12f9d60dee1357f5de9d67dbb35e0"
+      },
+      {
+        "file": "cello-57-5.pcm",
+        "frames": 5237,
+        "sha256": "a5207fbc2c9e2d19f29268eb0f1565fcfd0d6ecc679f4cdedc935c1ff3ab015f"
+      },
+      {
+        "file": "cello-57-6.pcm",
+        "frames": 2619,
+        "sha256": "60de4b5089422811e497c35d3a177f19844fa9cb0e92d80f6c2edbd707931213"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_C3_v3_1.wav",
+    "source_git_blob": "a192845091cb8e669c72d3ff4a88eb1c5968e626",
+    "nominal_midi": 60,
+    "reference_hz": 261.57877326213224,
+    "pitch_spread_cents": 1.0043602172869075,
+    "trimmed_frames": 0,
+    "gain": 1.3554718512126813,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-60-0.pcm",
+        "frames": 167580,
+        "sha256": "787de95148bbb1eadf4a8256cbc6db20e591dd9c39e54628d5edcf4ff60c82d4"
+      },
+      {
+        "file": "cello-60-1.pcm",
+        "frames": 83790,
+        "sha256": "10acce336249049f17d5f4ae5094d6a7b0410787dfec4dffe5d6dccde69fd1d8"
+      },
+      {
+        "file": "cello-60-2.pcm",
+        "frames": 41895,
+        "sha256": "5e17d5c142a9ce2863e3e68b44b78de78a4e4cce22c59a638c20986e53acca27"
+      },
+      {
+        "file": "cello-60-3.pcm",
+        "frames": 20948,
+        "sha256": "fbabb73a6021837fbc456e35830cc32477e6d40882850146825f71aa35a8f353"
+      },
+      {
+        "file": "cello-60-4.pcm",
+        "frames": 10474,
+        "sha256": "00df98a42694765465d6cac1f11e7323375f1c9c06d8eb5b3273beacc479948d"
+      },
+      {
+        "file": "cello-60-5.pcm",
+        "frames": 5237,
+        "sha256": "4c9288bbb8ba17b284f625a4fe353ddbc2b8459450f6f641d95d14ce521afb27"
+      },
+      {
+        "file": "cello-60-6.pcm",
+        "frames": 2619,
+        "sha256": "af1d01e86bb1b5ca21e3bb79891c17c32fdc44064ba4ba22a845c9c2bf7f6967"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_E3_v3_1.wav",
+    "source_git_blob": "7711cb67795d692b0d732eb8fd234c41d5980f42",
+    "nominal_midi": 64,
+    "reference_hz": 329.5194861344929,
+    "pitch_spread_cents": 1.5070399824142529,
+    "trimmed_frames": 0,
+    "gain": 1.086795789572396,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-64-0.pcm",
+        "frames": 167580,
+        "sha256": "48da46babbb4d366e20878e89764b7cb6c2007d708bcf248ae07c8a9d0be4788"
+      },
+      {
+        "file": "cello-64-1.pcm",
+        "frames": 83790,
+        "sha256": "7157b843df687c52ecb26cf9bdd6be4fc36ef33bab07f52d6997771eb685b498"
+      },
+      {
+        "file": "cello-64-2.pcm",
+        "frames": 41895,
+        "sha256": "d51ccb7c4e36f0fa04c9fae903c7c42b548f06b13575cfc75cf1c6b40f6fc10f"
+      },
+      {
+        "file": "cello-64-3.pcm",
+        "frames": 20948,
+        "sha256": "13d5626e13124a78825067bafab35bec957be6e886421f2f2c5004993311340b"
+      },
+      {
+        "file": "cello-64-4.pcm",
+        "frames": 10474,
+        "sha256": "a3ab5b0515fb18f3e8d74f325be4d935b7f2ce10ae6d4eb59b9b250ca77a28e8"
+      },
+      {
+        "file": "cello-64-5.pcm",
+        "frames": 5237,
+        "sha256": "90a6c2761ae90102aa3ee50eab5a42c9b78fc61a386f7f3c9737f605d6c9943d"
+      },
+      {
+        "file": "cello-64-6.pcm",
+        "frames": 2619,
+        "sha256": "de73801c46050590f05591a8f8154134f725d0aceaed511a4ab114878dc3f117"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_G3_v3_1.wav",
+    "source_git_blob": "732d0c80596fdfc593f55b5a24f65c07cd3191cd",
+    "nominal_midi": 67,
+    "reference_hz": 392.195096632834,
+    "pitch_spread_cents": 1.9729610765334233,
+    "trimmed_frames": 0,
+    "gain": 1.5331936004531765,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-67-0.pcm",
+        "frames": 167580,
+        "sha256": "2d5538c1007d75801f889d100bbfe20ef1c7074944c38907ff6c34b71f18dbe7"
+      },
+      {
+        "file": "cello-67-1.pcm",
+        "frames": 83790,
+        "sha256": "f6b0d98cd0bc78e95dd61db311f49a513c8cd44214d82ded08fcc8dc93a203d8"
+      },
+      {
+        "file": "cello-67-2.pcm",
+        "frames": 41895,
+        "sha256": "038d9c7b7e3ed3d21f202b6664bdb709cf630eb0cced78a2259d36591e05cab0"
+      },
+      {
+        "file": "cello-67-3.pcm",
+        "frames": 20948,
+        "sha256": "eb40c5900b5c21e1cce9160597c0554597b0043b9b133d8d3d47ff873ce77653"
+      },
+      {
+        "file": "cello-67-4.pcm",
+        "frames": 10474,
+        "sha256": "e65e6f48f8b5e297994c6601c3a7e1071dcc993b26e35e45bba73b877a757d88"
+      },
+      {
+        "file": "cello-67-5.pcm",
+        "frames": 5237,
+        "sha256": "49047627731a15cddd07da574478552af80f2aab69a1b0a92eb736b2f4f92af0"
+      },
+      {
+        "file": "cello-67-6.pcm",
+        "frames": 2619,
+        "sha256": "7f68be506564dd632a310d9d961adadfa7e62ae636234c15557581f83ae5acf9"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_B3_v3_1.wav",
+    "source_git_blob": "3b1685e657db57bd71c979da8c2d9d35d2d0d197",
+    "nominal_midi": 71,
+    "reference_hz": 494.2269577785386,
+    "pitch_spread_cents": 1.9385683921036505,
+    "trimmed_frames": 0,
+    "gain": 2.039658623393274,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-71-0.pcm",
+        "frames": 167580,
+        "sha256": "5e59bbf99cb22830730c0783544be5957ab44601e9daa6e008c12a49c1c628a2"
+      },
+      {
+        "file": "cello-71-1.pcm",
+        "frames": 83790,
+        "sha256": "dd5e32a0ccc89c0fac56b3f406774dc2728fa166f61c93d031eda56ee93ad532"
+      },
+      {
+        "file": "cello-71-2.pcm",
+        "frames": 41895,
+        "sha256": "ff3ef35d0f1ec4d24da4d2d055c7144ea77e7ad197aadc5108cd53b8f39b60f0"
+      },
+      {
+        "file": "cello-71-3.pcm",
+        "frames": 20948,
+        "sha256": "2d604a43d1189b21d5cf1584a3a19d919a73c15390bbd8f2554a8fb5e7ae82a5"
+      },
+      {
+        "file": "cello-71-4.pcm",
+        "frames": 10474,
+        "sha256": "fde2f28897c0394143ba35d242ac2174cfb43621cd5040b22f7ab4903ffc9135"
+      },
+      {
+        "file": "cello-71-5.pcm",
+        "frames": 5237,
+        "sha256": "c55be5b9db56b3c94b19b20a6cea666f31ef9f0330a68ba6262ec5b4939a6b68"
+      },
+      {
+        "file": "cello-71-6.pcm",
+        "frames": 2619,
+        "sha256": "9a91f0c5cff08c085434602e740a0ff4a27ad3d1d257528db84c21f912e1fa23"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_D4_v3_1.wav",
+    "source_git_blob": "9189549dab9d3e0928fc7e42f94c04d66d28c52b",
+    "nominal_midi": 74,
+    "reference_hz": 587.7503726504664,
+    "pitch_spread_cents": 2.3414166185879948,
+    "trimmed_frames": 0,
+    "gain": 2.126196648724168,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-74-0.pcm",
+        "frames": 167580,
+        "sha256": "ae30570941e5de69b7af4ec1d47f743bcd2b203a052305da6f785aabeb9ed205"
+      },
+      {
+        "file": "cello-74-1.pcm",
+        "frames": 83790,
+        "sha256": "950e1f685d87a6d40e400a9aba4f404d8c729a8dcd0c90eb8a013d7bb2cb506f"
+      },
+      {
+        "file": "cello-74-2.pcm",
+        "frames": 41895,
+        "sha256": "5728bc8e208c78a35a42a51c4e8965c0f5cdc5de82c8dadd5f290ea1bb7b1579"
+      },
+      {
+        "file": "cello-74-3.pcm",
+        "frames": 20948,
+        "sha256": "407c0c611e4c3259d7bb1643975388b52dbbe007d11e525e6278dc263497af11"
+      },
+      {
+        "file": "cello-74-4.pcm",
+        "frames": 10474,
+        "sha256": "ccb8cbd709a33d49b176598973fe3dc0edf2d02b273a3f6669848288cbbfbfac"
+      },
+      {
+        "file": "cello-74-5.pcm",
+        "frames": 5237,
+        "sha256": "648942ba16d6b61212ffd9aed659d6bacbd3e88a37e5f39e06e200ea8e935db2"
+      },
+      {
+        "file": "cello-74-6.pcm",
+        "frames": 2619,
+        "sha256": "1f6bc3a7cc5f3a15317842fdd5ab31130f10ea04263a8081a2afa0e019ef4d9c"
+      }
+    ]
+  },
+  {
+    "instrument": "cello",
+    "source": "Strings/Cello Section/susvib/susvib_F4_v3_1.wav",
+    "source_git_blob": "074f12a91124e13ea0e4fb34d9ecbe7279ec0806",
+    "nominal_midi": 77,
+    "reference_hz": 698.0695644597015,
+    "pitch_spread_cents": 1.165063991220016,
+    "trimmed_frames": 0,
+    "gain": 2.3713839691951275,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "cello-77-0.pcm",
+        "frames": 167580,
+        "sha256": "1cad609bebbea248feb3599a9a6412c85f04baa1e8210ce69cf27afd29a461ae"
+      },
+      {
+        "file": "cello-77-1.pcm",
+        "frames": 83790,
+        "sha256": "0949617bd9ed990cb8b04d030053e50e5096bbbf7add1684b93d762f45096109"
+      },
+      {
+        "file": "cello-77-2.pcm",
+        "frames": 41895,
+        "sha256": "af856b1b22827ee2fac2810402eabf2f307e0feb9fcaf021c755b02a46e1ca73"
+      },
+      {
+        "file": "cello-77-3.pcm",
+        "frames": 20948,
+        "sha256": "6b0a0077598da4dcc48205a420fe13bbe971a38fe9560b2dd9fe068dca0fc24f"
+      },
+      {
+        "file": "cello-77-4.pcm",
+        "frames": 10474,
+        "sha256": "7010dacacff599ffee8311476aa04bc1f2d45a4bbff12c77f2f9fbea9b070ee0"
+      },
+      {
+        "file": "cello-77-5.pcm",
+        "frames": 5237,
+        "sha256": "c08c9ba255f34b9df720eda31262ffb1400b7be1d5f9068eceb426444703d8ed"
+      },
+      {
+        "file": "cello-77-6.pcm",
+        "frames": 2619,
+        "sha256": "923cddfe415b1135b6e68592f0cd36950be2e713ea9dfe29783655dab69f12a6"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_D2_v2_rr1_sum.wav",
+    "source_git_blob": "e435f825232aff390c93e0462d9e93e9e488d7ed",
+    "nominal_midi": 50,
+    "reference_hz": 146.87459380535876,
+    "pitch_spread_cents": 1.696307353069755,
+    "trimmed_frames": 0,
+    "gain": 3.7141014455918873,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-50-0.pcm",
+        "frames": 167580,
+        "sha256": "cd4ad29545b4e4b012d358736943bf0785d4b17b267ddea670926a26e424b54e"
+      },
+      {
+        "file": "clarinet-50-1.pcm",
+        "frames": 83790,
+        "sha256": "a6874b9aad597ecbd7b6139c97531d25cbdb4eafc78f6896dc300e42a8a85637"
+      },
+      {
+        "file": "clarinet-50-2.pcm",
+        "frames": 41895,
+        "sha256": "3bd7de7ee8dcbc959dc21188215ab43d264fad927e7b7bb3cc2f2c585a1a9f75"
+      },
+      {
+        "file": "clarinet-50-3.pcm",
+        "frames": 20948,
+        "sha256": "1e82df1594db92079ede42d15fd4151ea8325a5d3ad5a1f2e6bd3e29e37f506e"
+      },
+      {
+        "file": "clarinet-50-4.pcm",
+        "frames": 10474,
+        "sha256": "5dbfb6347fac06d4a342b5c154e1a55897a257fc594da0ef4014b5dec195437e"
+      },
+      {
+        "file": "clarinet-50-5.pcm",
+        "frames": 5237,
+        "sha256": "50f8028555f7a9592a31387380c03e263ec6fd7d7c88aa32cda50275a35b36d6"
+      },
+      {
+        "file": "clarinet-50-6.pcm",
+        "frames": 2619,
+        "sha256": "83b9303c4c6600870618b2d6abcff7c9f4008f111805687e129d1be6c6ede2ce"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_F2_v2_rr1_sum.wav",
+    "source_git_blob": "090db5da13fb0ec67673b6a656887644c923d341",
+    "nominal_midi": 53,
+    "reference_hz": 174.64783104141807,
+    "pitch_spread_cents": 0.9374561734928829,
+    "trimmed_frames": 0,
+    "gain": 4.120763369410136,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-53-0.pcm",
+        "frames": 167580,
+        "sha256": "b710c733b6cfd79ebf83831565a597e2bb4abfd516e090ffbde9c3ecadd9185d"
+      },
+      {
+        "file": "clarinet-53-1.pcm",
+        "frames": 83790,
+        "sha256": "daaa7aae592ccf9603d8a9267a2d460fd7be2382e9240a676ef9e98c1acffecc"
+      },
+      {
+        "file": "clarinet-53-2.pcm",
+        "frames": 41895,
+        "sha256": "592f3730e0ca1f117343e9eb7df41bcfce4c67f96d393e6105805652aadd56ce"
+      },
+      {
+        "file": "clarinet-53-3.pcm",
+        "frames": 20948,
+        "sha256": "cb05a60f862bc610f617b9d016e3dca91d783a2a41b28c0afda6046e5106d04e"
+      },
+      {
+        "file": "clarinet-53-4.pcm",
+        "frames": 10474,
+        "sha256": "01cb949c96c647eaf2596394125a0148ab6b432b30b6dfb7e3778dc79f96ad97"
+      },
+      {
+        "file": "clarinet-53-5.pcm",
+        "frames": 5237,
+        "sha256": "20b825852669b5e07bd2c9ebbb368e0551de607aaa6b85c7bab08e232de58225"
+      },
+      {
+        "file": "clarinet-53-6.pcm",
+        "frames": 2619,
+        "sha256": "a6758e4333a5bfb92853f31db39299059389421567239c636ecc24ec6d6a4804"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#2_v2_rr1_sum.wav",
+    "source_git_blob": "4ab307dd0c82ce0900eb7439bdb8d0a1008d4034",
+    "nominal_midi": 58,
+    "reference_hz": 233.20775750298446,
+    "pitch_spread_cents": 0.732795659482162,
+    "trimmed_frames": 0,
+    "gain": 5.178074391256192,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-58-0.pcm",
+        "frames": 167580,
+        "sha256": "9a0bcefe6ce421995ad991460113e82c77f616950f598a184003564e17ef6cd2"
+      },
+      {
+        "file": "clarinet-58-1.pcm",
+        "frames": 83790,
+        "sha256": "d7bfd6aa9d1987105215670b8c03728ad88c99e234d64f385e8cb24c05490e08"
+      },
+      {
+        "file": "clarinet-58-2.pcm",
+        "frames": 41895,
+        "sha256": "17133ca2321e7bf18506f5a0a706633d4e24dee52c0bc5bd403e99c22ceb80c7"
+      },
+      {
+        "file": "clarinet-58-3.pcm",
+        "frames": 20948,
+        "sha256": "968b3dec4d55a410151fdf0f0e5d34953fe8416ed626a890d4fe20e2ac15ebd3"
+      },
+      {
+        "file": "clarinet-58-4.pcm",
+        "frames": 10474,
+        "sha256": "9d5ff046349af3a75bea23f01dda6c249d0b623adc1ba0ea77f6a5e8e4cf3f9e"
+      },
+      {
+        "file": "clarinet-58-5.pcm",
+        "frames": 5237,
+        "sha256": "29b27b854d7908d5dcdc0b0e93a5d7eeb2968c7c97e5cb81bccf9e12f62699da"
+      },
+      {
+        "file": "clarinet-58-6.pcm",
+        "frames": 2619,
+        "sha256": "b277847abd6c2d363839bd3c3545241ceec28001a38e982324fe94af12578504"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v2_rr1_sum.wav",
+    "source_git_blob": "dfffae60b3793d9687b2cb2c9b3850f593c723c6",
+    "nominal_midi": 62,
+    "reference_hz": 293.62817698248,
+    "pitch_spread_cents": 1.6094343127957307,
+    "trimmed_frames": 219,
+    "gain": 2.0048547958520464,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-62-0.pcm",
+        "frames": 167580,
+        "sha256": "c659c5a8d2ee93c90f71158bae900ff045e5a4d5139b985b4d185f148185c3f4"
+      },
+      {
+        "file": "clarinet-62-1.pcm",
+        "frames": 83790,
+        "sha256": "11c67f87ff4e2eb3450e01b8bce97c570b64f5eca739b4fb4ca8ebb481212929"
+      },
+      {
+        "file": "clarinet-62-2.pcm",
+        "frames": 41895,
+        "sha256": "52d88e11aeeba98879778400648857ca872781de1a07f0bf492e6ef29b22e8ee"
+      },
+      {
+        "file": "clarinet-62-3.pcm",
+        "frames": 20948,
+        "sha256": "d8e9a9006da120508a5042a138773ea2756ab600470a2d09d55a3ec45ef6b137"
+      },
+      {
+        "file": "clarinet-62-4.pcm",
+        "frames": 10474,
+        "sha256": "948182b8eab7b73d6cb8420742eccae4174d49d5a73fe4f0d1d522a69234fa81"
+      },
+      {
+        "file": "clarinet-62-5.pcm",
+        "frames": 5237,
+        "sha256": "0f0c5f44c09ea513601da92ff67e4f8cf179384bde1238e30f3953673b01f473"
+      },
+      {
+        "file": "clarinet-62-6.pcm",
+        "frames": 2619,
+        "sha256": "1b313ecb1600b96094baa852bd570aa166bed70a0e0caad2e00a2fb3f24072cc"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_F3_v2_rr1_sum.wav",
+    "source_git_blob": "1a445b0610a060c571574916d140344fc60922b2",
+    "nominal_midi": 65,
+    "reference_hz": 349.6595211310057,
+    "pitch_spread_cents": 1.891872606132713,
+    "trimmed_frames": 2199,
+    "gain": 2.236761362161191,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-65-0.pcm",
+        "frames": 167580,
+        "sha256": "7fbf8795629b13859d8faefa95120615fd6f09f7c6abe717828160feb95c626c"
+      },
+      {
+        "file": "clarinet-65-1.pcm",
+        "frames": 83790,
+        "sha256": "91ee1be843f15e8aa8d5e830db015783a398e951befb067cb80181247a3d689e"
+      },
+      {
+        "file": "clarinet-65-2.pcm",
+        "frames": 41895,
+        "sha256": "0047a0e0169a29516f0f527ab616878ccea5f7b71595ea706241a4df5978abbc"
+      },
+      {
+        "file": "clarinet-65-3.pcm",
+        "frames": 20948,
+        "sha256": "1c383abdb790af6dc890dedfee9d02a81a67ba13e9dd826eaae21ecd26e5eedf"
+      },
+      {
+        "file": "clarinet-65-4.pcm",
+        "frames": 10474,
+        "sha256": "3d59a39d364481861f493aadceff9eddf27d5f12f036af6eb661985202186e17"
+      },
+      {
+        "file": "clarinet-65-5.pcm",
+        "frames": 5237,
+        "sha256": "c454222bdecc9f29c02a41ee615fa2866858ad695dceef24c097105a087c011b"
+      },
+      {
+        "file": "clarinet-65-6.pcm",
+        "frames": 2619,
+        "sha256": "243bb4e97731307ae7a3d79994c51e71ab9c70d10139231e1b196fdca25d5940"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#3_v2_rr1_sum.wav",
+    "source_git_blob": "c80415402c31b050eb51796e17fba541a24a57a0",
+    "nominal_midi": 70,
+    "reference_hz": 466.28113801381414,
+    "pitch_spread_cents": 0.9840369009020093,
+    "trimmed_frames": 219,
+    "gain": 1.6875835041034175,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-70-0.pcm",
+        "frames": 167580,
+        "sha256": "8f2c0c14d73bda71c8118cd970ea312fed6744378d30689bf9bbb129aad04bcf"
+      },
+      {
+        "file": "clarinet-70-1.pcm",
+        "frames": 83790,
+        "sha256": "e75e086241c52b3e3735c78597bc49fed1730c5f799806a6a252f62476485045"
+      },
+      {
+        "file": "clarinet-70-2.pcm",
+        "frames": 41895,
+        "sha256": "acb77abf50350b445f37b670b1041196374bf3b687cf445cfa3999aa4a30c129"
+      },
+      {
+        "file": "clarinet-70-3.pcm",
+        "frames": 20948,
+        "sha256": "bb09d7fb6eed904314109f8cf68d01d6751d23fab701d93c74919373d7c0fea4"
+      },
+      {
+        "file": "clarinet-70-4.pcm",
+        "frames": 10474,
+        "sha256": "68930d64c54b668d14a98037cdfb58d8534e079c7aa53ed4de8421e756a783eb"
+      },
+      {
+        "file": "clarinet-70-5.pcm",
+        "frames": 5237,
+        "sha256": "f4e5fea1ed2fc244e2fac3a7498a45320de47ab856bc1fc8667d2b0e642ca971"
+      },
+      {
+        "file": "clarinet-70-6.pcm",
+        "frames": 2619,
+        "sha256": "3384180e4556a9735817e50ad18704dfe5873a68eb617ed37650f0204be4d0b8"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_D4_v2_rr1_sum.wav",
+    "source_git_blob": "9efaf747591d3c39b7b6e87a077963a1ac71ae45",
+    "nominal_midi": 74,
+    "reference_hz": 587.5576450216547,
+    "pitch_spread_cents": 1.2759708700823567,
+    "trimmed_frames": 0,
+    "gain": 2.2245867379516473,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-74-0.pcm",
+        "frames": 167580,
+        "sha256": "04c6fa72302fb8ff075e0c89db5d0b6feddf0ab8723d37959bec5a473d73d14c"
+      },
+      {
+        "file": "clarinet-74-1.pcm",
+        "frames": 83790,
+        "sha256": "8dac4423e7dee758528d664a44ec73e1ff5ce52a3601245510ebd499bdcaa621"
+      },
+      {
+        "file": "clarinet-74-2.pcm",
+        "frames": 41895,
+        "sha256": "9caa1344eec1723ceb04e742b8ccf044c0217ed018c1e9eeb4b950d8018251c4"
+      },
+      {
+        "file": "clarinet-74-3.pcm",
+        "frames": 20948,
+        "sha256": "22ab8946b7a543bc4e544ef979f1b1f8900f379fefeb7fb84646d1ce9958c391"
+      },
+      {
+        "file": "clarinet-74-4.pcm",
+        "frames": 10474,
+        "sha256": "f9ce46da2d2c8fb3cff9aa06b65983a3385c82d362333a4ba3ee41b2a2520e51"
+      },
+      {
+        "file": "clarinet-74-5.pcm",
+        "frames": 5237,
+        "sha256": "763abea6cb3286c4575915ed33bdd60a520e9f641dee80db5d692383e3b01284"
+      },
+      {
+        "file": "clarinet-74-6.pcm",
+        "frames": 2619,
+        "sha256": "8f407d113cfed6da4bf80e4423e1bb9e3bed5f86e9319328c2484f4ec10ddd06"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_F4_v2_rr1_sum.wav",
+    "source_git_blob": "9188e6eb2204ec227bac95cf254b9ce20e5d9d58",
+    "nominal_midi": 77,
+    "reference_hz": 699.0983298047577,
+    "pitch_spread_cents": 1.8964381064744322,
+    "trimmed_frames": 0,
+    "gain": 3.3647421878645836,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-77-0.pcm",
+        "frames": 167580,
+        "sha256": "4b077539652f0f58fbdc9d18f07e5061dd964fe37618cbc9225caaa769270568"
+      },
+      {
+        "file": "clarinet-77-1.pcm",
+        "frames": 83790,
+        "sha256": "6193d7a31fdbfc7655bae50e788f7c4b76d247fc4de09471c9dd7855baac31ea"
+      },
+      {
+        "file": "clarinet-77-2.pcm",
+        "frames": 41895,
+        "sha256": "6f0320b3d9d1fe4d64d5197469b06817a701c564c2a96f998b7962660243dbd9"
+      },
+      {
+        "file": "clarinet-77-3.pcm",
+        "frames": 20948,
+        "sha256": "874176150d8dd737b0da26a974681cd48415e1ec921e3258cd22345747e07b66"
+      },
+      {
+        "file": "clarinet-77-4.pcm",
+        "frames": 10474,
+        "sha256": "57fdf7a30f859493e19ea787ce7407a7470f6bfdc53663c234eac75606e06d97"
+      },
+      {
+        "file": "clarinet-77-5.pcm",
+        "frames": 5237,
+        "sha256": "b0b31faa2d0bb37eed904c26be7e70162dd981395fe59fbf961435166f93d3b6"
+      },
+      {
+        "file": "clarinet-77-6.pcm",
+        "frames": 2619,
+        "sha256": "789f2b93c5d9d2ce43b95d1369f2445d1697ea779d966f10fe1384b256fb8c48"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_A#4_v2_rr1_sum.wav",
+    "source_git_blob": "4250227b229f8f94ea73ecb3ff4e996bfa1cf91b",
+    "nominal_midi": 82,
+    "reference_hz": 932.6300752962584,
+    "pitch_spread_cents": 1.630164928967577,
+    "trimmed_frames": 0,
+    "gain": 4.19527904196099,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-82-0.pcm",
+        "frames": 167580,
+        "sha256": "0d5caee008094a4158a7ccc0ae407640ed3a87c1504b573ce95460ab3022f438"
+      },
+      {
+        "file": "clarinet-82-1.pcm",
+        "frames": 83790,
+        "sha256": "d59e320d3dba5e0238c659aad3f75dff60e30a6b4d3d36b074f39034ccc4d29d"
+      },
+      {
+        "file": "clarinet-82-2.pcm",
+        "frames": 41895,
+        "sha256": "56cdf36c5e5e5886868d5a18df1208a15f229c8cf5124fcd2f9b752f48997470"
+      },
+      {
+        "file": "clarinet-82-3.pcm",
+        "frames": 20948,
+        "sha256": "f4b6e10435d362d80834d5c9d76c51967abba9e8ff9c8fea355943154c242c28"
+      },
+      {
+        "file": "clarinet-82-4.pcm",
+        "frames": 10474,
+        "sha256": "42c6ef526ad8b3b290af97fe2f8d62d1495b96b0948cbbad09ed4e452a8dd357"
+      },
+      {
+        "file": "clarinet-82-5.pcm",
+        "frames": 5237,
+        "sha256": "724dca9fed1420faaf11b78c9d6369029233015ea4968e21473329cc3486364e"
+      },
+      {
+        "file": "clarinet-82-6.pcm",
+        "frames": 2619,
+        "sha256": "ba403d83020d92eac8bc2143c1c10c80ed666e34b6f616da028349e2e67107e5"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_D5_v2_rr1_sum.wav",
+    "source_git_blob": "d2c1fa23c73a15d50b581b6f83aa9e56e7e01a0c",
+    "nominal_midi": 86,
+    "reference_hz": 1176.730214899569,
+    "pitch_spread_cents": 1.5185430125039427,
+    "trimmed_frames": 2639,
+    "gain": 1.0026750273673313,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-86-0.pcm",
+        "frames": 167580,
+        "sha256": "705a26667bd6c78bf12a9889cc28016e5a957b968cb348543ffdd6810e850921"
+      },
+      {
+        "file": "clarinet-86-1.pcm",
+        "frames": 83790,
+        "sha256": "628c9a24bad5810909527f9a54c1ed4e54688ea58de2d0bc6a72001c7f3d877a"
+      },
+      {
+        "file": "clarinet-86-2.pcm",
+        "frames": 41895,
+        "sha256": "7172e7b4331a9eec50c71e05150d8bcdd110f5b996d4252c09683e5ebbb6d133"
+      },
+      {
+        "file": "clarinet-86-3.pcm",
+        "frames": 20948,
+        "sha256": "70c7f20d1aa3545b49fa9d86f3c506c89d9a228eead438108ddf9f1f9e870321"
+      },
+      {
+        "file": "clarinet-86-4.pcm",
+        "frames": 10474,
+        "sha256": "b93a2dafd6b4a2a5d5f14165b10c443ee2773dbb664f71430023fe60fff17017"
+      },
+      {
+        "file": "clarinet-86-5.pcm",
+        "frames": 5237,
+        "sha256": "fe68ee9396d4ba5060e601aee902c77e1e2c0d055148f356913dd26b43340467"
+      },
+      {
+        "file": "clarinet-86-6.pcm",
+        "frames": 2619,
+        "sha256": "99aa814b8dff6b21041bec9e13cd16efec34af9e70a1f6f4e0ceda37bc351572"
+      }
+    ]
+  },
+  {
+    "instrument": "clarinet",
+    "source": "Woodwinds/Clarinet/susLong/DCClar_susLong_F#5_v2_rr1_sum.wav",
+    "source_git_blob": "5e103799bb30ef1afa405511230c852b942a9d7c",
+    "nominal_midi": 90,
+    "reference_hz": 1396.4310518796992,
+    "pitch_spread_cents": 1.3142364946246765,
+    "trimmed_frames": 1099,
+    "gain": 1.3600860801313963,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "clarinet-90-0.pcm",
+        "frames": 167580,
+        "sha256": "272295644cfa6944edacd70be849ac3f2c579a72ae23289e83556f2c2498477e"
+      },
+      {
+        "file": "clarinet-90-1.pcm",
+        "frames": 83790,
+        "sha256": "0687bc6bdcacf79ed1cb909be638f3ae771d5378cb47cffdb8d70e12fcd407de"
+      },
+      {
+        "file": "clarinet-90-2.pcm",
+        "frames": 41895,
+        "sha256": "b7babd73ff92a33e87b76d17e4e7782905afd9f198c6e4b891f265aaa64e7d1b"
+      },
+      {
+        "file": "clarinet-90-3.pcm",
+        "frames": 20948,
+        "sha256": "83fbf53f0c9e7b40ab1bd0c3209fe14c1bebb978efcddb7ad38904d2ccb737c9"
+      },
+      {
+        "file": "clarinet-90-4.pcm",
+        "frames": 10474,
+        "sha256": "e6c18a070e25576ed1c00ea34e39dbb66f2b3a1d744fab5b5bb549ed2fd2b6f1"
+      },
+      {
+        "file": "clarinet-90-5.pcm",
+        "frames": 5237,
+        "sha256": "cc72e32285c0fcd1802c167d5841f18bb96fd31ea086b4b93ab0a62b21764505"
+      },
+      {
+        "file": "clarinet-90-6.pcm",
+        "frames": 2619,
+        "sha256": "3c03394071eed19d94a36671f9804960dbb265f7b4999ecb9f0c1ddbd4af4911"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_C3_v3_1.wav",
+    "source_git_blob": "18b1fa490327f38057a2edbaca4f000cffbf633d",
+    "nominal_midi": 60,
+    "reference_hz": 261.45663856782824,
+    "pitch_spread_cents": 0.5408572870525657,
+    "trimmed_frames": 0,
+    "gain": 32.68332885425507,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-60-0.pcm",
+        "frames": 167580,
+        "sha256": "682fe337d1ab31edfa2be72d08ed3f5c616335aacce06d8a16c4008b0778e85a"
+      },
+      {
+        "file": "flute-60-1.pcm",
+        "frames": 83790,
+        "sha256": "8836bc8f819e03232f62c1ebaa1aaef7fe0d1888eb90c0c96331d68b48a8c663"
+      },
+      {
+        "file": "flute-60-2.pcm",
+        "frames": 41895,
+        "sha256": "09f4f22812647eb98c54bce4b190ae0d69176666785e513398db0e3ddb49f7d2"
+      },
+      {
+        "file": "flute-60-3.pcm",
+        "frames": 20948,
+        "sha256": "ae334e4fb60f1b9b261d73b00f8f1b10c09eb101dd42de0996eb91fcc9c67c3d"
+      },
+      {
+        "file": "flute-60-4.pcm",
+        "frames": 10474,
+        "sha256": "8bd9e1d7e798f85d98d9850c2aba65ae475bdb7b2ebaffa2f3aec19fac9958ba"
+      },
+      {
+        "file": "flute-60-5.pcm",
+        "frames": 5237,
+        "sha256": "3e8e8f7cbe5a3c07fac18119d43d04dd06b78de98a0493a7cc2f21b1eff0fe2a"
+      },
+      {
+        "file": "flute-60-6.pcm",
+        "frames": 2619,
+        "sha256": "09e7601eb72d634208b946dc2bd222429323158eed4608ee4fc586a99ffff904"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_E3_v3_1.wav",
+    "source_git_blob": "66390898fca3d96f65bbc2bffd26c55af56db11e",
+    "nominal_midi": 64,
+    "reference_hz": 329.6439706342474,
+    "pitch_spread_cents": 0.12295983252642351,
+    "trimmed_frames": 0,
+    "gain": 10.101882416087504,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-64-0.pcm",
+        "frames": 167580,
+        "sha256": "64f0333a0d619a77af60db216856d976257c9eacc4a31102e368fe5e2c71b61a"
+      },
+      {
+        "file": "flute-64-1.pcm",
+        "frames": 83790,
+        "sha256": "ad66bd8234884b7706802d446823e01eb776f740a333d05a8f06a2df2da16d23"
+      },
+      {
+        "file": "flute-64-2.pcm",
+        "frames": 41895,
+        "sha256": "1969515192afd0a30f2b371b18b192c4209895f42658fd0385c73fafa13e7473"
+      },
+      {
+        "file": "flute-64-3.pcm",
+        "frames": 20948,
+        "sha256": "2a0dfd74e6fe31a9970691f6faec873ba64c9a0f6839c9d984f72c55600385ff"
+      },
+      {
+        "file": "flute-64-4.pcm",
+        "frames": 10474,
+        "sha256": "ca3ea9458b7b360331d67b6405ba552f3e498a412d092531de0d2a0c1d81618f"
+      },
+      {
+        "file": "flute-64-5.pcm",
+        "frames": 5237,
+        "sha256": "b5dea78ee23637e36c33e8fff0dee4ad136a29da0ac24d8de2f97db556e4130e"
+      },
+      {
+        "file": "flute-64-6.pcm",
+        "frames": 2619,
+        "sha256": "9cad480f8b74711ce0b1c6dc1bf3d1163d8d9bd14aa7cf916f73247c81dab7e1"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_A3_v3_1.wav",
+    "source_git_blob": "75a6dbb605779e3eaef2a265b6857142211a5837",
+    "nominal_midi": 69,
+    "reference_hz": 440.06703234369957,
+    "pitch_spread_cents": 0.07447649411869159,
+    "trimmed_frames": 0,
+    "gain": 3.7184734797453176,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-69-0.pcm",
+        "frames": 167580,
+        "sha256": "a57126fbd06c82622940d4cd506c6b18b73bd3a062213e418c5ce1bf95e00ef6"
+      },
+      {
+        "file": "flute-69-1.pcm",
+        "frames": 83790,
+        "sha256": "e7cc61801f926d2a44407b18ef693d5c6171d86f9d84cc66690a9d2506009de8"
+      },
+      {
+        "file": "flute-69-2.pcm",
+        "frames": 41895,
+        "sha256": "7cd5eb78315e460d678d8ddf55111844d1e57ce1b6b97ab699d5bec4e1f08d41"
+      },
+      {
+        "file": "flute-69-3.pcm",
+        "frames": 20948,
+        "sha256": "5a25ecce7b53c26dff8f56f141c1335a94a02cfbde71740e19328a9d4782f963"
+      },
+      {
+        "file": "flute-69-4.pcm",
+        "frames": 10474,
+        "sha256": "8487b1c95cad5ad883357a1205943ca6b1d51df95bcc9d7cb8af3d803027140b"
+      },
+      {
+        "file": "flute-69-5.pcm",
+        "frames": 5237,
+        "sha256": "339ca5049fcf22294af861ed5d45f896ab456d46eab950e132fa9ab8109d5998"
+      },
+      {
+        "file": "flute-69-6.pcm",
+        "frames": 2619,
+        "sha256": "94ff83214b93e2f84f949a5054c3bbbacbd86dcc94b6e811adccab76e19f02a8"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_C4_v3_1.wav",
+    "source_git_blob": "850db1f598b5ba7a88ec2f929f8b832fb83cdd66",
+    "nominal_midi": 72,
+    "reference_hz": 523.252135558552,
+    "pitch_spread_cents": 0.1731446015589966,
+    "trimmed_frames": 0,
+    "gain": 1.724290217320724,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-72-0.pcm",
+        "frames": 167580,
+        "sha256": "d41ef31aff485310df5206288a27e85e483fc16b772418f84a03b379c0622dc1"
+      },
+      {
+        "file": "flute-72-1.pcm",
+        "frames": 83790,
+        "sha256": "23d8d19b7a9312b9991b89578f079b5deaad2e07e8075cb5ff23eb3e67271efb"
+      },
+      {
+        "file": "flute-72-2.pcm",
+        "frames": 41895,
+        "sha256": "074e53c12ebb3daaf961a502bc78967a62b45dbe7aa4370a0f7b156861f72f9b"
+      },
+      {
+        "file": "flute-72-3.pcm",
+        "frames": 20948,
+        "sha256": "e5a080bea318d7fb742e42003afd8f7834c8e6f80c73f0f02d1fac2ca890a267"
+      },
+      {
+        "file": "flute-72-4.pcm",
+        "frames": 10474,
+        "sha256": "295bc389bb0d752c228c0ada26bede125ad023605427db063b139030f1f3049a"
+      },
+      {
+        "file": "flute-72-5.pcm",
+        "frames": 5237,
+        "sha256": "93c7d23a0d7f255ea6d1578905237d0a40ca8b7de1dbe19351979696ba8db298"
+      },
+      {
+        "file": "flute-72-6.pcm",
+        "frames": 2619,
+        "sha256": "c5ba723a1e7c97987d7336f0f59adb5467132a275acde8e1f85d917526e10ffc"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_E4_v3_1.wav",
+    "source_git_blob": "67357c844a8c88034431d83438bd8ddea729e805",
+    "nominal_midi": 76,
+    "reference_hz": 659.2415548577513,
+    "pitch_spread_cents": 0.23940619258181695,
+    "trimmed_frames": 0,
+    "gain": 2.1589308660659934,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-76-0.pcm",
+        "frames": 167580,
+        "sha256": "849070846b65134fd4ce7c6d01e12c5423f2a5b4d9be88a75290970e85d64a31"
+      },
+      {
+        "file": "flute-76-1.pcm",
+        "frames": 83790,
+        "sha256": "d7b1f6e4092b259184b28ad26bb8fc1af4d20da5eb4e0be52fdb6e1b37e66b58"
+      },
+      {
+        "file": "flute-76-2.pcm",
+        "frames": 41895,
+        "sha256": "4176f05d53ea4e39055209044ecd58f379dee9a4b7211ff57829d7826f561ca2"
+      },
+      {
+        "file": "flute-76-3.pcm",
+        "frames": 20948,
+        "sha256": "5055c75bec5ceadbe1d5bd96c2b02c8a4263ea1664b0c57a060690eb65aa41e2"
+      },
+      {
+        "file": "flute-76-4.pcm",
+        "frames": 10474,
+        "sha256": "8d9a9023d6043b61b60198d0ff12fbeca5557b37d95c7b85bc7bfa126977c29c"
+      },
+      {
+        "file": "flute-76-5.pcm",
+        "frames": 5237,
+        "sha256": "54fb6926273473e4db1551072361cee1a091f1a3d8f2f07c29df576dfdd278e7"
+      },
+      {
+        "file": "flute-76-6.pcm",
+        "frames": 2619,
+        "sha256": "53dc9c88d55632be6a1773402d52df6b8d01a823ec92bc79b291ee8b84ac8a76"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_A4_v3_1.wav",
+    "source_git_blob": "fa6e9dc8429dc62ae37eb6e61cf63aed8ca38529",
+    "nominal_midi": 81,
+    "reference_hz": 879.9155096273616,
+    "pitch_spread_cents": 0.07712331784148714,
+    "trimmed_frames": 0,
+    "gain": 3.9562714213510475,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-81-0.pcm",
+        "frames": 167580,
+        "sha256": "6596a0a6083fa6297b712f85ffac6253de087847d665cfec7c7b4948e70d8b12"
+      },
+      {
+        "file": "flute-81-1.pcm",
+        "frames": 83790,
+        "sha256": "34ff74968224e6c73076f7e31f94ecaa28a3f920ddc29f57df398058047fa663"
+      },
+      {
+        "file": "flute-81-2.pcm",
+        "frames": 41895,
+        "sha256": "b1b0223989cda000a2fe6dcf55893dfd66e211119b5c712d48af82f8a2fbe2e5"
+      },
+      {
+        "file": "flute-81-3.pcm",
+        "frames": 20948,
+        "sha256": "3156d695313546a776b09bb2936c4282ff04eada104fd38aac8dcd3b834b4be7"
+      },
+      {
+        "file": "flute-81-4.pcm",
+        "frames": 10474,
+        "sha256": "079c73a60ec957b8ee54390d14be2a5bf003dda699d7c71e9fe18324ffca5c0d"
+      },
+      {
+        "file": "flute-81-5.pcm",
+        "frames": 5237,
+        "sha256": "a097a18b76b01db0ada51fb70a37b8e4f9d49ff9311e73a0c0ad7d22e5ee5eeb"
+      },
+      {
+        "file": "flute-81-6.pcm",
+        "frames": 2619,
+        "sha256": "065a10829af27d971e43fcf53d88656fa45603f2af254f8db1460515463096f7"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_C5_v2_1.wav",
+    "source_git_blob": "c781084689262db0267e3b888ac9a9244f32dbd7",
+    "nominal_midi": 84,
+    "reference_hz": 1046.503712540071,
+    "pitch_spread_cents": 0.04549172572343319,
+    "trimmed_frames": 0,
+    "gain": 1.4361431293582125,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-84-0.pcm",
+        "frames": 167580,
+        "sha256": "880f78407d7a503be7ef3d2dbfc80ac928ba477ada53fb0380f97d20dd7d67d5"
+      },
+      {
+        "file": "flute-84-1.pcm",
+        "frames": 83790,
+        "sha256": "aaf5f480a1a4e8efd85552aa2176ba95ff616c1197e46c644cd29e9ffe6943b2"
+      },
+      {
+        "file": "flute-84-2.pcm",
+        "frames": 41895,
+        "sha256": "63e294aeb08e4a9766b0b89f6a5a9568c9c284baf94ccb36579bb54e1ba85627"
+      },
+      {
+        "file": "flute-84-3.pcm",
+        "frames": 20948,
+        "sha256": "a28e669572d12a6a7154204cde49b24516594edcfc329cbace556906abd3b6a9"
+      },
+      {
+        "file": "flute-84-4.pcm",
+        "frames": 10474,
+        "sha256": "7526c51a48a092072b52b02bbdfff6d80e6605a157992076f5e4cf27f571ffc5"
+      },
+      {
+        "file": "flute-84-5.pcm",
+        "frames": 5237,
+        "sha256": "a0d891144a77641e3c29c541fde6fd9340a13761f550ef2ce0b1b9d8ded8b9df"
+      },
+      {
+        "file": "flute-84-6.pcm",
+        "frames": 2619,
+        "sha256": "29e7745e8dd5790c1baaa04422851838e4cd4522b11d32bbda911bf6f625e92c"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_A5_v3_1.wav",
+    "source_git_blob": "cbcfcd8aef190cf811e141bf9c602953a4c2d935",
+    "nominal_midi": 93,
+    "reference_hz": 1759.868491430346,
+    "pitch_spread_cents": 0.052091849169849325,
+    "trimmed_frames": 219,
+    "gain": 1.1620416246998084,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-93-0.pcm",
+        "frames": 167580,
+        "sha256": "5c65ab256b535dea98dc002596c21242ee15536996ea4dba21ca76ee5f7ec6fb"
+      },
+      {
+        "file": "flute-93-1.pcm",
+        "frames": 83790,
+        "sha256": "f8cf106b529e1f5d5eb15699bbedfbc89ef72e77789de9975f4f1024ae3c0233"
+      },
+      {
+        "file": "flute-93-2.pcm",
+        "frames": 41895,
+        "sha256": "32e75c4cf56ab2f2d46d10f71b6675b63846493c842898da943e6d8d22badb67"
+      },
+      {
+        "file": "flute-93-3.pcm",
+        "frames": 20948,
+        "sha256": "7624c22ee0f3519b866e7aa90f1c5262fc637b9f40e84faa4811b2cc4bb1bc6d"
+      },
+      {
+        "file": "flute-93-4.pcm",
+        "frames": 10474,
+        "sha256": "0174ebc7774c3d94e7b40cf33dce0921e53e42684808b91bb78f0d3d01a209f8"
+      },
+      {
+        "file": "flute-93-5.pcm",
+        "frames": 5237,
+        "sha256": "b2550d15e81515e4a9f6914144a8c96b75644d316f6475bb508866a90636f04e"
+      },
+      {
+        "file": "flute-93-6.pcm",
+        "frames": 2619,
+        "sha256": "d30d3738cfcf71e7d50f5b893845789c83e138a73599c4c01c82bab6e31ad653"
+      }
+    ]
+  },
+  {
+    "instrument": "flute",
+    "source": "Woodwinds/Flute/susNV/LDFlute_susNV_C6_v1_1.wav",
+    "source_git_blob": "8b69c3cd65834619ad9c1389b3c9f8d50fab15f5",
+    "nominal_midi": 96,
+    "reference_hz": 2093.0547679610218,
+    "pitch_spread_cents": 0.07491794629533521,
+    "trimmed_frames": 219,
+    "gain": 0.7300607267588345,
+    "loop": [
+      55125,
+      154350,
+      3528
+    ],
+    "levels": [
+      {
+        "file": "flute-96-0.pcm",
+        "frames": 167580,
+        "sha256": "6520975d2ea12bfc847461c2598c8159fa6bf9c35ace52ac5b7565a350175e75"
+      },
+      {
+        "file": "flute-96-1.pcm",
+        "frames": 83790,
+        "sha256": "211287dd68010de8f24fffb03e5024786b3d405c7fd331c1babbec05bdf10f3b"
+      },
+      {
+        "file": "flute-96-2.pcm",
+        "frames": 41895,
+        "sha256": "0b60b284d216c9c765d9aada35afa7cfb9dd56525d55a8b7bc815347909a7af2"
+      },
+      {
+        "file": "flute-96-3.pcm",
+        "frames": 20948,
+        "sha256": "8e9606563480595b49adebde19a9f7d0e04ba9005c74a14095398ab6dd0d31db"
+      },
+      {
+        "file": "flute-96-4.pcm",
+        "frames": 10474,
+        "sha256": "dc516465c80c4ad34cd818ac71584b955bb5b679e694aa579b96aa67982d3cd4"
+      },
+      {
+        "file": "flute-96-5.pcm",
+        "frames": 5237,
+        "sha256": "36237c4ea311056de1684c28ee3eb0acd52da275c77fbe900a7f12e2a851d6ca"
+      },
+      {
+        "file": "flute-96-6.pcm",
+        "frames": 2619,
+        "sha256": "10786e8b674fc79cf65681f6d8d6c65981893fd4988fbca76c8b23ebc7179b98"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_E1_f.wav",
+    "source_git_blob": "483714bd64ecf4947fe70d0ae0da6f2292c958f2",
+    "nominal_midi": 28,
+    "reference_hz": 40.99049655545196,
+    "pitch_spread_cents": 3.0029226619772387,
+    "trimmed_frames": 439,
+    "gain": 36.92175647702963,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-28-0.pcm",
+        "frames": 441000,
+        "sha256": "7203f9b8c8683d7376ea867cc6d6ee986f985dc1eba6aa68a3a9f0c8ab16dbbc"
+      },
+      {
+        "file": "harp-28-1.pcm",
+        "frames": 220500,
+        "sha256": "1053a84cc269d412815b79eb0df41842bfe548266cfbcec9e37e738d0c8afc03"
+      },
+      {
+        "file": "harp-28-2.pcm",
+        "frames": 110250,
+        "sha256": "3e9c309c76c353683ea40171712d857b30d66d36d2173731eff5f44aeec4db39"
+      },
+      {
+        "file": "harp-28-3.pcm",
+        "frames": 55125,
+        "sha256": "9a11da8af3bf242936f76bf33bb2acd65dab50d0d33e323788de049033706161"
+      },
+      {
+        "file": "harp-28-4.pcm",
+        "frames": 27563,
+        "sha256": "d81cdc3ca7d22e213c7b2e6b9e02839b29456975e8a2c2249fd19103a25c08ba"
+      },
+      {
+        "file": "harp-28-5.pcm",
+        "frames": 13782,
+        "sha256": "46ee99b837fa64104dc64bba90727b0024609663668a2971116b4b715ef35593"
+      },
+      {
+        "file": "harp-28-6.pcm",
+        "frames": 6891,
+        "sha256": "248b07fb55aa64783a783b42b6622c4f9946b3bc4b864302698fa66f21ddafd4"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_B1_mf.wav",
+    "source_git_blob": "bb26292fd8b4d4d7f95703c69667c8f2234eebc8",
+    "nominal_midi": 35,
+    "reference_hz": 61.25838133126471,
+    "pitch_spread_cents": 0.4552644066463107,
+    "trimmed_frames": 219,
+    "gain": 101.21388181954995,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-35-0.pcm",
+        "frames": 441000,
+        "sha256": "21c2e953e385dd67891fd75348285a518cb68c207e953479b9fc8957d2307000"
+      },
+      {
+        "file": "harp-35-1.pcm",
+        "frames": 220500,
+        "sha256": "9db47c97b9ed95b8c140be3628994f01e574b1ce9750e6036d8533a0cd8071d6"
+      },
+      {
+        "file": "harp-35-2.pcm",
+        "frames": 110250,
+        "sha256": "9a8a55a73c3467ccb5bdb0f56081b4b089d12bb9948fd546376d293e45988dab"
+      },
+      {
+        "file": "harp-35-3.pcm",
+        "frames": 55125,
+        "sha256": "c366d4f6bfd37fe6427faa8a381881520d50fd197b08eecc88441c4ffc278ad8"
+      },
+      {
+        "file": "harp-35-4.pcm",
+        "frames": 27563,
+        "sha256": "15bd4433e59bdd9da70d5e0c7452619afd42792acd36a8559cc5203aea124362"
+      },
+      {
+        "file": "harp-35-5.pcm",
+        "frames": 13782,
+        "sha256": "496a96201ac4e4319abfb54b81888112cab695e5517de233d0306ef449413225"
+      },
+      {
+        "file": "harp-35-6.pcm",
+        "frames": 6891,
+        "sha256": "0d8a581b4c9710d957d8444b9e061baaf1fa5cfdf92ac447183875e36a07b62f"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_D2_mf.wav",
+    "source_git_blob": "2a9d5a18ceb32459a29995a4e68e06c8f78dff5d",
+    "nominal_midi": 38,
+    "reference_hz": 73.27241404571865,
+    "pitch_spread_cents": 2.476519661932817,
+    "trimmed_frames": 1099,
+    "gain": 43.36561847392028,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-38-0.pcm",
+        "frames": 434169,
+        "sha256": "13f3dd0ae204e22a5d14ae14d6bb0b68481cf455cc429301cd63fdf049f15561"
+      },
+      {
+        "file": "harp-38-1.pcm",
+        "frames": 217085,
+        "sha256": "3125ed1d7d60daa7909344bb647ece404874d855733a0feeb70031ba5950a279"
+      },
+      {
+        "file": "harp-38-2.pcm",
+        "frames": 108543,
+        "sha256": "5ec0715219c6598e96570eb0f055ee1b7bc218a224b601c56f6edd2576567e13"
+      },
+      {
+        "file": "harp-38-3.pcm",
+        "frames": 54272,
+        "sha256": "fad6ae677020e6c16b7a1aec5343ece38c6c3ef4e7c57cd9d6fc88566d1141f8"
+      },
+      {
+        "file": "harp-38-4.pcm",
+        "frames": 27136,
+        "sha256": "779ab6e9e6cd5f1a1474ebb1691e50bad48ef7e671658632482c76f6f9c61832"
+      },
+      {
+        "file": "harp-38-5.pcm",
+        "frames": 13568,
+        "sha256": "4480580c0eb413185d637b440bc18db80235a7136f3a97f1e2ef701e5032809d"
+      },
+      {
+        "file": "harp-38-6.pcm",
+        "frames": 6784,
+        "sha256": "bfb9efcd3f708572e38a0d2e3e4fd3511fd5abb1c602ea3f8c71deb35d217fad"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_F2_mf.wav",
+    "source_git_blob": "03c3ce65453dc79a0b36805126b57574ff7dc654",
+    "nominal_midi": 41,
+    "reference_hz": 86.9716030272208,
+    "pitch_spread_cents": 0.3412406049385796,
+    "trimmed_frames": 879,
+    "gain": 65.29068377438787,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-41-0.pcm",
+        "frames": 441000,
+        "sha256": "8fbae079071049a845a5e31d755087f371e5a0a88b0783810ea4b1982cbc5410"
+      },
+      {
+        "file": "harp-41-1.pcm",
+        "frames": 220500,
+        "sha256": "f3933987813660c7200eb0b360e47ee1376367662f491b30e0417831bbf0f10a"
+      },
+      {
+        "file": "harp-41-2.pcm",
+        "frames": 110250,
+        "sha256": "d273dc5359cb56adcc914c408d7655b4b4881d104017650b67d0d71448148a8f"
+      },
+      {
+        "file": "harp-41-3.pcm",
+        "frames": 55125,
+        "sha256": "ec93655bf15b10200914f2350dcd12b79c16a617d9b1f157e4c403f2ece6ec84"
+      },
+      {
+        "file": "harp-41-4.pcm",
+        "frames": 27563,
+        "sha256": "24df7e1da145a91fd7a136236e021c80b42d4395f4e3563603e184ab27daa80a"
+      },
+      {
+        "file": "harp-41-5.pcm",
+        "frames": 13782,
+        "sha256": "c31d7cddc7efd77762c963d879e94442f52b79f7d27674b0a014121b8351de44"
+      },
+      {
+        "file": "harp-41-6.pcm",
+        "frames": 6891,
+        "sha256": "b512537d4306263ea5b480c7bbbb40d40f8b0a9fdc34e729387505933c87cc0e"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_A2_mf.wav",
+    "source_git_blob": "265383d75cb23b2882ca297e6c50908e3ec8247a",
+    "nominal_midi": 45,
+    "reference_hz": 110.0045818003073,
+    "pitch_spread_cents": 1.4365552276541775,
+    "trimmed_frames": 1099,
+    "gain": 26.59995753541868,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-45-0.pcm",
+        "frames": 441000,
+        "sha256": "12d618bafe2a6e4d1aa9942038f3c80c4b71ecec0b5cf5c19b20ab3df7a6908b"
+      },
+      {
+        "file": "harp-45-1.pcm",
+        "frames": 220500,
+        "sha256": "6a54e187eea4600ebf54b6ec08afa7c1f38e53bdfba355617e6fcb6365cab7da"
+      },
+      {
+        "file": "harp-45-2.pcm",
+        "frames": 110250,
+        "sha256": "e217811634d6acce149949f34a9b6ad6521c3b2905d65ded93d1cfdc361ed3b5"
+      },
+      {
+        "file": "harp-45-3.pcm",
+        "frames": 55125,
+        "sha256": "63e2fcdb09348d25c9b181e8a1c89b438ec79b49cee126117cb170737a06528b"
+      },
+      {
+        "file": "harp-45-4.pcm",
+        "frames": 27563,
+        "sha256": "85ed18ca0ec49fdaee1376fe628f93e56afee0a4e0d447f6a954b769afc92027"
+      },
+      {
+        "file": "harp-45-5.pcm",
+        "frames": 13782,
+        "sha256": "fc67a57a4b8ef6ade90911f0ea6600b7acdb2d6e51f78589c8bab646c77cbbfa"
+      },
+      {
+        "file": "harp-45-6.pcm",
+        "frames": 6891,
+        "sha256": "666e5a3a312f500df879289370208a1c3c582f75eff757ab5384fb09c0bc9b61"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_C3_mf.wav",
+    "source_git_blob": "20e91e167e86132bb16601f682c90444779d8a23",
+    "nominal_midi": 48,
+    "reference_hz": 130.6871954858241,
+    "pitch_spread_cents": 0.4849861904701706,
+    "trimmed_frames": 0,
+    "gain": 58.644748873602154,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-48-0.pcm",
+        "frames": 395269,
+        "sha256": "d97cb37efe9bcc5b070d81f62ca3dff0bcd3a195da3482b5271346ec47971932"
+      },
+      {
+        "file": "harp-48-1.pcm",
+        "frames": 197635,
+        "sha256": "edee8c2b6fa757c1170197d2cd2c1307b6ea70cbb7cb245f0e58423ea1e964c5"
+      },
+      {
+        "file": "harp-48-2.pcm",
+        "frames": 98818,
+        "sha256": "ae2549dfc94e14d75a7cddeccc76d18874338322086658d4abd83f69231fd24f"
+      },
+      {
+        "file": "harp-48-3.pcm",
+        "frames": 49409,
+        "sha256": "80a708cadadc5a58fc154fc0dda11253e1dc15d416fecd58cb625b913f64c621"
+      },
+      {
+        "file": "harp-48-4.pcm",
+        "frames": 24705,
+        "sha256": "856126981ba0c8b67ac35ef914d8014f74c768db5058df4b3a5cecd66db4fad1"
+      },
+      {
+        "file": "harp-48-5.pcm",
+        "frames": 12353,
+        "sha256": "826d106dfb594a473867d3854e35add90ca1a7479f5343d0c203112ee1b61d71"
+      },
+      {
+        "file": "harp-48-6.pcm",
+        "frames": 6177,
+        "sha256": "0788b08f7d71a4de0a4abd8fdcc54a1d7a7ea0dc15ae4668851df0581552896a"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_E3_mf.wav",
+    "source_git_blob": "5c6c7410ae0ff7800214931f9db9a7f52db5987e",
+    "nominal_midi": 52,
+    "reference_hz": 164.61195626573215,
+    "pitch_spread_cents": 1.1120204775868905,
+    "trimmed_frames": 1759,
+    "gain": 25.242609504572233,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-52-0.pcm",
+        "frames": 441000,
+        "sha256": "11adc60f75da298217926ecf94ce9560020709f108a2faad61546c1a544e6184"
+      },
+      {
+        "file": "harp-52-1.pcm",
+        "frames": 220500,
+        "sha256": "f76315189071622657a2dfeaf3cc8a492b35f779e08a16b9ddf99acd87312710"
+      },
+      {
+        "file": "harp-52-2.pcm",
+        "frames": 110250,
+        "sha256": "0460df9657af35de0443994fa7d242d80b09ad80ed1272853f1bb7cf0182ad35"
+      },
+      {
+        "file": "harp-52-3.pcm",
+        "frames": 55125,
+        "sha256": "215f0a9b877a93054769d0d0aba0215264a48ed4503e7fea776baa62df5840bb"
+      },
+      {
+        "file": "harp-52-4.pcm",
+        "frames": 27563,
+        "sha256": "b3418476a04f17e7ae419d6fbd70129e161999dcb762ebd4cfc1a02a34be9f02"
+      },
+      {
+        "file": "harp-52-5.pcm",
+        "frames": 13782,
+        "sha256": "846286a0881c841b11ed3f2fd6215ca51d8d10c3df87120ff1b7990f154647cb"
+      },
+      {
+        "file": "harp-52-6.pcm",
+        "frames": 6891,
+        "sha256": "9295e9e767c2adc766a1c9ee67c302e994b306e06dc03ac0e6511064d7326e1b"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_G3_mf.wav",
+    "source_git_blob": "a2f7fcc2bce81d039d9c0c529a94159f589f36e1",
+    "nominal_midi": 55,
+    "reference_hz": 195.59065648998845,
+    "pitch_spread_cents": 2.877566376483475,
+    "trimmed_frames": 2419,
+    "gain": 13.818885473727752,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-55-0.pcm",
+        "frames": 441000,
+        "sha256": "3fe34832ea41402e95028dbc3825ecac7825f92456f2c8417007ff22eaa3c593"
+      },
+      {
+        "file": "harp-55-1.pcm",
+        "frames": 220500,
+        "sha256": "db92d525e898e0475fba6f04d91175b58695f6e8b95422f3ab646ca7ccffbffe"
+      },
+      {
+        "file": "harp-55-2.pcm",
+        "frames": 110250,
+        "sha256": "c5d5b147aecb7c7ac073936f06d1a9f6e6485971e326bd88d8e600c962ceeaa6"
+      },
+      {
+        "file": "harp-55-3.pcm",
+        "frames": 55125,
+        "sha256": "500a636141735aaec1b24453cda5d6321ebf9e5043c2053674932db06c838117"
+      },
+      {
+        "file": "harp-55-4.pcm",
+        "frames": 27563,
+        "sha256": "bcf58aa735af684f7221d7377dbd424cdd84fc1f2086b5ede5a51cc08e32b2c4"
+      },
+      {
+        "file": "harp-55-5.pcm",
+        "frames": 13782,
+        "sha256": "0692743da73665435ed5b280cc1a49b06fa5d5af0d0fc53a86029da495dd9f22"
+      },
+      {
+        "file": "harp-55-6.pcm",
+        "frames": 6891,
+        "sha256": "fe4096b055c0a5b18cdfb1373e5c0663e818ff6f9bd89bf260414e6bdd9eee81"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_B3_mf.wav",
+    "source_git_blob": "8d06cd55bc871d19f25a2bb1b56c7a567aabbc6b",
+    "nominal_midi": 59,
+    "reference_hz": 245.5038730432222,
+    "pitch_spread_cents": 1.5157706610939823,
+    "trimmed_frames": 879,
+    "gain": 14.91999362516372,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-59-0.pcm",
+        "frames": 441000,
+        "sha256": "cb38cdbad5d0aec310ba5f6a597c2fcd6340a053b0fb339c4e7a1822eb0c2113"
+      },
+      {
+        "file": "harp-59-1.pcm",
+        "frames": 220500,
+        "sha256": "4c6dabfb128e0a002fe41efa86976c7d3692f350a2ff48afa1acda4976af2689"
+      },
+      {
+        "file": "harp-59-2.pcm",
+        "frames": 110250,
+        "sha256": "fdf9fc4db47df94963e96a40a79ae670d2069b0341c3c5a10088239c43e9fb00"
+      },
+      {
+        "file": "harp-59-3.pcm",
+        "frames": 55125,
+        "sha256": "6e4fa068726d90ec37489ca0136a055b48d2e35ddb77f1f3a39e240b6ab8039e"
+      },
+      {
+        "file": "harp-59-4.pcm",
+        "frames": 27563,
+        "sha256": "fddefc6016449daf9be2a888e07bd602325fa12bddec52b3c5de5791d6cfcc44"
+      },
+      {
+        "file": "harp-59-5.pcm",
+        "frames": 13782,
+        "sha256": "0f3642d8822d1261484561d95aa1229f7f675bca2df8bed0975d5c983bc227c2"
+      },
+      {
+        "file": "harp-59-6.pcm",
+        "frames": 6891,
+        "sha256": "d1e99b12713c053bdc84b2260622a7248ef48a8f5e0fb933169f4e0d68bcbb99"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_D4_mf.wav",
+    "source_git_blob": "342eec5072e2c0a7fb7cb03b6f5b46d84ed6ac69",
+    "nominal_midi": 62,
+    "reference_hz": 291.7982539512005,
+    "pitch_spread_cents": 1.5755961159595313,
+    "trimmed_frames": 659,
+    "gain": 11.193184890899113,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-62-0.pcm",
+        "frames": 441000,
+        "sha256": "d885e056e15a3b2e710903df1459c67881ce0706c79be3c44fe164d5834a23fa"
+      },
+      {
+        "file": "harp-62-1.pcm",
+        "frames": 220500,
+        "sha256": "65e65a67b814cedcdac0677bd74013d91512c2e890603f172842eaca7c3d8d5d"
+      },
+      {
+        "file": "harp-62-2.pcm",
+        "frames": 110250,
+        "sha256": "491e889c017bf4cb3dcf2c59f636060c870a5f79d26dcb61891964df21816e5d"
+      },
+      {
+        "file": "harp-62-3.pcm",
+        "frames": 55125,
+        "sha256": "adc38c09a50ba7f1a20aa99bf39e367c9cb62cb8b29472b250ed304c4ec8a7b8"
+      },
+      {
+        "file": "harp-62-4.pcm",
+        "frames": 27563,
+        "sha256": "ca9419373fc31e4113831437a108cd45b769254f88144043f743084e8db52298"
+      },
+      {
+        "file": "harp-62-5.pcm",
+        "frames": 13782,
+        "sha256": "ed77b74f95ff122d1589d9b410ae8d7a4f844e1360ae3cb8c612a406a163b7a3"
+      },
+      {
+        "file": "harp-62-6.pcm",
+        "frames": 6891,
+        "sha256": "7d7c5b9e13c10cdc553d649806041dc843786d90c3a89e4c77d8ea88cfd7c235"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_F4_mf.wav",
+    "source_git_blob": "a1966639b165b623ac533270d616814cbc5389ef",
+    "nominal_midi": 65,
+    "reference_hz": 349.21407593484656,
+    "pitch_spread_cents": 0.4543902258644168,
+    "trimmed_frames": 0,
+    "gain": 11.091361498220309,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-65-0.pcm",
+        "frames": 441000,
+        "sha256": "080dad7f6cfbc1de69fe7f88c3e736152e3597c4e5bad1e9e4400b5ed3afc6d0"
+      },
+      {
+        "file": "harp-65-1.pcm",
+        "frames": 220500,
+        "sha256": "16586aa076b970283502c1623627b12c2d23263cfd0e86ae5813c41cad70889a"
+      },
+      {
+        "file": "harp-65-2.pcm",
+        "frames": 110250,
+        "sha256": "04590be328530aac52b4be84a7ed9189ddeb26b9d7dd7c5eb0d7487cc41509a8"
+      },
+      {
+        "file": "harp-65-3.pcm",
+        "frames": 55125,
+        "sha256": "2e8c5e0e4661aa2b98cdf4f4ce66355343b0c05447e792f672906c51a2e1a64c"
+      },
+      {
+        "file": "harp-65-4.pcm",
+        "frames": 27563,
+        "sha256": "cc6cd39c05b7b14b7229cc5aebafb814de1ae4bc560cb90e63ea36a236bf5cd5"
+      },
+      {
+        "file": "harp-65-5.pcm",
+        "frames": 13782,
+        "sha256": "952c33259f1a0ac559f172a04ef31905572294750366e0d22918077210f73554"
+      },
+      {
+        "file": "harp-65-6.pcm",
+        "frames": 6891,
+        "sha256": "240c713fca7339389fa78197b7fff28e84bf76f392c08950352d7baaab77c9d1"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_A4_mf.wav",
+    "source_git_blob": "acbece38a84e886cb5516e0f29d6ff5d38900fe1",
+    "nominal_midi": 69,
+    "reference_hz": 437.42366072550584,
+    "pitch_spread_cents": 3.5300128888246154,
+    "trimmed_frames": 439,
+    "gain": 6.491120698201575,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-69-0.pcm",
+        "frames": 441000,
+        "sha256": "4f42d3604ff1988866dc8bb9522852b41d963591a848ba84e21f5724017b387e"
+      },
+      {
+        "file": "harp-69-1.pcm",
+        "frames": 220500,
+        "sha256": "f8a81b2c455da2117ab097b597a820c797ce3266f16becae770eb1848885c7da"
+      },
+      {
+        "file": "harp-69-2.pcm",
+        "frames": 110250,
+        "sha256": "d5c6f5f250e6bbc4f1d04c4bff7763de7e96c5b817f2caec47e6e166f5dbf89c"
+      },
+      {
+        "file": "harp-69-3.pcm",
+        "frames": 55125,
+        "sha256": "9f159911725cd427886b66c397453d4dfa21e70323814a525fe49e10144f033f"
+      },
+      {
+        "file": "harp-69-4.pcm",
+        "frames": 27563,
+        "sha256": "fd037ccd5c7ee7bfde3ca9d699f3aec5581ed0db644bd9f473670c8e29b47e18"
+      },
+      {
+        "file": "harp-69-5.pcm",
+        "frames": 13782,
+        "sha256": "811906cd4558efd332c3c67857e25cb295309d610f08e8902db2991fba8bb172"
+      },
+      {
+        "file": "harp-69-6.pcm",
+        "frames": 6891,
+        "sha256": "58a91ab130f5992a596e65c6af651061ba198354dedb4188b1c4a058def25db6"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_C5_mf.wav",
+    "source_git_blob": "748b4b1366616972c2a22e81fc48a86178801c45",
+    "nominal_midi": 72,
+    "reference_hz": 519.9607968654468,
+    "pitch_spread_cents": 1.3546965911564786,
+    "trimmed_frames": 659,
+    "gain": 8.252609608878002,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-72-0.pcm",
+        "frames": 308615,
+        "sha256": "32c58aa4ab32948f83bc696768b0a4fe4910fbd80bbacff9fcd6376723612390"
+      },
+      {
+        "file": "harp-72-1.pcm",
+        "frames": 154308,
+        "sha256": "69ce5d47c539a4c3eeb666c9fc9496cb25b087ac04801ff5c7884d8b5fc3a871"
+      },
+      {
+        "file": "harp-72-2.pcm",
+        "frames": 77154,
+        "sha256": "4be63b72a79897fb18202478185c6611a34085c4d9fa8d613e7b36716e5f5029"
+      },
+      {
+        "file": "harp-72-3.pcm",
+        "frames": 38577,
+        "sha256": "b13f9b8cb3e3cb5b4ea5faf6bac9fb845f64696e573597c6849f50b61b1bd2fa"
+      },
+      {
+        "file": "harp-72-4.pcm",
+        "frames": 19289,
+        "sha256": "45518c14666de26e9651b797fce7fac2bbdfa417bcd5cf82cfee9219959acff0"
+      },
+      {
+        "file": "harp-72-5.pcm",
+        "frames": 9645,
+        "sha256": "f4d54302501a3f5290eb287645a86f8c1a7424cf86f0b5bc4ff7c19e5385fc78"
+      },
+      {
+        "file": "harp-72-6.pcm",
+        "frames": 4823,
+        "sha256": "8ffe8626415848dd1dfa72924cfa1952f75048c6df43e69ccf0836e64937ea9e"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_E5_mf.wav",
+    "source_git_blob": "20675907d698db011d0c8bc72cf9af4e7a1ac971",
+    "nominal_midi": 76,
+    "reference_hz": 654.9348059480486,
+    "pitch_spread_cents": 0.18312460856206625,
+    "trimmed_frames": 659,
+    "gain": 10.404611102785946,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-76-0.pcm",
+        "frames": 292226,
+        "sha256": "bb20d59c9ad0b9d467d392553f0c7779ce6f205fddf281d0c1cb34fca0c95a99"
+      },
+      {
+        "file": "harp-76-1.pcm",
+        "frames": 146113,
+        "sha256": "a01ae48dde886d58b204c38da30551efe5790661a10ec8fdd8d68320145f4dbb"
+      },
+      {
+        "file": "harp-76-2.pcm",
+        "frames": 73057,
+        "sha256": "a0683f293f6af2dbe5267f72b05b05ad18a68f90b59795ffff3ff4cf30313c20"
+      },
+      {
+        "file": "harp-76-3.pcm",
+        "frames": 36529,
+        "sha256": "9b38565173a42c8d1ef7cf6d41780521f7e7555b0079597571d416082bdabefd"
+      },
+      {
+        "file": "harp-76-4.pcm",
+        "frames": 18265,
+        "sha256": "03a64b11ce8a5ad36a8b58a0b65e4e81b96a9fe8373a73ecf04d4f0ee1e383ee"
+      },
+      {
+        "file": "harp-76-5.pcm",
+        "frames": 9133,
+        "sha256": "94c28f6a0d9a12bbba23768d12dd2e204c3bbcff67e9dce84860462dc2e54e97"
+      },
+      {
+        "file": "harp-76-6.pcm",
+        "frames": 4567,
+        "sha256": "67b3828afee1d1d0114e9131dfb60d5ac5548be7f18eee71dc91de7e3eebd449"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_G5_mf.wav",
+    "source_git_blob": "8e3593345c95368ae9d74591c1046d21de6a8e60",
+    "nominal_midi": 79,
+    "reference_hz": 780.9386247113564,
+    "pitch_spread_cents": 3.5452498656939717,
+    "trimmed_frames": 439,
+    "gain": 17.60539573340772,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-79-0.pcm",
+        "frames": 261994,
+        "sha256": "d21a68645b565976b08aa894f5fc0201f81a219dd591e273d24e5317b72c0847"
+      },
+      {
+        "file": "harp-79-1.pcm",
+        "frames": 130997,
+        "sha256": "6b5542bd44452414d27a18db331eb51590b6c893f18b026db9d42bf94e31f957"
+      },
+      {
+        "file": "harp-79-2.pcm",
+        "frames": 65499,
+        "sha256": "ced8fac11cf1b24bf33ae5c23f93cd88b1bcc43e56dd0b999f2cbd00ece7119f"
+      },
+      {
+        "file": "harp-79-3.pcm",
+        "frames": 32750,
+        "sha256": "e6a63646fc9e2977a00414e034755d55c6c886f1c2fe9f357af3d170808551a9"
+      },
+      {
+        "file": "harp-79-4.pcm",
+        "frames": 16375,
+        "sha256": "0199abd77717d8229a77d33bdc378c3d3fc530c26d8a23c37e6116d791833c17"
+      },
+      {
+        "file": "harp-79-5.pcm",
+        "frames": 8188,
+        "sha256": "b27c54ddc53a898dc24ed8d6d08bac27ab3b81448f595a2ba5537278d8f7346c"
+      },
+      {
+        "file": "harp-79-6.pcm",
+        "frames": 4094,
+        "sha256": "372aff01052d707ae87c28e419e1bcd03dd7889d0a17b56d8520f8088901d42d"
+      }
+    ]
+  },
+  {
+    "instrument": "harp",
+    "source": "Strings/Harp/KSHarp_B5_mf.wav",
+    "source_git_blob": "2d2689e8ca023cd685ed5a29161f3d641f109da9",
+    "nominal_midi": 83,
+    "reference_hz": 983.7513912656648,
+    "pitch_spread_cents": 1.2352352849020345,
+    "trimmed_frames": 439,
+    "gain": 18.02299830689831,
+    "loop": null,
+    "levels": [
+      {
+        "file": "harp-83-0.pcm",
+        "frames": 194314,
+        "sha256": "3800940f6e03e4c5d20617b9ecc2e828a863a465f5df8af6d016ae7b9b7eb9e8"
+      },
+      {
+        "file": "harp-83-1.pcm",
+        "frames": 97157,
+        "sha256": "0cc4c37b9995b5b30f9169702877921442ab731eca881ef81672adf9d6668438"
+      },
+      {
+        "file": "harp-83-2.pcm",
+        "frames": 48579,
+        "sha256": "ae9bf0305768c377705478b414354c821b4a0aa611ba0a1ab61560a192f1aea4"
+      },
+      {
+        "file": "harp-83-3.pcm",
+        "frames": 24290,
+        "sha256": "080b45b493f757256ff68873df4d12d0a518bdc12c3a417ea6e562414c2950bc"
+      },
+      {
+        "file": "harp-83-4.pcm",
+        "frames": 12145,
+        "sha256": "ea2fb7d45efecb08a66885f0a910b1064dacacf4ab27b9bc5c794bdf2ad77396"
+      },
+      {
+        "file": "harp-83-5.pcm",
+        "frames": 6073,
+        "sha256": "e2ef831588c3a05f24f93dabb50d06dea0fc1c36eb8e0b9a4223084f64bd490d"
+      },
+      {
+        "file": "harp-83-6.pcm",
+        "frames": 3037,
+        "sha256": "de6ded8d60a034a36cadfbdf51c8054b9594a9cebe9075738197f145ec63f8ef"
+      }
+    ]
+  }
+]

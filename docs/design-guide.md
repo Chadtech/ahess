@@ -178,6 +178,10 @@ or when it defines how a shared component is used.
 
 ## selection lists
 
+- When multiple independent multi-selection lists share a screen, give each
+  additional list a distinct row prefix so interaction checks target the intended
+  collection. Keep each collection labeled with its selection count.
+
 - use `view::selection_list::list` and `view::selection_list::row` for selectable
   resource lists.
 - the component owns the sunken container, empty state, alternating row colors,
@@ -320,3 +324,34 @@ or when it defines how a shared component is used.
   the warning and actions without an additional sunken panel.
 - use `view::dialog::modal_overlay` for a modal dialog displayed over an active
   screen. Modal overlays block interaction with the screen beneath them.
+
+## expanded cell details
+
+- Use `TextInput::with_details` to give a cell a focused detail editor, opened
+  by double-click, option-enter, or its `note details` context action. The
+  supplied summary derives the displayed text from the complete stored value.
+- Expanded cells show the summary and the shared `detail_marker::corner`
+  triangle. Whole-cell copy and paste retain the complete value; ordinary
+  typing opens the detail editor instead of altering hidden notation.
+- A note-detail modal uses the shared data grid, with signed beat offsets as
+  row labels and pitch, duration, and volume columns. Tint offset zero with
+  the structural downbeat color. Keep occupied finer positions visible when
+  the user selects a coarser step. Up/down and enter move within a column;
+  tab cycles through the modal fields and keeps the focused row visible.
+  Command-enter (control-enter outside macOS) accepts the group.
+- Keep edits local until done; cancel and escape discard the draft. Accepting
+  a group is one undo step, separate from surrounding ordinary cell typing.
+
+## attack controls
+
+- Use `view::attack_control::AttackControl` for bounded 0–100 attack sharpness.
+  Use an S6-high hit area, a thin recessed track, and a raised handle with a
+  center line marking the value. Keep the handle fully visible at both ends;
+  hover and keyboard focus must visibly identify the interactive area.
+  Show natural and immediate endpoints and the current percentage. Click or
+  drag to adjust; arrow keys move one point and home/end select the endpoints.
+- Store inherited note settings as an absent override. Show `default` in the
+  note grid and offer `use voice default` beside a selection's attack control.
+  A batch gesture changes only authored notes in the selected row range.
+  Keep each row's value visible when a selection contains different values;
+  the slider starts at the clicked row's value and applies only on interaction.

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     pitch_system::Volume,
+    score_cell,
     view::{
         dropdown::{Dropdown, Selected},
         field_group::{compact_control_group, field_group},
@@ -8,6 +9,7 @@ use crate::{
         text_input::TextInput,
         workspace,
     },
+    voice::{Voice, VoiceId},
 };
 
 #[derive(Clone, Debug)]
@@ -62,14 +64,67 @@ pub(super) fn transform_score(
     transformation: &Transformation,
     seed: &mut u64,
 ) -> Result<PartScore, String> {
+    transform_score_in_columns(score, project, transformation, seed, None)
+}
+
+fn transform_score_in_columns(
+    score: &PartScore,
+    project: &Project,
+    transformation: &Transformation,
+    seed: &mut u64,
+    columns: Option<&[usize]>,
+) -> Result<PartScore, String> {
     let system = project.pitch_system();
+    if score
+        .rows()
+        .iter()
+        .flatten()
+        .any(|v| score_cell::has_details(v) && !system.is_exact_key(v.trim()))
+    {
+        return map_score_cells(score, columns, |value| {
+            if !score_cell::has_details(value) || system.is_exact_key(value.trim()) {
+                return transform_score(
+                    &PartScore::from_rows(vec![vec![value.to_owned()]]),
+                    project,
+                    transformation,
+                    seed,
+                )
+                .map(|s| s.rows()[0][0].clone());
+            }
+            let mut events = score_cell::parse(system, value).map_err(|e| e.to_string())?;
+            for event in &mut events {
+                let simple = system
+                    .with_note_volume(&system.pitch_text(event.note.pitch()), event.note.volume())
+                    .map_err(|e| e.to_string())?;
+                let result = transform_score(
+                    &PartScore::from_rows(vec![vec![simple]]),
+                    project,
+                    transformation,
+                    seed,
+                )?;
+                let note = system
+                    .parse_note(&result.rows()[0][0])
+                    .map_err(|e| e.to_string())?
+                    .unwrap();
+                event.notation = system.pitch_text(note.pitch());
+                event.note = note
+                    .clone()
+                    .with_details(event.note.duration(), note.volume());
+            }
+            let encoded = score_cell::encode(&events);
+            if system.is_exact_key(&encoded) {
+                return Err("note details conflict with a named pitch".into());
+            }
+            Ok(encoded)
+        });
+    }
     match transformation {
-        Transformation::Transpose(steps) => map_score_cells(score, |value| {
+        Transformation::Transpose(steps) => map_score_cells(score, columns, |value| {
             system
                 .transpose_note(value, steps.get())
                 .map_err(|e| e.to_string())
         }),
-        Transformation::AdjustVolume(amount) => map_score_cells(score, |value| {
+        Transformation::AdjustVolume(amount) => map_score_cells(score, columns, |value| {
             let Some(note) = system.parse_note(value).map_err(|e| e.to_string())? else {
                 return Ok(value.to_owned());
             };
@@ -80,7 +135,7 @@ pub(super) fn transform_score(
                 .with_note_volume(value, Volume::from_byte(byte))
                 .map_err(|e| e.to_string())
         }),
-        Transformation::Volume(range) => map_score_cells(score, |value| {
+        Transformation::Volume(range) => map_score_cells(score, columns, |value| {
             let Some(note) = system.parse_note(value).map_err(|e| e.to_string())? else {
                 return Ok(value.to_owned());
             };
@@ -106,6 +161,7 @@ pub(super) fn transform_score(
 
 fn map_score_cells(
     score: &PartScore,
+    columns: Option<&[usize]>,
     mut transform: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<PartScore, String> {
     let rows = score
@@ -116,6 +172,9 @@ fn map_score_cells(
             row.iter()
                 .enumerate()
                 .map(|(column, value)| {
+                    if columns.is_some_and(|columns| !columns.contains(&column)) {
+                        return Ok(value.clone());
+                    }
                     transform(value)
                         .map_err(|e| format!("beat {}, voice {}: {e}", row_index + 1, column + 1))
                 })
@@ -128,10 +187,13 @@ fn map_score_cells(
 pub(super) struct Request {
     parts: Vec<PartName>,
     transformation: Transformation,
+    voices: Vec<VoiceId>,
 }
 pub(super) struct TransformationsWorkspace {
     parts: Vec<PartName>,
     selection: Entity<MultiSelectionList>,
+    voices: Vec<Voice>,
+    voice_selection: Entity<MultiSelectionList>,
     kind: Entity<Dropdown>,
     direction: Entity<Dropdown>,
     mode: Entity<Dropdown>,
@@ -215,10 +277,20 @@ impl TransformationsWorkspace {
         cx.subscribe(
             &selection,
             |this, list, _: &multi_selection_list::Changed, cx| {
-                this.apply.update(cx, |button, cx| {
-                    let empty = list.read(cx).selected().next().is_none();
-                    button.set_disabled(empty, cx)
-                });
+                let _ = list;
+                this.sync_apply(cx);
+                this.status = status_bar::Status::Empty;
+                cx.notify();
+            },
+        )
+        .detach();
+        let voice_selection = cx.new(|cx| {
+            MultiSelectionList::new(Vec::new(), [], cx).with_row_prefix("transformation-voice-row")
+        });
+        cx.subscribe(
+            &voice_selection,
+            |this, _, _: &multi_selection_list::Changed, cx| {
+                this.sync_apply(cx);
                 this.status = status_bar::Status::Empty;
                 cx.notify();
             },
@@ -227,6 +299,8 @@ impl TransformationsWorkspace {
         Self {
             parts,
             selection,
+            voices: Vec::new(),
+            voice_selection,
             kind,
             direction,
             mode,
@@ -237,6 +311,40 @@ impl TransformationsWorkspace {
             apply,
             status: status_bar::Status::Empty,
         }
+    }
+    fn sync_apply(&self, cx: &mut Context<Self>) {
+        let empty = self.selection.read(cx).selected().next().is_none()
+            || self.voice_selection.read(cx).selected().next().is_none();
+        self.apply
+            .update(cx, |button, cx| button.set_disabled(empty, cx));
+    }
+    pub(super) fn sync_voices(&mut self, voices: Vec<Voice>, cx: &mut Context<Self>) {
+        if self.voices == voices {
+            return;
+        }
+        let selected: Vec<_> = self
+            .voice_selection
+            .read(cx)
+            .selected()
+            .map(|i| self.voices[i].id())
+            .collect();
+        let indices: Vec<_> = voices
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| {
+                (self.voices.is_empty() || selected.contains(&v.id())).then_some(i)
+            })
+            .collect();
+        self.voice_selection.update(cx, |list, cx| {
+            list.sync_rows(
+                voices.iter().map(|v| v.name.as_str().to_owned()).collect(),
+                indices,
+                cx,
+            )
+        });
+        self.voices = voices;
+        self.sync_apply(cx);
+        cx.notify();
     }
     pub(super) fn sync_parts(&mut self, parts: Vec<PartName>, cx: &mut Context<Self>) {
         if self.parts == parts {
@@ -268,6 +376,7 @@ impl TransformationsWorkspace {
             )
         });
         self.parts = parts;
+        self.sync_apply(cx);
         self.status = status_bar::Status::Empty;
         cx.notify();
     }
@@ -336,6 +445,12 @@ impl TransformationsWorkspace {
                     .map(|i| self.parts[i].clone())
                     .collect(),
                 transformation,
+                voices: self
+                    .voice_selection
+                    .read(cx)
+                    .selected()
+                    .map(|i| self.voices[i].id())
+                    .collect(),
             }),
             Err(error) => self.failed(error, cx),
         }
@@ -427,7 +542,12 @@ impl Render for TransformationsWorkspace {
                         .min_h(s::S0)
                         .p(s::CONTENT_PADDING)
                         .gap(s::S6)
-                        .child(parts.w(s::S10).flex_none().flex_basis(gpui::Length::Auto))
+                        .child(div().flex().flex_col().w(s::S10).flex_none().gap(s::S5)
+                            .child(parts.min_h(s::S0))
+                            .child(div().flex().flex_col().flex_1().min_h(s::S0).gap(s::S4)
+                                .debug_selector(|| "transformation-voices".into())
+                                .child(format!("voices · {} selected", self.voice_selection.read(cx).selected().count()))
+                                .child(self.voice_selection.clone())))
                         .child(
                             div()
                                 .flex()
@@ -450,8 +570,8 @@ impl Render for TransformationsWorkspace {
                                 .max_w(s::S10)
                                 .gap(s::S4)
                                 .debug_selector(|| "transformation-instructions".into())
-                                .child("click or drag across parts to include or exclude them")
-                                .child("edits each selected part everywhere it appears"),
+                                .child("click or drag across parts and voices to include or exclude them")
+                                .child("edits only the selected voices in the selected parts, everywhere those parts appear"),
                         ),
                 )
                 .child(status_bar::bar(self.status.clone())),
@@ -466,7 +586,12 @@ impl Model {
         request: &Request,
         cx: &mut Context<Self>,
     ) {
-        match self.apply_transformation(&request.parts, &request.transformation, cx) {
+        match self.apply_transformation_to_voices(
+            &request.parts,
+            &request.voices,
+            &request.transformation,
+            cx,
+        ) {
             Ok(()) => workspace.update(cx, |workspace, cx| {
                 workspace.status = status_bar::Status::Message(
                     "transformation applied · undo is available in the project bar".into(),
@@ -478,12 +603,36 @@ impl Model {
         self.sync_history_buttons(cx);
         cx.notify();
     }
+    #[cfg(test)]
     pub(super) fn apply_transformation(
         &mut self,
         parts: &[PartName],
         transformation: &Transformation,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let voices: Vec<_> = self.project.voices().iter().map(|v| v.id()).collect();
+        self.apply_transformation_to_voices(parts, &voices, transformation, cx)
+    }
+    fn apply_transformation_to_voices(
+        &mut self,
+        parts: &[PartName],
+        voices: &[VoiceId],
+        transformation: &Transformation,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if voices.is_empty() {
+            return Err("select at least one voice".into());
+        }
+        let columns: Vec<usize> = voices
+            .iter()
+            .map(|id| {
+                self.project
+                    .voices()
+                    .iter()
+                    .position(|v| v.id() == *id)
+                    .ok_or_else(|| "a selected voice no longer exists".to_owned())
+            })
+            .collect::<Result<_, _>>()?;
         if parts.is_empty() {
             return Err("select at least one part".into());
         }
@@ -499,8 +648,14 @@ impl Model {
         let mut affected = Vec::new();
         for (name, score, saved) in before.scores() {
             if parts.iter().any(|n| n.eq_ignore_ascii_case(name)) {
-                let updated = transform_score(score, &self.project, transformation, &mut seed)
-                    .map_err(|e| format!("part {:?}: {e}", name.as_str()))?;
+                let updated = transform_score_in_columns(
+                    score,
+                    &self.project,
+                    transformation,
+                    &mut seed,
+                    Some(&columns),
+                )
+                .map_err(|e| format!("part {:?}: {e}", name.as_str()))?;
                 let part = self
                     .project
                     .part(name)
@@ -533,9 +688,172 @@ mod tests {
     use super::*;
     use crate::{
         seed::Seed,
-        voice::{Voice, VoiceType},
+        voice::{Voice, VoiceType, VoiceVolumeAdjustment},
     };
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn duplicate_then_transform_selected_voice_and_parts_with_undo(cx: &mut TestAppContext) {
+        let root = std::env::temp_dir().join(format!(
+            "ahess-voice-scope-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let parts = vec![
+            Part::new("intro", 2),
+            Part::new("theme", 2),
+            Part::new("ending", 2),
+        ];
+        let source_voice = Voice::new(3, "C", VoiceType::Saw)
+            .with_position(crate::acoustics::Point3Meters::new(1.0, 2.0, 3.0).unwrap())
+            .with_volume_adjustment(Some(VoiceVolumeAdjustment::new(0.7).unwrap()));
+        let project = Project::new("scope", 800, 0, Seed::new(1))
+            .with_voices(vec![
+                Voice::new(1, "A", VoiceType::Sin),
+                Voice::new(2, "B", VoiceType::Saw),
+                source_voice.clone(),
+            ])
+            .with_parts(parts.clone())
+            .with_sequence(vec!["intro".into(), "theme".into(), "intro".into()]);
+        let directory = project::create_project(&root, &project).unwrap();
+        let original = PartScore::from_rows(vec![
+            vec!["C4".into(), "E4".into(), "G4@80".into()],
+            vec!["".into(), "rest".into(), "A4".into()],
+        ]);
+        for part in &parts {
+            original.save(&directory, part, &project).unwrap();
+        }
+        let (model, cx) = cx.add_window_view(|_, cx| {
+            Model::new(project.clone(), directory.clone(), root.clone(), cx)
+        });
+        model.update(cx, |model, cx| {
+            model.apply_voice_change(
+                model.workspace.voices.clone(),
+                &voices::Change::Duplicate {
+                    source: "C".into(),
+                    name: "D".into(),
+                },
+                cx,
+            );
+            assert_eq!(model.project.voices().len(), 4);
+            let copied = model.project.voices()[3].clone();
+            assert_ne!(copied.id(), source_voice.id());
+            assert_eq!(copied.position(), source_voice.position());
+            assert_eq!(copied.volume_adjustment(), source_voice.volume_adjustment());
+            assert_eq!(copied.attack_sharpness(), source_voice.attack_sharpness());
+            let duplicated = model.project.clone();
+            for part in &parts {
+                let score = PartScore::load(&directory, part, duplicated.voices()).unwrap();
+                for row in score.rows() {
+                    assert_eq!(row[2], row[3]);
+                }
+            }
+            model.undo(cx);
+            assert_eq!(model.project.voices().len(), 3);
+            for part in &parts {
+                assert_eq!(
+                    PartScore::load(&directory, part, model.project.voices()).unwrap(),
+                    original
+                );
+            }
+            model.redo(cx);
+            assert_eq!(model.project, duplicated);
+            let selected = vec![parts[0].name.clone(), parts[1].name.clone()];
+            for change in [
+                Transformation::AdjustVolume(VolumeAdjustment::new(-20.0).unwrap()),
+                Transformation::Transpose(std::num::NonZeroI32::new(2).unwrap()),
+                Transformation::Volume(VolumeRange::new(30.0, 50.0, VolumeMode::Absolute).unwrap()),
+            ] {
+                model
+                    .apply_transformation_to_voices(&selected, &[copied.id()], &change, cx)
+                    .unwrap();
+                let changed: Vec<_> = parts
+                    .iter()
+                    .map(|part| PartScore::load(&directory, part, model.project.voices()).unwrap())
+                    .collect();
+                for (index, score) in changed.iter().enumerate() {
+                    for (row, old) in score.rows().iter().zip(original.rows()) {
+                        assert_eq!(&row[..3], old);
+                    }
+                    if index == 2 {
+                        assert_eq!(score.rows()[0][3], "G4@80");
+                    } else {
+                        assert_ne!(score.rows()[0][3], "G4@80");
+                    }
+                }
+                model.undo(cx);
+                for part in &parts {
+                    assert_eq!(
+                        PartScore::load(&directory, part, model.project.voices())
+                            .unwrap()
+                            .rows()[0][3],
+                        "G4@80"
+                    );
+                }
+                model.redo(cx);
+                for (part, expected) in parts.iter().zip(changed) {
+                    assert_eq!(
+                        PartScore::load(&directory, part, model.project.voices()).unwrap(),
+                        expected
+                    );
+                }
+                model.undo(cx);
+            }
+            assert!(model
+                .apply_transformation_to_voices(
+                    &selected,
+                    &[],
+                    &Transformation::AdjustVolume(VolumeAdjustment::new(1.0).unwrap()),
+                    cx
+                )
+                .is_err());
+        });
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn voice_scope_selection_tracks_identity_and_excludes_new_voices(cx: &mut TestAppContext) {
+        let voices = vec![
+            Voice::new(1, "A", VoiceType::Sin),
+            Voice::new(2, "B", VoiceType::Saw),
+        ];
+        let (workspace, cx) = cx.add_window_view(|_, cx| {
+            let mut workspace =
+                TransformationsWorkspace::new(vec!["intro".into()], vec!["intro".into()], cx);
+            workspace.sync_voices(voices.clone(), cx);
+            workspace
+        });
+        let row = cx.debug_bounds("transformation-voice-row-0").unwrap();
+        cx.simulate_click(row.center(), Default::default());
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .voice_selection
+                    .read(cx)
+                    .selected()
+                    .collect::<Vec<_>>(),
+                [1]
+            );
+            workspace.sync_voices(
+                vec![
+                    Voice::new(2, "renamed B", VoiceType::Saw),
+                    voices[0].clone(),
+                    Voice::new(3, "C", VoiceType::Sin),
+                ],
+                cx,
+            );
+            assert_eq!(
+                workspace
+                    .voice_selection
+                    .read(cx)
+                    .selected()
+                    .collect::<Vec<_>>(),
+                [0]
+            );
+        });
+    }
 
     #[gpui::test]
     fn workspace_drag_selects_and_deselects_part_spans(cx: &mut TestAppContext) {

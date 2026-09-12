@@ -84,6 +84,26 @@ pub fn add_voice_with_adjustment_at(
     position: Point3Meters,
     volume_adjustment: Option<VoiceVolumeAdjustment>,
 ) -> Result<Project, VoiceChangeError> {
+    add_voice_with_settings_at(
+        project_directory,
+        project,
+        name,
+        voice_type,
+        position,
+        volume_adjustment,
+        crate::voice::AttackSharpness::default(),
+    )
+}
+
+pub fn add_voice_with_settings_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
+    attack_sharpness: crate::voice::AttackSharpness,
+) -> Result<Project, VoiceChangeError> {
     let name = validated_voice_name(project, None, name)?;
     project
         .acoustic_scene
@@ -98,10 +118,39 @@ pub fn add_voice_with_adjustment_at(
     updated_project.voices.push(
         Voice::new(next_id, name, voice_type)
             .with_position(position)
-            .with_volume_adjustment(volume_adjustment),
+            .with_volume_adjustment(volume_adjustment)
+            .with_attack_sharpness(attack_sharpness),
     );
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
+}
+
+/// Copy settings and raw score cells into a fresh voice in one file transaction.
+pub fn duplicate_voice(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    source: &VoiceName,
+    name: &str,
+) -> Result<Project, VoiceChangeError> {
+    let source = project
+        .voice(source)
+        .ok_or_else(|| VoiceChangeError::MissingVoice(source.as_str().to_owned()))?;
+    let name = validated_voice_name(project, None, name)?;
+    let id = project.next_voice_id;
+    let mut updated = project.clone();
+    updated.next_voice_id = id
+        .checked_add(1)
+        .ok_or_else(|| VoiceChangeError::InvalidField("no voice ids are available".into()))?;
+    updated
+        .voices
+        .push(source.duplicate_as(VoiceId::new(id), name));
+    persist_voice_change_with_duplicate(
+        project_directory.as_ref(),
+        project,
+        &updated,
+        Some((VoiceId::new(id), source.id())),
+    )?;
+    Ok(updated)
 }
 
 pub fn edit_voice(
@@ -161,6 +210,32 @@ pub fn edit_voice_with_adjustment_at(
     position: Point3Meters,
     volume_adjustment: Option<VoiceVolumeAdjustment>,
 ) -> Result<Project, VoiceChangeError> {
+    let attack = project
+        .voice(original_name)
+        .map(Voice::attack_sharpness)
+        .unwrap_or_default();
+    edit_voice_with_settings_at(
+        project_directory,
+        project,
+        original_name,
+        name,
+        voice_type,
+        position,
+        volume_adjustment,
+        attack,
+    )
+}
+
+pub fn edit_voice_with_settings_at(
+    project_directory: impl AsRef<Path>,
+    project: &Project,
+    original_name: &VoiceName,
+    name: &str,
+    voice_type: VoiceType,
+    position: Point3Meters,
+    volume_adjustment: Option<VoiceVolumeAdjustment>,
+    attack_sharpness: crate::voice::AttackSharpness,
+) -> Result<Project, VoiceChangeError> {
     let index = project
         .voices
         .iter()
@@ -175,7 +250,8 @@ pub fn edit_voice_with_adjustment_at(
     let mut updated_project = project.clone();
     updated_project.voices[index] = Voice::new(id, name, voice_type)
         .with_position(position)
-        .with_volume_adjustment(volume_adjustment);
+        .with_volume_adjustment(volume_adjustment)
+        .with_attack_sharpness(attack_sharpness);
     persist_voice_change(project_directory.as_ref(), project, &updated_project)?;
     Ok(updated_project)
 }
@@ -227,17 +303,27 @@ fn persist_voice_change(
     old_project: &Project,
     new_project: &Project,
 ) -> Result<(), VoiceChangeError> {
+    persist_voice_change_with_duplicate(project_directory, old_project, new_project, None)
+}
+
+fn persist_voice_change_with_duplicate(
+    project_directory: &Path,
+    old_project: &Project,
+    new_project: &Project,
+    duplicate: Option<(VoiceId, VoiceId)>,
+) -> Result<(), VoiceChangeError> {
     recover_project_transaction(project_directory).map_err(VoiceChangeError::Transaction)?;
 
     let mut files = Vec::with_capacity(old_project.parts.len() + 1);
     for project_part in &old_project.parts {
         let file_name = part::csv_file_name(&project_part.name)
             .expect("validated project part names always produce CSV filenames");
-        let contents = part::rewritten_part_file(
+        let contents = part::rewritten_part_file_with_duplicate(
             project_directory,
             project_part,
             &old_project.voices,
             &new_project.voices,
+            duplicate,
         )
         .map_err(VoiceChangeError::Part)?;
         files.push((file_name, contents));

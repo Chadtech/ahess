@@ -13,6 +13,7 @@ pub mod part;
 pub mod pitch_system;
 mod playback;
 pub mod project;
+pub mod score_cell;
 pub mod seed;
 mod style;
 pub mod tuning_system;

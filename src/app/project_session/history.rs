@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     part::{PartName, PartScore, ScoreError},
     project::Project,
+    score_cell,
 };
 
 use super::score::ScoreCellEdit;
@@ -354,7 +355,10 @@ impl ProjectHistory {
         };
 
         self.redo_changes.clear();
-        let merges = self.merge_with_current
+        let detail_transaction =
+            score_cell::has_details(&edit.before) || score_cell::has_details(&edit.after);
+        let merges = !detail_transaction
+            && self.merge_with_current
             && self.undo_changes.last().is_some_and(|change| {
                 matches!(
                     change,
@@ -392,7 +396,7 @@ impl ProjectHistory {
                 before_saved_score,
                 after_saved_score,
             });
-            self.merge_with_current = true;
+            self.merge_with_current = !detail_transaction;
         }
         self.current.replace_score(&part_name, after_content)?;
         Ok(true)
@@ -589,6 +593,7 @@ mod tests {
     use crate::{
         part::{Part, PartScore},
         project::{Project, Voice, VoiceType},
+        score_cell,
         seed::Seed,
     };
 
@@ -639,6 +644,40 @@ mod tests {
                 (second_part.name, second_score.clone(), second_score),
             ],
         )
+    }
+
+    #[test]
+    fn note_detail_commits_are_independent_undo_steps() {
+        let system = crate::pitch_system::PitchSystem::western_twelve_tone();
+        let event = score_cell::CellEvent::from_fields(
+            &system,
+            score_cell::BeatOffset::from_ticks(24).unwrap(),
+            "C4",
+            "1/4",
+            "80",
+        )
+        .unwrap()
+        .unwrap();
+        let value = score_cell::encode(&[event]);
+        let mut history = ProjectHistory::new(score_state(""));
+        history
+            .record_score_cell("intro".into(), cell_edit("", "C4"))
+            .unwrap();
+        history
+            .record_score_cell("intro".into(), cell_edit("C4", &value))
+            .unwrap();
+        assert_eq!(history.undo_changes.len(), 2);
+        let undo = history.undo_target().unwrap().unwrap();
+        assert_eq!(
+            undo.state.score(&"intro".into()).unwrap().rows()[0][0],
+            "C4"
+        );
+        history.commit_undo(undo.state);
+        let redo = history.redo_target().unwrap().unwrap();
+        assert_eq!(
+            redo.state.score(&"intro".into()).unwrap().rows()[0][0],
+            value
+        );
     }
 
     #[test]

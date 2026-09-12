@@ -8,6 +8,7 @@ use crate::{
     app::position_form::PositionFields,
     style as s,
     view::{
+        attack_control::AttackControl,
         button::{self, Button},
         dialog::{destructive_dialog, error_message},
         field_group::field_group,
@@ -15,7 +16,7 @@ use crate::{
         text_input::{Changed, TextInput},
         workspace,
     },
-    voice::{Voice, VoiceType, VoiceVolumeAdjustment},
+    voice::{AttackSharpness, Voice, VoiceType, VoiceVolumeAdjustment},
     voice_name::VoiceName,
 };
 
@@ -26,11 +27,16 @@ pub enum Request {
 }
 
 pub enum Change {
+    Duplicate {
+        source: VoiceName,
+        name: String,
+    },
     Add {
         name: String,
         voice_type: VoiceType,
         position: Point3Meters,
         volume_adjustment: Option<VoiceVolumeAdjustment>,
+        attack: AttackSharpness,
     },
     Edit {
         original_name: VoiceName,
@@ -38,6 +44,7 @@ pub enum Change {
         voice_type: VoiceType,
         position: Point3Meters,
         volume_adjustment: Option<VoiceVolumeAdjustment>,
+        attack: AttackSharpness,
     },
 }
 
@@ -130,15 +137,24 @@ impl Render for DeleteDialog {
 }
 
 enum View {
+    Duplicate {
+        source: VoiceName,
+        name: Entity<TextInput>,
+        cancel: Entity<Button>,
+        confirm: Entity<Button>,
+        error: Option<String>,
+    },
     List {
         add_new_button: Entity<Button>,
         edit_button: Entity<Button>,
+        duplicate_button: Entity<Button>,
     },
     Add {
         name: Entity<TextInput>,
         voice_type_picker: VoiceTypePicker,
         position: PositionFields,
         volume_adjustment: Entity<TextInput>,
+        attack: Entity<AttackControl>,
         cancel_button: Entity<Button>,
         add_button: Entity<Button>,
         form_error: Option<String>,
@@ -148,6 +164,7 @@ enum View {
         voice_type_picker: VoiceTypePicker,
         position: PositionFields,
         volume_adjustment: Entity<TextInput>,
+        attack: Entity<AttackControl>,
         cancel_button: Entity<Button>,
         save_button: Entity<Button>,
         delete_button: Entity<Button>,
@@ -179,7 +196,7 @@ impl VoicesWorkspace {
     pub fn has_draft(&self) -> bool {
         match &self.view {
             View::List { .. } => false,
-            View::Add { .. } | View::Edit { .. } => true,
+            View::Add { .. } | View::Edit { .. } | View::Duplicate { .. } => true,
         }
     }
 
@@ -191,9 +208,13 @@ impl VoicesWorkspace {
             .detach();
         cx.subscribe(&edit_button, Self::on_edit_clicked).detach();
 
+        let duplicate_button = cx.new(|_| Button::new("duplicate-voice", "duplicate voice"));
+        cx.subscribe(&duplicate_button, Self::on_duplicate_clicked)
+            .detach();
         View::List {
             add_new_button,
             edit_button,
+            duplicate_button,
         }
     }
 
@@ -202,6 +223,7 @@ impl VoicesWorkspace {
         let voice_type_picker = VoiceTypePicker::new(VoiceType::Sin, cx);
         let position = PositionFields::new("add-voice", acoustic_scene.listener(), cx);
         let volume_adjustment = cx.new(|cx| TextInput::new("", "1.0", cx));
+        let attack = cx.new(|cx| AttackControl::new(AttackSharpness::default(), cx));
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let add_button = cx.new(|_| Button::new("confirm-add-voice", "add voice"));
 
@@ -214,6 +236,7 @@ impl VoicesWorkspace {
             voice_type_picker,
             position,
             volume_adjustment,
+            attack,
             cancel_button,
             add_button,
             form_error: None,
@@ -230,6 +253,7 @@ impl VoicesWorkspace {
             .map(|adjustment| adjustment.multiplier().to_string())
             .unwrap_or_default();
         let volume_adjustment = cx.new(move |cx| TextInput::new(saved_adjustment, "1.0", cx));
+        let attack = cx.new(|cx| AttackControl::new(voice.attack_sharpness(), cx));
         let cancel_button = cx.new(|_| Button::new("cancel-voices", "cancel"));
         let save_button = cx.new(|_| Button::new("save-voice", "save changes"));
         let delete_button = cx.new(|_| Button::new("delete-voice", "delete voice"));
@@ -245,11 +269,61 @@ impl VoicesWorkspace {
             voice_type_picker,
             position,
             volume_adjustment,
+            attack,
             cancel_button,
             save_button,
             delete_button,
             form_error: None,
         }
+    }
+
+    fn on_duplicate_clicked(
+        &mut self,
+        _: Entity<Button>,
+        _: &button::Clicked,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.selected_voice.clone() else {
+            return;
+        };
+        let mut suggested = format!("{} copy", source.as_str());
+        let mut suffix = 2;
+        while self
+            .voices
+            .iter()
+            .any(|v| v.name.as_str().eq_ignore_ascii_case(&suggested))
+        {
+            suggested = format!("{} copy {suffix}", source.as_str());
+            suffix += 1;
+        }
+        let name = cx.new(|cx| TextInput::new(suggested, "new voice name", cx));
+        let cancel = cx.new(|_| Button::new("cancel-duplicate-voice", "cancel"));
+        let confirm = cx.new(|_| Button::new("confirm-duplicate-voice", "duplicate voice"));
+        cx.subscribe(&cancel, Self::on_cancel_clicked).detach();
+        cx.subscribe(&confirm, |this, _, _: &button::Clicked, cx| {
+            if let View::Duplicate { source, name, .. } = &this.view {
+                cx.emit(Request::Change(Change::Duplicate {
+                    source: source.clone(),
+                    name: name.read(cx).value().to_owned(),
+                }));
+            }
+        })
+        .detach();
+        self.view = View::Duplicate {
+            source,
+            name,
+            cancel,
+            confirm,
+            error: None,
+        };
+        cx.notify();
+    }
+
+    pub fn duplicate_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        if let View::Duplicate { error, .. } = &mut self.view {
+            *error = Some(message);
+        }
+        cx.notify();
     }
 
     fn on_add_new_clicked(
@@ -307,6 +381,7 @@ impl VoicesWorkspace {
                 voice_type_picker,
                 position,
                 volume_adjustment,
+                attack,
                 ..
             } => position
                 .position(&self.acoustic_scene, cx)
@@ -317,12 +392,13 @@ impl VoicesWorkspace {
                             voice_type_picker.selected,
                             position,
                             adjustment,
+                            attack.read(cx).value(),
                         )
                     })
                 }),
             _ => return,
         };
-        let (name, voice_type, position, volume_adjustment) = match request {
+        let (name, voice_type, position, volume_adjustment, attack) = match request {
             Ok(request) => request,
             Err(error) => {
                 if let View::Add { form_error, .. } = &mut self.view {
@@ -337,6 +413,7 @@ impl VoicesWorkspace {
             voice_type,
             position,
             volume_adjustment,
+            attack,
         }));
     }
 
@@ -350,6 +427,7 @@ impl VoicesWorkspace {
                 voice_type_picker,
                 position,
                 volume_adjustment,
+                attack,
                 ..
             } => position
                 .position(&self.acoustic_scene, cx)
@@ -360,12 +438,13 @@ impl VoicesWorkspace {
                             voice_type_picker.selected,
                             position,
                             adjustment,
+                            attack.read(cx).value(),
                         )
                     })
                 }),
             _ => return,
         };
-        let (name, voice_type, position, volume_adjustment) = match request {
+        let (name, voice_type, position, volume_adjustment, attack) = match request {
             Ok(request) => request,
             Err(error) => {
                 if let View::Edit { form_error, .. } = &mut self.view {
@@ -381,6 +460,7 @@ impl VoicesWorkspace {
             voice_type,
             position,
             volume_adjustment,
+            attack,
         }));
     }
 
@@ -405,7 +485,7 @@ impl VoicesWorkspace {
                 form_error,
                 ..
             } => (voice_type_picker, form_error),
-            View::List { .. } => return,
+            View::List { .. } | View::Duplicate { .. } => return,
         };
 
         if voice_type_picker.selected == voice_type {
@@ -512,12 +592,38 @@ impl Render for VoicesWorkspace {
             View::List {
                 add_new_button,
                 edit_button,
-            } => self.voice_list(add_new_button.clone(), edit_button.clone(), cx),
+                duplicate_button,
+            } => self.voice_list(
+                add_new_button.clone(),
+                edit_button.clone(),
+                duplicate_button.clone(),
+                cx,
+            ),
+            View::Duplicate {
+                source,
+                name,
+                cancel,
+                confirm,
+                error,
+            } => workspace::management_form(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(s::S5)
+                    .child(format!(
+                        "copy {:?}, including its settings and notes in every part",
+                        source.as_str()
+                    ))
+                    .child(field_group("new voice name", name.clone()))
+                    .children(error.clone().map(error_message)),
+                button::action_group([cancel.clone(), confirm.clone()]).justify_end(),
+            ),
             View::Add {
                 name,
                 voice_type_picker,
                 position,
                 volume_adjustment,
+                attack,
                 cancel_button,
                 add_button,
                 form_error,
@@ -527,6 +633,7 @@ impl Render for VoicesWorkspace {
                 voice_type_picker,
                 position,
                 volume_adjustment.clone(),
+                attack.clone(),
                 form_error.clone(),
                 button::action_group([cancel_button.clone(), add_button.clone()]).justify_end(),
                 cx,
@@ -536,6 +643,7 @@ impl Render for VoicesWorkspace {
                 voice_type_picker,
                 position,
                 volume_adjustment,
+                attack,
                 cancel_button,
                 save_button,
                 delete_button,
@@ -558,6 +666,7 @@ impl Render for VoicesWorkspace {
                     voice_type_picker,
                     position,
                     volume_adjustment.clone(),
+                    attack.clone(),
                     form_error.clone(),
                     actions,
                     cx,
@@ -572,6 +681,7 @@ impl VoicesWorkspace {
         &self,
         add_new_button: Entity<Button>,
         edit_button: Entity<Button>,
+        duplicate_button: Entity<Button>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         workspace::list_detail(workspace::ListDetailArgs {
@@ -582,6 +692,7 @@ impl VoicesWorkspace {
                     .as_ref()
                     .and_then(|name| find_voice(&self.voices, name)),
                 edit_button,
+                duplicate_button,
             )
             .debug_selector(|| "voice-details-column".to_string()),
             auxiliary: None,
@@ -595,6 +706,7 @@ impl VoicesWorkspace {
         voice_type_picker: &VoiceTypePicker,
         position: &PositionFields,
         volume_adjustment: Entity<TextInput>,
+        attack: Entity<AttackControl>,
         form_error: Option<String>,
         actions: gpui::Div,
         cx: &mut Context<Self>,
@@ -610,6 +722,12 @@ impl VoicesWorkspace {
             .gap_5()
             .child(field_group("voice name", name))
             .child(voice_type_picker.view(cx))
+            .when(voice_type_picker.selected.uses_vsco(), |form| {
+                form.child(crate::view::field_group::control_group(
+                    "attack sharpness",
+                    attack,
+                ))
+            })
             .child(position.view(&self.acoustic_scene))
             .child(field_group(
                 "volume adjustment (optional multiplier)",
@@ -680,7 +798,11 @@ fn voice_list_row(
     )
 }
 
-fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Div {
+fn voice_details(
+    voice: Option<&Voice>,
+    edit_button: Entity<Button>,
+    duplicate_button: Entity<Button>,
+) -> gpui::Div {
     let details = match voice {
         Some(voice) => {
             let voice_type_details = voice.details();
@@ -742,7 +864,11 @@ fn voice_details(voice: Option<&Voice>, edit_button: Entity<Button>) -> gpui::Di
                                 ))),
                         ),
                 )
-                .child(div().flex().child(edit_button))
+                .child(
+                    div()
+                        .flex()
+                        .child(button::action_group([edit_button, duplicate_button])),
+                )
         }
         None => div()
             .flex()
@@ -864,9 +990,24 @@ mod tests {
     use super::{matching_voice_types, parse_volume_adjustment, View, VoicesWorkspace};
     use crate::{
         acoustics::{AcousticScene, Point3Meters, RectangularRoom},
-        voice::{Voice, VoiceType, VoiceVolumeAdjustment},
+        voice::{AttackSharpness, Voice, VoiceType, VoiceVolumeAdjustment},
     };
 
+    #[gpui::test]
+    fn voice_attack_default_is_loaded_and_included_in_save(cx: &mut TestAppContext) {
+        let voice = Voice::new(1, "flute", VoiceType::VscoFlute)
+            .with_attack_sharpness(AttackSharpness::new(73).unwrap());
+        let (workspace, cx) = cx.add_window_view(|_, cx| {
+            VoicesWorkspace::new(vec![voice], AcousticScene::default(), cx)
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.view = VoicesWorkspace::edit_view(&workspace.voices[0].clone(), cx);
+            let View::Edit { attack, .. } = &workspace.view else {
+                unreachable!()
+            };
+            assert_eq!(attack.read(cx).value().percent(), 73);
+        });
+    }
     #[test]
     fn volume_adjustment_field_is_optional_and_validated() {
         assert_eq!(parse_volume_adjustment("  ").unwrap(), None);
@@ -948,6 +1089,49 @@ mod tests {
             };
             assert_eq!(voice_type_picker.selected, VoiceType::SurgeXtClarinet);
         });
+    }
+
+    #[gpui::test]
+    fn vsco_voices_are_visible_and_selectable_in_the_existing_picker(cx: &mut TestAppContext) {
+        let (workspace, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        workspace.update(cx, |workspace, cx| {
+            workspace.view = VoicesWorkspace::add_view(&workspace.acoustic_scene, cx);
+            let View::Add {
+                voice_type_picker, ..
+            } = &workspace.view
+            else {
+                unreachable!()
+            };
+            voice_type_picker
+                .search
+                .update(cx, |search, cx| search.sync_value("VSCO", cx));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("voice-type-sin").is_none());
+        for (kind, selector) in [
+            (VoiceType::VscoCello, "voice-type-vsco-cello"),
+            (VoiceType::VscoFlute, "voice-type-vsco-flute"),
+            (VoiceType::VscoClarinet, "voice-type-vsco-clarinet"),
+            (VoiceType::VscoHarp, "voice-type-vsco-harp"),
+        ] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(bounds.bottom() <= px(800.0));
+            cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::default());
+            workspace.read_with(cx, |workspace, _| {
+                let View::Add {
+                    voice_type_picker, ..
+                } = &workspace.view
+                else {
+                    unreachable!()
+                };
+                assert_eq!(voice_type_picker.selected, kind);
+            });
+            cx.run_until_parked();
+        }
     }
 
     #[gpui::test]

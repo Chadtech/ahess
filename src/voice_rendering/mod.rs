@@ -8,3 +8,4 @@ pub(crate) mod noitech_bell_b;
 pub(crate) mod recovered_voice;
 #[cfg(target_os = "macos")]
 pub(crate) mod surge_xt;
+pub(crate) mod vsco;

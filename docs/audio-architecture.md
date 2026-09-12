@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-09-06
+Last updated: 2026-09-11
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -154,6 +154,16 @@ or `C4@80`), preserving `StrikeDuration::VoiceDefault`. The shared parser handle
 this suffix for validation, playback, and export. Existing exact explicit pitch
 keys take precedence over suffix syntax; an ambiguous generated expression is
 rejected. Existing score files retain their interpretation.
+
+Voice selection scopes every transformation to the selected voice IDs within
+selected parts. Other columns retain their exact score text. Selection follows
+voice identity across renames; newly added voices are not silently included in
+an existing selection.
+
+Duplicating a voice appends a fresh voice ID, copies all instrument and acoustic
+settings, and copies its raw score column in every part, including detailed note
+groups. Project metadata and all score files commit together. Duplication is one
+undoable project change; the two voices can then be edited independently.
 
 ### Handwritten code defines DSP behavior
 
@@ -360,6 +370,60 @@ and room behavior.
 An intrinsically spatial instrument can eventually expose multiple mono
 emitters with positions local to the voice. That is preferable to allowing an
 instrument to write directly to CPAL channel buffers.
+
+### VSCO 2 samples preserve frequency-native composition
+
+`VSCO cello section`, `VSCO flute`, `VSCO clarinet`, and `VSCO harp` are native
+sample voices backed by a pinned CC0 subset of VSCO 2 Community Edition.
+`src/voice_rendering/vsco.rs` owns independent note playback; generated static
+tables and PCM assets are embedded in the executable. There is no plugin,
+external installation, runtime sample decoding, or file loading. The existing
+voice picker and project persistence expose four stable `vsco-*` voice types.
+
+Each note blends the recordings immediately below and above its target pitch
+(the first or last pair at the bank edges). Both independently use fractional
+playback rates to reach the score's resolved `FrequencyHz`. Each layer draws a
+random gain in [0.2, 1.0), biased toward closer source pitches, and the gains are
+normalized to sum to one. This changes tone without doubling the amplitude
+budget; perceived loudness can still vary with the recordings' interference.
+Blend seeds derive from project seed, voice identity, absolute arrangement beat,
+and event index. Different score events vary, including simultaneous events;
+replaying the same loop, rendering offline, or starting from a selected range
+retains each event's blend. Changing the project seed reshuffles the result.
+Each of the 128 note slots owns two layers, with independent loop/decay state.
+The project tuning and frequency variance remain authoritative; neither MIDI
+rounding nor MTS-ESP is involved. Recordings retain natural pitch movement and
+ensemble beating, so calibrated acoustic samples are not mathematically pure
+oscillators. Source naming inconsistencies are corrected in the asset manifest.
+
+Seven offline-prefiltered, decimated sample levels and cubic interpolation
+reduce upward-transposition aliasing. Frequencies at or above 45% of the output
+rate are silent. Each voice has 128 fixed note slots; excess new notes are
+ignored while occupied notes finish. Per-note pitch, volume, and duration are
+independent in both grid and detailed score events and in live/offline renderers.
+
+Attack sharpness is a validated 0–100 voice default, initially 0 (natural).
+Detailed `CellEvent`s carry an optional override; absence inherits the voice,
+while explicit 0 preserves the recorded onset even on a sharp voice. Both grid
+and detailed playback resolve the same value, including offline builds. The
+score JSON records both the effective value and optional override. Old projects
+and cells retain their natural attacks. The VSCO sampler advances each layer's
+initial source position by up to 500 ms, scaled by sharpness and mip level,
+without changing playback rate, event timing, gate, or blend seed. Nonzero
+sharpness uses a 5 ms smooth fade-in to suppress a discontinuous start. This is
+an onset trim, not an exact attack-time envelope; results depend on the source
+recording and it cannot reconstruct an unrecorded tongued articulation.
+
+Sustained voices have crossfaded loops and a 120 ms release beyond the score
+gate. The harp has a natural decay for default-duration notes; explicit durations
+are maximum gates with a 5 ms fade ending at the requested cutoff. All source
+samples enter the existing mono spatialization/volume path. Stereo recordings
+are deliberately downmixed during preparation; recorded room sound remains.
+These first voices use one dynamic layer and do not implement velocity timbre
+switching, round robins, or recorded legato transitions.
+
+See `assets/samples/vsco2/README.md`, `manifest.json`, and `tools/vsco/` for
+attribution, exact sources, calibration, processing, and reproducible generation.
 
 ### Surge XT instruments preserve exact frequencies
 
@@ -1062,3 +1126,47 @@ New decisions should be added to this document as they are made. If an
 implementation intentionally departs from this direction, update the document
 in the same change so it remains a useful reference rather than a historical
 proposal.
+
+### Fractional note groups
+
+Score cells may now contain a `!notes:` JSON event list in their existing CSV
+field. CSV quoting, recovery, row edits, duplication, clipboard operations, and
+history preserve that single value. Existing plain notes keep their syntax and
+behavior, and exact explicit tuning keys take precedence over the prefix.
+`score_cell` validates each event at the shared text boundary; the editor shows
+a pitch summary with a corner marker rather than exposing the encoded list.
+
+Each event has a signed offset on a 96-tick-per-beat grid, from -1 beat through
+95/96 beat relative to its owning row. Each position in a cell holds at most one
+note. Duration is either the existing voice default or an explicit positive
+multiple of 1/96 beat, at most 255 beats. Volume remains an exact byte. The
+modal displays beat fractions and hexadecimal volume separately. A missing
+pitch removes that event; a default duration retains natural percussive decay.
+
+Prepared event timelines resolve tuning and frequency variation outside the
+sample callback. They preserve row ownership across repeated arrangement
+occurrences; a negative offset may sound during the previous occurrence.
+Events whose authored start is outside the selected playback interval are
+omitted, never wrapped or clamped to its start. Part length does not change.
+The live and offline renderers share the same integer sample rounding and
+runtime event delivery. Live mixing scales each voice before summing, matching
+the offline stem summation order and its floating-point rounding. Explicit detailed durations count from the realized
+onset; ordinary legacy notes retain their previous gate behavior. Percussive
+runtimes own overlapping note tails, while oscillator and hosted voices retain
+their monophonic retrigger behavior.
+
+Timing variance is additional late jitter around the authored position. For
+voices containing detail groups, its permitted range is capped before the next
+distinct authored onset and the next grid-beat boundary. Simultaneous authored
+events have zero jitter. These bounds keep event order stable and prevent an
+end-of-loop note from being delayed outside the loop. Offsets and frequency
+variation are deterministic; adding a detail group does not change the seeds
+of ordinary offset-zero notes.
+
+Per-voice score JSON schema version 2 emits one entry per event. `grid_timing` still identifies
+the owning row; `offset_beats`, `event_index`, and `authored_timing` identify the
+composed position. `ahess_timing`, applied offset, and permitted offset describe
+the exact shared playback schedule. Duration fields retain fractional values.
+Transposition and volume transformations visit every event while preserving its
+offset and duration. A modal commit is one history step and no-op acceptance
+preserves the original score text.

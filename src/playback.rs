@@ -18,12 +18,15 @@ use crate::{
     part::{Part, PartScore},
     pitch_system::{FrequencyHz, Strike, StrikeDuration},
     project::{BeatDurationMillis, FrequencyVariance, Project, VoiceId, VoiceType},
+    score_cell,
     seed::{standard_normal, Seed},
+    voice::AttackSharpness,
     voice_rendering::clarinet::ClarinetRuntime,
     voice_rendering::gamelan_metallophone::GamelanMetallophoneRuntime,
     voice_rendering::noitech_bell_a::NoitechBellARuntime,
     voice_rendering::noitech_bell_b::NoitechBellBRuntime,
     voice_rendering::recovered_voice::RecoveredVoiceRuntime,
+    voice_rendering::vsco::VscoRuntime,
 };
 #[cfg(target_os = "macos")]
 use crate::{
@@ -151,7 +154,9 @@ impl PlaybackLoop {
         let rows = score.resolved_strikes(part, project).map_err(|error| {
             PlaybackError::new(format!("part {:?}: {error}", part.name.as_str()))
         })?;
-        Self::from_rows(project, rows, 1)
+        let mut prepared = Self::from_rows(project, rows, 1)?;
+        prepared.attach_cell_events(project, score.rows())?;
+        Ok(prepared)
     }
 
     pub fn from_project_arrangement(
@@ -168,6 +173,7 @@ impl PlaybackLoop {
         }
 
         let mut rows = Vec::new();
+        let mut raw_rows = Vec::new();
         let mut occurrence_first = 1_u64;
         for (expected_part_name, (part, score)) in project.sequence().iter().zip(arrangement_scores)
         {
@@ -185,11 +191,14 @@ impl PlaybackLoop {
                 let first_row = range.first.saturating_sub(occurrence_first) as usize;
                 let last_row = (range.last.min(occurrence_last) - occurrence_first) as usize;
                 rows.extend_from_slice(&resolved_rows[first_row..=last_row]);
+                raw_rows.extend_from_slice(&score.rows()[first_row..=last_row]);
             }
             occurrence_first = occurrence_last + 1;
         }
 
-        Self::from_rows(project, rows, range.first)
+        let mut prepared = Self::from_rows(project, rows, range.first)?;
+        prepared.attach_cell_events(project, &raw_rows)?;
+        Ok(prepared)
     }
 
     fn from_rows<S: PlaybackStrikeSpec>(
@@ -239,6 +248,7 @@ impl PlaybackLoop {
 
                 Ok(PlaybackVoice {
                     id: voice.id(),
+                    attack_sharpness: voice.attack_sharpness(),
                     voice_type: voice.voice_type,
                     position: voice.position(),
                     volume_multiplier: voice
@@ -248,8 +258,18 @@ impl PlaybackLoop {
                         .iter()
                         .map(|strike| strike.map(|strike| strike.frequency))
                         .collect(),
+                    blend_seeds: (0..strikes.len())
+                        .map(|beat| {
+                            project
+                                .seed
+                                .derive(0x7673_636f_626c_656e)
+                                .derive(voice.id().value())
+                                .derive(first_arrangement_beat + beat as u64)
+                        })
+                        .collect(),
                     strikes,
                     delays,
+                    events: None,
                 })
             })
             .collect::<Result<Vec<_>, PlaybackError>>()?;
@@ -263,6 +283,93 @@ impl PlaybackLoop {
             beat_count: rows.len(),
             first_arrangement_beat,
             version: 0,
+        })
+    }
+
+    fn attach_cell_events(
+        &mut self,
+        project: &Project,
+        rows: &[Vec<String>],
+    ) -> Result<(), PlaybackError> {
+        for (column, voice) in self.voices.iter_mut().enumerate() {
+            if !rows.iter().any(|row| {
+                score_cell::has_details(&row[column])
+                    && !project.pitch_system().is_exact_key(row[column].trim())
+            }) {
+                continue;
+            }
+            let mut events = Vec::new();
+            for (row, values) in rows.iter().enumerate() {
+                let detailed = score_cell::has_details(&values[column]);
+                for (index, event) in score_cell::parse(project.pitch_system(), &values[column])
+                    .map_err(|e| PlaybackError::new(e.to_string()))?
+                    .iter()
+                    .enumerate()
+                {
+                    let tick = row as i64 * 96 + i64::from(event.offset.ticks());
+                    if tick < 0 || tick >= rows.len() as i64 * 96 {
+                        continue;
+                    }
+                    let beat = self.first_arrangement_beat + row as u64;
+                    let frequency_seed = frequency_variance_seed(project.seed, beat, voice.id);
+                    let timing = timing_seed(project.seed, beat, voice.id);
+                    let salt = event.offset.ticks() as i64 as u64;
+                    let strike = event
+                        .strike(project.pitch_system())
+                        .map_err(|e| PlaybackError::new(e.to_string()))?;
+                    events.push(TimedStrike {
+                        attack_sharpness: event.attack_sharpness,
+                        tick,
+                        source_row: row,
+                        event_index: index,
+                        strike: varied_strike(
+                            Some(strike),
+                            if salt == 0 {
+                                frequency_seed
+                            } else {
+                                frequency_seed.derive(salt)
+                            },
+                            project.frequency_variance(),
+                        )?
+                        .unwrap(),
+                        delay: normally_distributed_delay(
+                            if salt == 0 {
+                                timing
+                            } else {
+                                timing.derive(salt)
+                            },
+                            project.timing_variance,
+                        ),
+                        detailed,
+                    });
+                }
+            }
+            events.sort_by_key(|e| (e.tick, e.source_row, e.event_index));
+            voice.events = Some(events);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepared_event_timing(
+        &self,
+        voice_index: usize,
+        arrangement_beat: u64,
+        event_index: usize,
+        sample_rate: u32,
+    ) -> Option<PreparedTimingOffset> {
+        let voice = self.voices.get(voice_index)?;
+        let Some(events) = &voice.events else {
+            return self.prepared_timing_offset(voice_index, arrangement_beat, sample_rate);
+        };
+        let source_row = arrangement_beat.checked_sub(self.first_arrangement_beat)? as usize;
+        let index = events
+            .iter()
+            .position(|e| e.source_row == source_row && e.event_index == event_index)?;
+        let beat_length = self.beat_length_samples_at(sample_rate);
+        let maximum_samples = event_delay_cap(events, index, beat_length, self.timing_variance);
+        Some(PreparedTimingOffset {
+            applied_samples: events[index].delay.min(maximum_samples),
+            maximum_samples,
         })
     }
 
@@ -404,6 +511,7 @@ struct PlaybackStrike {
 
 #[derive(Clone, Debug)]
 struct PlaybackVoice {
+    attack_sharpness: AttackSharpness,
     id: VoiceId,
     voice_type: VoiceType,
     position: Point3Meters,
@@ -411,6 +519,74 @@ struct PlaybackVoice {
     frequencies: Vec<Option<FrequencyHz>>,
     strikes: Vec<Option<PlaybackStrike>>,
     delays: Vec<u32>,
+    events: Option<Vec<TimedStrike>>,
+    blend_seeds: Vec<Seed>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimedStrike {
+    attack_sharpness: Option<AttackSharpness>,
+    tick: i64,
+    source_row: usize,
+    event_index: usize,
+    strike: PlaybackStrike,
+    delay: u32,
+    detailed: bool,
+}
+fn nominal_sample(event: &TimedStrike, beat_length: u32) -> u64 {
+    ((event.tick as u64 * u64::from(beat_length)) + 48) / 96
+}
+fn event_delay_cap(events: &[TimedStrike], index: usize, beat_length: u32, maximum: u32) -> u32 {
+    if (index > 0 && events[index - 1].tick == events[index].tick)
+        || events
+            .get(index + 1)
+            .is_some_and(|e| e.tick == events[index].tick)
+    {
+        return 0;
+    }
+    let start = nominal_sample(&events[index], beat_length);
+    let next = events[index + 1..]
+        .iter()
+        .find(|e| e.tick > events[index].tick)
+        .map(|e| nominal_sample(e, beat_length));
+    maximum
+        .min(beat_length.saturating_sub(1))
+        .min(beat_length - (start % u64::from(beat_length)) as u32 - 1)
+        .min(next.map_or(u32::MAX, |n| {
+            n.saturating_sub(start)
+                .saturating_sub(1)
+                .min(u64::from(u32::MAX)) as u32
+        }))
+}
+fn event_start(events: &[TimedStrike], index: usize, beat_length: u32) -> u64 {
+    // Equal-time events share zero jitter, preserving deterministic event ordering.
+    let simultaneous = (index > 0 && events[index - 1].tick == events[index].tick)
+        || events
+            .get(index + 1)
+            .is_some_and(|e| e.tick == events[index].tick);
+    nominal_sample(&events[index], beat_length)
+        + if simultaneous {
+            0
+        } else {
+            u64::from(events[index].delay.min(event_delay_cap(
+                events,
+                index,
+                beat_length,
+                u32::MAX,
+            )))
+        }
+}
+fn event_length(events: &[TimedStrike], index: usize, beat_length: u32) -> u32 {
+    let e = events[index];
+    e.strike
+        .duration
+        .samples(beat_length)
+        .saturating_sub(if e.detailed {
+            0
+        } else {
+            (event_start(events, index, beat_length) - nominal_sample(&e, beat_length)) as u32
+        })
+        .max(1)
 }
 
 #[derive(Debug)]
@@ -689,7 +865,7 @@ impl AudioEngine {
                 self.beat_length_samples,
                 self.sample_rate,
             );
-            mixed.add(contribution);
+            runtime.latest_contribution = contribution;
             if acoustically_active {
                 sounding_voice_count += 1;
             }
@@ -700,11 +876,15 @@ impl AudioEngine {
             self.playback_loop.mix_normalization_enabled,
         ));
 
+        // Match the offline stem summation order, including floating-point rounding.
+        for runtime in &self.voice_runtimes {
+            mixed.add(runtime.latest_contribution.scale(mix_gain));
+        }
         self.advance_playhead();
         if sounding_voice_count == 0 {
             StereoFrame::SILENCE
         } else {
-            mixed.scale(mix_gain).clamp()
+            mixed.clamp()
         }
     }
 
@@ -885,6 +1065,7 @@ struct VoiceRuntime {
     position: Point3Meters,
     instrument: InstrumentRuntime,
     spatializer: VoiceSpatializer,
+    latest_contribution: StereoFrame,
 }
 
 impl VoiceRuntime {
@@ -908,6 +1089,7 @@ impl VoiceRuntime {
                 mts_master,
             )?,
             spatializer: VoiceSpatializer::new(scene, voice.position, f64::from(sample_rate)),
+            latest_contribution: StereoFrame::SILENCE,
         })
     }
 
@@ -955,6 +1137,7 @@ impl VoiceRuntime {
 enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
     Clarinet(ClarinetRuntime),
+    Vsco(VscoRuntime),
     GamelanMetallophone(GamelanMetallophoneRuntime),
     NoitechBellA(NoitechBellARuntime),
     NoitechBellB(NoitechBellBRuntime),
@@ -971,6 +1154,9 @@ impl InstrumentRuntime {
         sample_rate: f32,
         #[cfg(target_os = "macos")] mts_master: Option<&Arc<MtsEspMaster>>,
     ) -> Result<Self, PlaybackError> {
+        if voice_type.uses_vsco() {
+            return Ok(Self::Vsco(VscoRuntime::new(voice_type, sample_rate)));
+        }
         if voice_type.uses_recovered_runtime() {
             return Ok(Self::Recovered(RecoveredVoiceRuntime::new(
                 voice_type,
@@ -1025,6 +1211,7 @@ impl InstrumentRuntime {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
             Self::Clarinet(_) => voice_type == VoiceType::Clarinet,
+            Self::Vsco(runtime) => runtime.voice_type() == voice_type,
             Self::GamelanMetallophone(_) => voice_type == VoiceType::GamelanMetallophone,
             Self::NoitechBellA(_) => voice_type == VoiceType::NoitechBellA,
             Self::NoitechBellB(_) => voice_type == VoiceType::NoitechBellB,
@@ -1046,6 +1233,94 @@ impl InstrumentRuntime {
         beat_length: u32,
         sample_rate: f32,
     ) -> (f32, bool) {
+        if let Some(events) = &voice.events {
+            #[cfg(target_os = "macos")]
+            if let Self::SurgeXt(runtime) = self {
+                return runtime.sample(voice, beat_index, sample_in_beat, beat_length);
+            }
+            if let Some(beat) = beat_index {
+                let now = beat as u64 * u64::from(beat_length) + u64::from(sample_in_beat);
+                let end = events.partition_point(|e| nominal_sample(e, beat_length) <= now);
+                // Only nominal events in the preceding beat can have an onset now.
+                let first = events[..end].partition_point(|e| {
+                    nominal_sample(e, beat_length).saturating_add(u64::from(beat_length)) <= now
+                });
+                for index in first..end {
+                    if event_start(events, index, beat_length) != now {
+                        continue;
+                    }
+                    let strike = events[index].strike;
+                    let length = event_length(events, index, beat_length);
+                    let cutoff =
+                        (strike.duration != StrikeDuration::VoiceDefault).then_some(length);
+                    match self {
+                        Self::NoitechBellA(r) => r.trigger_with_volume_and_cutoff(
+                            strike.frequency.as_hz_f32(),
+                            strike.volume,
+                            cutoff,
+                        ),
+                        Self::NoitechBellB(r) => r.trigger_with_volume_and_cutoff(
+                            strike.frequency.as_hz_f32(),
+                            strike.volume,
+                            cutoff,
+                        ),
+                        Self::GamelanMetallophone(r) => r.trigger_with_volume_and_cutoff(
+                            strike.frequency.as_hz_f32(),
+                            strike.volume,
+                            cutoff,
+                        ),
+                        Self::Recovered(r) => r.trigger_with_volume_and_cutoff(
+                            strike.frequency.as_hz_f32(),
+                            strike.volume,
+                            cutoff,
+                        ),
+                        Self::Vsco(r) => r.trigger_with_attack(
+                            strike.frequency,
+                            strike.volume,
+                            length,
+                            cutoff.is_some(),
+                            voice.blend_seeds[events[index].source_row]
+                                .derive(events[index].event_index as u64),
+                            events[index]
+                                .attack_sharpness
+                                .unwrap_or(voice.attack_sharpness),
+                        ),
+                        Self::Clarinet(r) => {
+                            r.trigger(strike.frequency.as_hz_f32(), strike.volume, length)
+                        }
+                        _ => {}
+                    }
+                }
+                if let Self::BuiltIn(oscillator) = self {
+                    let index = (0..end)
+                        .rev()
+                        .find(|i| event_start(events, *i, beat_length) <= now);
+                    if let Some(index) = index {
+                        let elapsed = now - event_start(events, index, beat_length);
+                        let length = event_length(events, index, beat_length);
+                        if elapsed < u64::from(length) {
+                            let strike = events[index].strike;
+                            return (
+                                oscillator.sample(strike.frequency.as_hz_f32(), sample_rate)
+                                    * envelope(elapsed as u32, length)
+                                    * strike.volume,
+                                true,
+                            );
+                        }
+                    }
+                    return (0.0, false);
+                }
+            }
+            return match self {
+                Self::NoitechBellA(r) => r.sample(sample_rate),
+                Self::NoitechBellB(r) => r.sample(sample_rate),
+                Self::GamelanMetallophone(r) => r.sample(sample_rate),
+                Self::Recovered(r) => r.sample(sample_rate),
+                Self::Vsco(r) => r.sample(),
+                Self::Clarinet(r) => r.sample(),
+                _ => (0.0, false),
+            };
+        }
         match self {
             Self::BuiltIn(oscillator) => {
                 let Some(beat_index) = beat_index else {
@@ -1102,6 +1377,29 @@ impl InstrumentRuntime {
                     }
                 }
                 runtime.sample(sample_rate)
+            }
+            Self::Vsco(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(strike) = voice.strikes[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            let gate = strike
+                                .duration
+                                .samples(beat_length)
+                                .saturating_sub(delay)
+                                .max(1);
+                            runtime.trigger_with_attack(
+                                strike.frequency,
+                                strike.volume,
+                                gate,
+                                strike.duration != StrikeDuration::VoiceDefault,
+                                voice.blend_seeds[beat_index].derive(0),
+                                voice.attack_sharpness,
+                            );
+                        }
+                    }
+                }
+                runtime.sample()
             }
             Self::Clarinet(runtime) => {
                 if let Some(beat_index) = beat_index {
@@ -1212,7 +1510,11 @@ impl SurgeXtRuntime {
                 (SurgeXtPatch::DistortedElectricGuitar, 1.0)
             }
             VoiceType::SurgeXtClarinet => (SurgeXtPatch::Clarinet, 1.0),
-            VoiceType::Sin
+            VoiceType::VscoCello
+            | VoiceType::VscoFlute
+            | VoiceType::VscoClarinet
+            | VoiceType::VscoHarp
+            | VoiceType::Sin
             | VoiceType::Saw
             | VoiceType::HarmonicSaw
             | VoiceType::Clarinet
@@ -1290,6 +1592,83 @@ impl SurgeXtRuntime {
         (sample, self.active_note.is_some() || self.buffer_has_audio)
     }
 
+    fn fill_event_buffer(
+        &mut self,
+        events: &[TimedStrike],
+        beat: Option<usize>,
+        sample: u32,
+        beat_length: u32,
+    ) -> Result<(), PlaybackError> {
+        let mut frames = (beat_length - sample).max(1) as usize;
+        if let Some(beat) = beat {
+            let now = beat as u64 * u64::from(beat_length) + u64::from(sample);
+            let end = events.partition_point(|e| nominal_sample(e, beat_length) <= now);
+            let current = (0..end)
+                .rev()
+                .find(|i| event_start(events, *i, beat_length) <= now);
+            let sounding = current.filter(|i| {
+                now < event_start(events, *i, beat_length)
+                    + u64::from(event_length(events, *i, beat_length))
+            });
+            let onset = sounding.is_some_and(|i| event_start(events, i, beat_length) == now);
+            if sounding.is_none() || onset {
+                if let Some(address) = self.active_note.take() {
+                    self.synth
+                        .note_off(address.channel, address.note, 0)
+                        .map_err(|e| PlaybackError::new(e.to_string()))?;
+                }
+            }
+            if onset {
+                let strike = events[sounding.unwrap()].strike;
+                let address = MtsNoteAddress {
+                    channel: 0,
+                    note: collision_free_midi_note(
+                        strike.frequency,
+                        self.voice_index,
+                        self.voice_count,
+                    ),
+                };
+                self.master.set_frequency(address, strike.frequency.as_hz());
+                self.synth
+                    .note_on(
+                        address.channel,
+                        address.note,
+                        (strike.volume * 127.0).round() as u8,
+                        0,
+                    )
+                    .map_err(|e| PlaybackError::new(e.to_string()))?;
+                self.active_note = Some(address);
+            }
+            if let Some(i) = sounding {
+                frames = frames.min(
+                    (event_start(events, i, beat_length)
+                        + u64::from(event_length(events, i, beat_length))
+                        - now) as usize,
+                );
+            }
+            let next = (current.map_or(0, |i| i + 1)..events.len())
+                .find(|i| event_start(events, *i, beat_length) > now);
+            if let Some(i) = next {
+                frames = frames.min((event_start(events, i, beat_length) - now) as usize);
+            }
+        } else if let Some(address) = self.active_note.take() {
+            self.synth
+                .note_off(address.channel, address.note, 0)
+                .map_err(|e| PlaybackError::new(e.to_string()))?;
+        }
+        self.buffered_frames = frames.clamp(1, SURGE_RENDER_BLOCK_FRAMES);
+        self.buffer_frame = 0;
+        let samples = self.buffered_frames * 2;
+        self.stereo_buffer[..samples].fill(0.0);
+        self.synth
+            .render(&mut self.stereo_buffer[..samples])
+            .map_err(|e| PlaybackError::new(e.to_string()))?;
+        self.buffer_has_audio = self.stereo_buffer[..samples]
+            .iter()
+            .any(|s| s.abs() > SURGE_SILENCE_THRESHOLD);
+        Ok(())
+    }
+
     fn fill_buffer(
         &mut self,
         voice: &PlaybackVoice,
@@ -1297,6 +1676,9 @@ impl SurgeXtRuntime {
         sample_in_beat: u32,
         beat_length: u32,
     ) -> Result<(), PlaybackError> {
+        if let Some(events) = &voice.events {
+            return self.fill_event_buffer(events, beat_index, sample_in_beat, beat_length);
+        }
         let continuing_strike = beat_index
             .and_then(|beat_index| active_strike(voice, beat_index))
             .is_some_and(|(strike_beat, _)| strike_beat < beat_index.unwrap());
@@ -1469,6 +1851,10 @@ impl OscillatorRuntime {
             VoiceType::NoitechBellA => unreachable!("Noitech Bell A has a tail-aware runtime"),
             VoiceType::NoitechBellB => unreachable!("Noitech Bell B has a tail-aware runtime"),
             VoiceType::Clarinet => unreachable!("clarinet has a reed-and-bore runtime"),
+            VoiceType::VscoCello
+            | VoiceType::VscoFlute
+            | VoiceType::VscoClarinet
+            | VoiceType::VscoHarp => unreachable!("VSCO instruments have a sample runtime"),
             VoiceType::GamelanMetallophone => {
                 unreachable!("gamelan metallophone has a tail-aware runtime")
             }
@@ -1739,6 +2125,105 @@ mod tests {
         project::{FrequencyVariance, Project, Voice, VoiceId, VoiceType, VoiceVolumeAdjustment},
         seed::Seed,
     };
+
+    #[test]
+    fn detailed_notes_schedule_early_and_late_with_exact_gates_and_live_offline_parity() {
+        use crate::score_cell::{self, BeatOffset, CellEvent};
+        let part = Part::new("details", 3);
+        let project = Project::new("details", 100, 0, Seed::new(1))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Sin)])
+            .with_parts(vec![part.clone()]);
+        let events = [(-24, "C4", "1/4"), (0, "D4", "1/2"), (48, "E4", "1/4")].map(|(p, n, d)| {
+            CellEvent::from_fields(
+                project.pitch_system(),
+                BeatOffset::from_ticks(p).unwrap(),
+                n,
+                d,
+                "FF",
+            )
+            .unwrap()
+            .unwrap()
+        });
+        let score = PartScore::from_rows(vec![
+            vec![String::new()],
+            vec![score_cell::encode(&events)],
+            vec![String::new()],
+        ]);
+        for rate in [44_100, 48_000, 96_000] {
+            let prepared = PlaybackLoop::from_part(&project, &part, &score).unwrap();
+            let beat = prepared.beat_length_samples_at(rate);
+            let scheduled = prepared.voices[0].events.as_ref().unwrap();
+            assert_eq!(
+                scheduled.iter().map(|e| e.tick).collect::<Vec<_>>(),
+                [72, 96, 144]
+            );
+            assert_eq!(
+                super::event_start(scheduled, 0, beat),
+                (f64::from(beat) * 0.75).round() as u64
+            );
+            assert_eq!(
+                super::event_length(scheduled, 0, beat),
+                (f64::from(beat) * 0.25).round() as u32
+            );
+            let shared = Arc::new(Mutex::new(prepared.clone()));
+            let mut live =
+                AudioEngine::new(rate as f32, shared, Arc::new(AtomicU64::new(1))).unwrap();
+            let mut offline = OfflineRenderer::new(prepared, rate).unwrap();
+            let mut heard = false;
+            for sample in 0..beat * 3 {
+                let a = live.next_frame();
+                let (b, _) = offline.next_frame().unwrap();
+                assert_eq!(a, b);
+                if sample < (f64::from(beat) * 0.75).round() as u32 {
+                    assert_eq!(a.left, 0.0);
+                }
+                heard |= a.left.abs() > 0.001;
+            }
+            assert!(heard);
+        }
+    }
+
+    #[test]
+    fn early_notes_cross_occurrences_but_do_not_wrap_before_a_selected_loop() {
+        use crate::score_cell::{self, BeatOffset, CellEvent};
+        let part = Part::new("details", 2);
+        let project = Project::new("details", 100, 10000, Seed::new(3))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Sin)])
+            .with_parts(vec![part.clone()])
+            .with_sequence(vec![part.name.clone(), part.name.clone()]);
+        let event = CellEvent::from_fields(
+            project.pitch_system(),
+            BeatOffset::from_ticks(-24).unwrap(),
+            "C4",
+            "1/4",
+            "80",
+        )
+        .unwrap()
+        .unwrap();
+        let score = PartScore::from_rows(vec![
+            vec![score_cell::encode(&[event])],
+            vec![String::new()],
+        ]);
+        let scores = vec![(part.clone(), score.clone()), (part, score)];
+        let full = PlaybackLoop::from_project_arrangement(
+            &project,
+            &scores,
+            BeatRange::new(1, 4, 4).unwrap(),
+        )
+        .unwrap();
+        let scheduled = full.voices[0].events.as_ref().unwrap();
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].tick, 168);
+        let timing = full.prepared_event_timing(0, 3, 0, 48000).unwrap();
+        assert_eq!(timing.maximum_samples, 1199);
+        let selected = PlaybackLoop::from_project_arrangement(
+            &project,
+            &scores,
+            BeatRange::new(3, 4, 4).unwrap(),
+        )
+        .unwrap();
+        assert!(selected.voices[0].events.as_ref().unwrap().is_empty());
+    }
 
     #[test]
     fn harmonic_saw_keeps_its_fundamental_and_gently_stretches_every_upper_partial() {
@@ -2487,6 +2972,10 @@ mod tests {
             }
             let tail_bounds = match voice_type {
                 VoiceType::Clarinet => Some((3_800, 3_900)),
+                VoiceType::VscoCello | VoiceType::VscoFlute | VoiceType::VscoClarinet => {
+                    Some((5_700, 5_800))
+                }
+                VoiceType::VscoHarp => Some((1_000, 600_000)),
                 VoiceType::NoitechBellA => Some((200_000, 250_000)),
                 VoiceType::NoitechBellB => Some((160_000, 200_000)),
                 VoiceType::NoitechBellG
@@ -2849,3 +3338,7 @@ mod tests {
         assert_eq!(beat_length_samples(duration, 96_000.0), 24_000);
     }
 }
+
+#[cfg(test)]
+#[path = "playback_vsco_tests.rs"]
+mod vsco_tests;

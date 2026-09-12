@@ -14,6 +14,7 @@ pub use storage::{
 };
 pub use transaction::{restore_project_state, ProjectTransactionError, RestoreProjectStateError};
 pub use voices::{
+    add_voice_with_settings_at, edit_voice_with_settings_at,
     add_voice, add_voice_at, add_voice_with_adjustment_at, delete_voice, edit_voice, edit_voice_at,
     edit_voice_with_adjustment_at, VoiceChangeError,
 };
@@ -513,6 +514,9 @@ impl Project {
             contents.push_str("\nvoice_type = ");
             contents.push_str(&toml_string(voice.voice_type.config_value()));
             contents.push('\n');
+            if voice.attack_sharpness().percent() != 0 {
+                contents.push_str(&format!("attack_sharpness = {}\n", voice.attack_sharpness().percent()));
+            }
             if let Some(adjustment) = voice.volume_adjustment() {
                 contents.push_str("volume_adjustment = ");
                 contents.push_str(&adjustment.multiplier().to_string());

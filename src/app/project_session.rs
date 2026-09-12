@@ -501,7 +501,13 @@ impl Model {
             .map(|part| part.name.clone())
             .collect();
         let transformations = cx.new(|cx| {
-            transformations::TransformationsWorkspace::new(transformation_parts, Vec::new(), cx)
+            let mut workspace = transformations::TransformationsWorkspace::new(
+                transformation_parts,
+                Vec::new(),
+                cx,
+            );
+            workspace.sync_voices(project.voices().to_vec(), cx);
+            workspace
         });
         cx.subscribe(&transformations, Self::on_transformation)
             .detach();
@@ -1758,6 +1764,8 @@ impl Model {
             .map(|part| part.name.clone())
             .collect::<Vec<_>>();
         let editor = cx.new(move |cx| ScoreEditor::new(view_index, document, part_names, cx));
+        cx.subscribe(&editor, Self::on_note_details_requested)
+            .detach();
         cx.subscribe(&editor, Self::on_score_editor_part_selected)
             .detach();
         cx.subscribe(&editor, Self::on_score_editor_edit_part_requested)
@@ -1784,6 +1792,87 @@ impl Model {
         }
         cx.notify();
         changed
+    }
+
+    fn on_note_details_requested(
+        &mut self,
+        _: Entity<ScoreEditor>,
+        request: &score::NoteDetailsRequested,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_overlay().is_some() {
+            return;
+        }
+        let document = request.document.clone();
+        let row = request.row;
+        let column = request.column;
+        let state = document.read(cx);
+        let Some(original) = state
+            .score()
+            .rows()
+            .get(row)
+            .and_then(|r| r.get(column))
+            .cloned()
+        else {
+            return;
+        };
+        let system = self.project.pitch_system().clone();
+        let events = match crate::score_cell::parse(&system, &original) {
+            Ok(events) => events,
+            Err(e) => {
+                self.workspace_error = Some(e.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let title = format!(
+            "note details · {} · {}",
+            state.part().beat_label(row),
+            self.project.voices()[column].name.as_str()
+        );
+        let expected = original.clone();
+        let dialog = cx.new(|cx| {
+            let mut dialog = score::NoteDetailsDialog::new(system, title, original, events, cx);
+            let voice = &self.project.voices()[column];
+            dialog.set_voice_attack(
+                voice
+                    .voice_type
+                    .uses_vsco()
+                    .then_some(voice.attack_sharpness()),
+                cx,
+            );
+            dialog
+        });
+        cx.subscribe(
+            &dialog,
+            move |this, dialog, msg: &score::NoteDetailsMsg, cx| match msg {
+                score::NoteDetailsMsg::Cancelled => this.set_score_overlay(None, cx),
+                score::NoteDetailsMsg::Confirmed(value) => {
+                    if document
+                        .read(cx)
+                        .score()
+                        .rows()
+                        .get(row)
+                        .and_then(|r| r.get(column))
+                        != Some(&expected)
+                    {
+                        dialog.update(cx, |dialog, cx| {
+                            dialog.save_failed(
+                                "the source cell changed; cancel and reopen its details".into(),
+                                cx,
+                            )
+                        });
+                        return;
+                    }
+                    document.update(cx, |document, cx| {
+                        document.update_cell(0, row, column, value.clone(), cx)
+                    });
+                    this.set_score_overlay(None, cx);
+                }
+            },
+        )
+        .detach();
+        self.set_score_overlay(Some(score::Overlay::NoteDetails(dialog)), cx);
     }
 
     fn on_score_editor_part_selected(
@@ -2370,6 +2459,7 @@ impl Model {
 
     fn sync_workspace_project(&self, cx: &mut Context<Self>) {
         self.workspace.transformations.update(cx, |workspace, cx| {
+            workspace.sync_voices(self.project.voices().to_vec(), cx);
             workspace.sync_parts(
                 self.project
                     .parts()
@@ -2610,6 +2700,7 @@ impl Model {
             let message = format!("couldn't save score changes: {error}");
             workspace.update(cx, |workspace, cx| match change {
                 voices::Change::Add { .. } => workspace.add_failed(message, cx),
+                voices::Change::Duplicate { .. } => workspace.duplicate_failed(message, cx),
                 voices::Change::Edit { .. } => workspace.edit_failed(message, cx),
             });
             cx.notify();
@@ -2617,19 +2708,43 @@ impl Model {
         }
 
         match change {
+            voices::Change::Duplicate { source, name } => {
+                match project::voices::duplicate_voice(
+                    &self.project_directory,
+                    &self.project,
+                    source,
+                    name,
+                ) {
+                    Ok(updated) => {
+                        let added = updated.voices().last().unwrap().name.clone();
+                        self.project = updated;
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.voice_added(self.project.voices().to_vec(), added, cx)
+                        });
+                        self.refresh_score_documents_after_voice_change(cx);
+                        self.sync_workspace_project(cx);
+                        self.record_project_history_change(cx);
+                    }
+                    Err(error) => workspace.update(cx, |workspace, cx| {
+                        workspace.duplicate_failed(error.to_string(), cx)
+                    }),
+                }
+            }
             voices::Change::Add {
                 name,
                 voice_type,
                 position,
                 volume_adjustment,
+                attack,
             } => {
-                match project::add_voice_with_adjustment_at(
+                match project::add_voice_with_settings_at(
                     &self.project_directory,
                     &self.project,
                     name,
                     *voice_type,
                     *position,
                     *volume_adjustment,
+                    *attack,
                 ) {
                     Ok(updated_project) => {
                         let added = updated_project
@@ -2660,9 +2775,10 @@ impl Model {
                 voice_type,
                 position,
                 volume_adjustment,
+                attack,
             } => {
                 let edited_id = self.project.voice(original_name).map(|voice| voice.id());
-                match project::edit_voice_with_adjustment_at(
+                match project::edit_voice_with_settings_at(
                     &self.project_directory,
                     &self.project,
                     original_name,
@@ -2670,6 +2786,7 @@ impl Model {
                     *voice_type,
                     *position,
                     *volume_adjustment,
+                    *attack,
                 ) {
                     Ok(updated_project) => {
                         let edited = edited_id
@@ -5670,6 +5787,7 @@ mod tests {
                     voice_type: VoiceType::Sin,
                     position: Point3Meters::default(),
                     volume_adjustment: None,
+                    attack: Default::default(),
                 }),
                 cx,
             );

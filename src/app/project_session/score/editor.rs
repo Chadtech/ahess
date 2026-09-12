@@ -3,13 +3,13 @@
 use super::document::{DocumentEvent, ScoreDocument};
 use crate::{
     part::{Part, PartRowEdit, PartScore, ScoreRowIndex, ScoreRowRange},
-    style as s,
+    score_cell, style as s,
     view::{
         action_menu::{self, ActionMenu},
         button::{self, Button},
         data_grid,
         dropdown::{self, Dropdown},
-        text_input::{Changed, TextInput},
+        text_input::{self, Changed, TextInput},
     },
 };
 use gpui::SharedString;
@@ -20,6 +20,13 @@ use gpui::{
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_EDITOR_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteDetailsRequested {
+    pub document: Entity<ScoreDocument>,
+    pub row: usize,
+    pub column: usize,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PartSelected {
@@ -137,6 +144,7 @@ pub struct ScoreEditor {
 }
 
 impl EventEmitter<PartSelected> for ScoreEditor {}
+impl EventEmitter<NoteDetailsRequested> for ScoreEditor {}
 impl EventEmitter<RowEditRequested> for ScoreEditor {}
 impl EventEmitter<PartLoopRequested> for ScoreEditor {}
 impl EventEmitter<EditPartRequested> for ScoreEditor {}
@@ -268,6 +276,7 @@ impl ScoreEditor {
                         let input = cx.new(|cx| {
                             TextInput::new(value.clone(), "", cx)
                                 .with_cell_clipboard()
+                                .with_details(score_cell::summary)
                                 .with_background(background)
                                 .with_score_note_colors([
                                     s::SCORE_PITCH_TEXT,
@@ -275,6 +284,17 @@ impl ScoreEditor {
                                     s::SCORE_VOLUME_TEXT,
                                 ])
                         });
+                        cx.subscribe(
+                            &input,
+                            move |editor, _, _: &text_input::DetailsRequested, cx| {
+                                cx.emit(NoteDetailsRequested {
+                                    document: editor.document.clone(),
+                                    row: row_index,
+                                    column: column_index,
+                                });
+                            },
+                        )
+                        .detach();
                         cx.subscribe(&input, move |editor, input, _: &Changed, cx| {
                             editor.on_cell_changed(editor_id, row_index, column_index, input, cx);
                         })

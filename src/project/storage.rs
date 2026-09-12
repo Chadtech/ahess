@@ -12,6 +12,7 @@ use crate::{
     pitch_system::PitchSystem,
     seed::Seed,
     tuning_system::{self, TuningLibraryError, TuningSystem, TuningSystemId},
+    voice::AttackSharpness,
     voice_name::VoiceName,
 };
 use serde::Deserialize;
@@ -567,6 +568,8 @@ struct StoredVoice {
     #[serde(default)]
     volume_adjustment: Option<VoiceVolumeAdjustment>,
     #[serde(default)]
+    attack_sharpness: AttackSharpness,
+    #[serde(default)]
     position: Point3Meters,
 }
 
@@ -615,7 +618,8 @@ where
         voices.push(
             Voice::new(id, stored_voice.name, stored_voice.voice_type)
                 .with_position(stored_voice.position)
-                .with_volume_adjustment(stored_voice.volume_adjustment),
+                .with_volume_adjustment(stored_voice.volume_adjustment)
+                .with_attack_sharpness(stored_voice.attack_sharpness),
         );
     }
 

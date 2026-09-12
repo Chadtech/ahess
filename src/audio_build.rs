@@ -14,6 +14,7 @@ use crate::{
     part::{Part, PartScore},
     playback::{OfflineRenderer, PlaybackLoop},
     project::{self, Project},
+    score_cell,
 };
 
 pub(crate) const BUILD_DIRECTORY: &str = "build";
@@ -287,9 +288,14 @@ struct BuildNote {
     notation: String,
     frequency_hz: f64,
     volume: f64,
+    attack_sharpness: u8,
+    attack_override: Option<u8>,
     duration_beats: f64,
     duration_seconds: f64,
     grid_timing: BuildTiming,
+    authored_timing: BuildTiming,
+    offset_beats: f64,
+    event_index: usize,
     ahess_timing: BuildTiming,
     applied_timing_offset: BuildTimingOffset,
     permitted_timing_offset: BuildPermittedTimingOffset,
@@ -336,7 +342,7 @@ fn build_voice_scores(
         .voices()
         .iter()
         .map(|voice| BuildVoiceScore {
-            schema_version: 1,
+            schema_version: 2,
             project: project.name.clone(),
             sample_rate_hz: sample_rate,
             beat_duration_millis: project.beat_duration_millis.get(),
@@ -367,63 +373,102 @@ fn build_voice_scores(
             let grid_samples = beats_from_start
                 .checked_mul(u64::from(beat_length_samples))
                 .ok_or_else(|| AudioBuildError::new("the score timing is too large to export"))?;
-            for (voice_index, strike) in resolved_row.into_iter().enumerate() {
-                let Some(strike) = strike else {
-                    continue;
-                };
-                let frequency = strike.frequency();
-                let timing = playback_loop
-                    .prepared_timing_offset(voice_index, arrangement_beat, sample_rate)
-                    .ok_or_else(|| {
-                        AudioBuildError::new(
-                            "the prepared arrangement does not match the score export",
+            for (voice_index, _) in resolved_row.into_iter().enumerate() {
+                let events = score_cell::parse(project.pitch_system(), &raw_row[voice_index])
+                    .map_err(|e| AudioBuildError::new(e.to_string()))?;
+                for (event_index, event) in events.iter().enumerate() {
+                    let authored_beats = beats_from_start as f64 + event.offset.beats();
+                    if authored_beats < 0.0
+                        || authored_beats >= project.arrangement_beat_count() as f64
+                    {
+                        continue;
+                    }
+                    let authored_samples =
+                        (authored_beats * f64::from(beat_length_samples)).round() as u64;
+                    let strike = event
+                        .strike(project.pitch_system())
+                        .map_err(|e| AudioBuildError::new(e.to_string()))?;
+                    let frequency = strike.frequency();
+                    let timing = playback_loop
+                        .prepared_event_timing(
+                            voice_index,
+                            arrangement_beat,
+                            event_index,
+                            sample_rate,
                         )
-                    })?;
-                let applied_samples = u64::from(timing.applied_samples);
-                let ahess_samples = grid_samples.checked_add(applied_samples).ok_or_else(|| {
-                    AudioBuildError::new("the score timing is too large to export")
-                })?;
-                let sample_rate = f64::from(sample_rate);
-                let beat_length = f64::from(beat_length_samples);
-                voice_scores[voice_index].notes.push(BuildNote {
-                    arrangement_beat,
-                    arrangement_occurrence: occurrence.index() + 1,
-                    part: part.name.as_str().to_string(),
-                    part_beat: part_beat_index + 1,
-                    beat_label: part.beat_label(part_beat_index),
-                    notation: raw_row[voice_index].clone(),
-                    frequency_hz: frequency.as_hz(),
-                    volume: f64::from(strike.volume()),
-                    duration_beats: f64::from(strike.duration_beats()),
-                    duration_seconds: beat_duration_seconds * f64::from(strike.duration_beats()),
-                    grid_timing: BuildTiming {
-                        beats_from_start: beats_from_start as f64,
-                        seconds: grid_samples as f64 / sample_rate,
-                        samples: grid_samples,
-                    },
-                    ahess_timing: BuildTiming {
-                        beats_from_start: ahess_samples as f64 / beat_length,
-                        seconds: ahess_samples as f64 / sample_rate,
-                        samples: ahess_samples,
-                    },
-                    applied_timing_offset: BuildTimingOffset {
-                        beats: f64::from(timing.applied_samples) / beat_length,
-                        seconds: f64::from(timing.applied_samples) / sample_rate,
-                        samples: timing.applied_samples,
-                    },
-                    permitted_timing_offset: BuildPermittedTimingOffset {
-                        minimum_beats: 0.0,
-                        maximum_beats: f64::from(timing.maximum_samples) / beat_length,
-                        minimum_seconds: 0.0,
-                        maximum_seconds: f64::from(timing.maximum_samples) / sample_rate,
-                        minimum_samples: 0,
-                        maximum_samples: timing.maximum_samples,
-                    },
-                });
+                        .ok_or_else(|| {
+                            AudioBuildError::new(
+                                "the prepared arrangement does not match the score export",
+                            )
+                        })?;
+                    let applied_samples = u64::from(timing.applied_samples);
+                    let ahess_samples =
+                        authored_samples
+                            .checked_add(applied_samples)
+                            .ok_or_else(|| {
+                                AudioBuildError::new("the score timing is too large to export")
+                            })?;
+                    let sample_rate = f64::from(sample_rate);
+                    let beat_length = f64::from(beat_length_samples);
+                    voice_scores[voice_index].notes.push(BuildNote {
+                        arrangement_beat,
+                        arrangement_occurrence: occurrence.index() + 1,
+                        part: part.name.as_str().to_string(),
+                        part_beat: part_beat_index + 1,
+                        beat_label: part.beat_label(part_beat_index),
+                        notation: if score_cell::has_details(&raw_row[voice_index]) {
+                            event.notation.clone()
+                        } else {
+                            raw_row[voice_index].clone()
+                        },
+                        event_index,
+                        offset_beats: event.offset.beats(),
+                        authored_timing: BuildTiming {
+                            beats_from_start: authored_beats,
+                            seconds: authored_samples as f64 / sample_rate,
+                            samples: authored_samples,
+                        },
+                        frequency_hz: frequency.as_hz(),
+                        volume: f64::from(strike.volume()),
+                        attack_sharpness: event
+                            .attack_sharpness
+                            .unwrap_or(project.voices()[voice_index].attack_sharpness())
+                            .percent(),
+                        attack_override: event.attack_sharpness.map(|a| a.percent()),
+                        duration_beats: strike.duration().beats(),
+                        duration_seconds: beat_duration_seconds * strike.duration().beats(),
+                        grid_timing: BuildTiming {
+                            beats_from_start: beats_from_start as f64,
+                            seconds: grid_samples as f64 / sample_rate,
+                            samples: grid_samples,
+                        },
+                        ahess_timing: BuildTiming {
+                            beats_from_start: ahess_samples as f64 / beat_length,
+                            seconds: ahess_samples as f64 / sample_rate,
+                            samples: ahess_samples,
+                        },
+                        applied_timing_offset: BuildTimingOffset {
+                            beats: f64::from(timing.applied_samples) / beat_length,
+                            seconds: f64::from(timing.applied_samples) / sample_rate,
+                            samples: timing.applied_samples,
+                        },
+                        permitted_timing_offset: BuildPermittedTimingOffset {
+                            minimum_beats: 0.0,
+                            maximum_beats: f64::from(timing.maximum_samples) / beat_length,
+                            minimum_seconds: 0.0,
+                            maximum_seconds: f64::from(timing.maximum_samples) / sample_rate,
+                            minimum_samples: 0,
+                            maximum_samples: timing.maximum_samples,
+                        },
+                    });
+                }
             }
         }
     }
 
+    for voice in &mut voice_scores {
+        voice.notes.sort_by_key(|note| note.ahess_timing.samples);
+    }
     Ok(voice_scores)
 }
 
@@ -692,6 +737,56 @@ mod tests {
     };
 
     #[test]
+    fn detailed_score_export_separates_grid_authored_and_realized_timing() {
+        use crate::score_cell::{self, BeatOffset, CellEvent};
+        let part = Part::new("details", 2);
+        let project = Project::new("details", 100, 0, Seed::new(3))
+            .with_voices(vec![Voice::new(1, "lead", VoiceType::Sin)])
+            .with_parts(vec![part.clone()]);
+        let events = [(-24, "C4"), (0, "D4"), (48, "E4")].map(|(p, n)| {
+            CellEvent::from_fields(
+                project.pitch_system(),
+                BeatOffset::from_ticks(p).unwrap(),
+                n,
+                "1/4",
+                "80",
+            )
+            .unwrap()
+            .unwrap()
+        });
+        let score =
+            PartScore::from_rows(vec![vec![String::new()], vec![score_cell::encode(&events)]]);
+        let scores = vec![(part, score)];
+        let prepared = PlaybackLoop::from_project_arrangement(
+            &project,
+            &scores,
+            BeatRange::new(1, 2, 2).unwrap(),
+        )
+        .unwrap();
+        let exported = super::build_voice_scores(&project, &scores, &prepared, 48000).unwrap();
+        let notes = &exported[0].notes;
+        assert_eq!(notes.len(), 3);
+        assert_eq!(
+            notes
+                .iter()
+                .map(|n| n.grid_timing.samples)
+                .collect::<Vec<_>>(),
+            [4800, 4800, 4800]
+        );
+        assert_eq!(
+            notes
+                .iter()
+                .map(|n| n.authored_timing.samples)
+                .collect::<Vec<_>>(),
+            [3600, 4800, 7200]
+        );
+        assert_eq!(notes[0].duration_beats, 0.25);
+        for note in notes {
+            assert_eq!(note.ahess_timing.samples, note.authored_timing.samples);
+        }
+    }
+
+    #[test]
     fn builds_a_float_stereo_mix_and_one_stem_per_voice() {
         let root = temp_root("audio-build");
         let project_directory = root.join("project");
@@ -762,7 +857,7 @@ mod tests {
             &fs::read(result.directory.join(&score_plans[0].file_name)).unwrap(),
         )
         .unwrap();
-        assert_eq!(lead_score["schema_version"], 1);
+        assert_eq!(lead_score["schema_version"], 2);
         assert_eq!(lead_score["project"], "Arc Light");
         assert_eq!(lead_score["sample_rate_hz"], 48_000);
         assert_eq!(lead_score["voice"]["id"], 1);

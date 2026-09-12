@@ -1247,11 +1247,12 @@ pub(crate) fn validate_part_file(
     read_part_table(project_directory, part, voices).map(|_| ())
 }
 
-pub(crate) fn rewritten_part_file(
+pub(crate) fn rewritten_part_file_with_duplicate(
     project_directory: &Path,
     part: &Part,
     old_voices: &[Voice],
     new_voices: &[Voice],
+    duplicate: Option<(crate::voice::VoiceId, crate::voice::VoiceId)>,
 ) -> Result<Vec<u8>, PartFileError> {
     let table = read_part_table(project_directory, part, old_voices)?;
     let schema_is_unchanged = old_voices.len() == new_voices.len()
@@ -1272,7 +1273,12 @@ pub(crate) fn rewritten_part_file(
                 .map(|new_voice| {
                     old_voices
                         .iter()
-                        .position(|old_voice| old_voice.id() == new_voice.id())
+                        .position(|old_voice| {
+                            old_voice.id()
+                                == duplicate
+                                    .filter(|(destination, _)| *destination == new_voice.id())
+                                    .map_or(new_voice.id(), |(_, source)| source)
+                        })
                         .map(|old_index| old_row[old_index].clone())
                         .unwrap_or_default()
                 })
@@ -1604,6 +1610,51 @@ mod tests {
         project::{create_project, load_project, save_project, Project, Voice, VoiceType},
         seed::Seed,
     };
+
+    #[test]
+    fn detailed_cells_round_trip_through_csv_and_follow_row_edits() {
+        use crate::score_cell::{self, BeatOffset, CellEvent};
+        let root = temp_root("detailed-cells");
+        let mut project = Project::new("test", 100, 0, Seed::new(1)).with_voices(vec![Voice::new(
+            1,
+            "lead",
+            VoiceType::Sin,
+        )]);
+        let directory = create_project(&root, &project).unwrap();
+        let part = add_part(&directory, &mut project, "intro", 2);
+        let events = [(-24, "C4"), (0, "D4"), (48, "E4")].map(|(p, n)| {
+            CellEvent::from_fields(
+                project.pitch_system(),
+                BeatOffset::from_ticks(p).unwrap(),
+                n,
+                "1/4",
+                "80",
+            )
+            .unwrap()
+            .unwrap()
+        });
+        let value = score_cell::encode(&events);
+        let score = PartScore::from_rows(vec![vec![String::new()], vec![value.clone()]]);
+        score.save(&directory, &part, &project).unwrap();
+        assert_eq!(
+            PartScore::load(&directory, &part, project.voices()).unwrap(),
+            score
+        );
+        let inserted = score
+            .edited_rows(
+                PartRowEdit::InsertBefore(ScoreRowIndex::new(0, 2).unwrap()),
+                1,
+            )
+            .unwrap();
+        assert_eq!(inserted.rows()[2][0], value);
+        assert_eq!(
+            score_cell::parse(project.pitch_system(), &inserted.rows()[2][0]).unwrap()[0]
+                .offset
+                .ticks(),
+            -24
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn csv_filenames_are_derived_from_part_names() {

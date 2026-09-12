@@ -2,6 +2,34 @@ use serde::Deserialize;
 
 use crate::{acoustics::Point3Meters, voice_name::VoiceName};
 
+/// Percentage of the recorded onset to skip: 0 is natural, 100 is immediate.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct AttackSharpness(u8);
+impl AttackSharpness {
+    pub fn new(value: u8) -> Result<Self, &'static str> {
+        if value <= 100 {
+            Ok(Self(value))
+        } else {
+            Err("attack sharpness must be between 0 and 100")
+        }
+    }
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+impl TryFrom<u8> for AttackSharpness {
+    type Error = &'static str;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+impl From<AttackSharpness> for u8 {
+    fn from(value: AttackSharpness) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VoiceId(u64);
 
@@ -29,6 +57,7 @@ pub struct Voice {
     pub voice_type: VoiceType,
     position: Point3Meters,
     volume_adjustment: Option<VoiceVolumeAdjustment>,
+    attack_sharpness: AttackSharpness,
 }
 
 impl Voice {
@@ -39,6 +68,15 @@ impl Voice {
             voice_type,
             position: Point3Meters::origin(),
             volume_adjustment: None,
+            attack_sharpness: AttackSharpness::default(),
+        }
+    }
+
+    pub(crate) fn duplicate_as(&self, id: VoiceId, name: VoiceName) -> Self {
+        Self {
+            id,
+            name,
+            ..self.clone()
         }
     }
 
@@ -57,6 +95,14 @@ impl Voice {
 
     pub const fn volume_adjustment(&self) -> Option<VoiceVolumeAdjustment> {
         self.volume_adjustment
+    }
+
+    pub const fn attack_sharpness(&self) -> AttackSharpness {
+        self.attack_sharpness
+    }
+    pub fn with_attack_sharpness(mut self, attack: AttackSharpness) -> Self {
+        self.attack_sharpness = attack;
+        self
     }
 
     pub const fn details(&self) -> VoiceDetails {
@@ -130,6 +176,10 @@ pub enum VoiceType {
     HarmonicSaw,
     GamelanMetallophone,
     Clarinet,
+    VscoCello,
+    VscoFlute,
+    VscoClarinet,
+    VscoHarp,
     NoitechBellA,
     NoitechBellB,
     NoitechBellG,
@@ -161,12 +211,16 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 35] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::GamelanMetallophone,
         Self::Clarinet,
+        Self::VscoCello,
+        Self::VscoFlute,
+        Self::VscoClarinet,
+        Self::VscoHarp,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -195,12 +249,16 @@ impl VoiceType {
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 28] = [
+    pub(crate) const BUILT_IN: [Self; 32] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
         Self::GamelanMetallophone,
         Self::Clarinet,
+        Self::VscoCello,
+        Self::VscoFlute,
+        Self::VscoClarinet,
+        Self::VscoHarp,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -232,6 +290,10 @@ impl VoiceType {
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic saw",
             Self::Clarinet => "clarinet",
+            Self::VscoCello => "VSCO cello section",
+            Self::VscoFlute => "VSCO flute",
+            Self::VscoClarinet => "VSCO clarinet",
+            Self::VscoHarp => "VSCO harp",
             Self::GamelanMetallophone => "gamelan metallophone",
             Self::NoitechBellA => "Noitech Bell A",
             Self::NoitechBellB => "Noitech Bell B",
@@ -268,6 +330,10 @@ impl VoiceType {
             Self::Saw => "saw",
             Self::HarmonicSaw => "harmonic-saw",
             Self::Clarinet => "clarinet",
+            Self::VscoCello => "vsco-cello",
+            Self::VscoFlute => "vsco-flute",
+            Self::VscoClarinet => "vsco-clarinet",
+            Self::VscoHarp => "vsco-harp",
             Self::GamelanMetallophone => "gamelan-metallophone",
             Self::NoitechBellA => "noitech-bell-a",
             Self::NoitechBellB => "noitech-bell-b",
@@ -296,6 +362,13 @@ impl VoiceType {
             Self::SurgeXtDistortedElectricGuitar => "surge-xt-distorted-electric-guitar",
             Self::SurgeXtClarinet => "surge-xt-clarinet",
         }
+    }
+
+    pub(crate) const fn uses_vsco(self) -> bool {
+        matches!(
+            self,
+            Self::VscoCello | Self::VscoFlute | Self::VscoClarinet | Self::VscoHarp
+        )
     }
 
     pub(crate) const fn uses_surge_xt(self) -> bool {
@@ -346,6 +419,26 @@ impl VoiceType {
                 description: "A band-limited additive saw assembled from sine harmonics.",
                 source: "Ahess built-in voice",
                 fidelity: "Native Ahess implementation.",
+            },
+            Self::VscoCello => VoiceDetails {
+                description: "A recorded cello section with vibrato and looped sustains.",
+                source: "Versilian Studios / Sam Gossner — VSCO 2 Community Edition (CC0)",
+                fidelity: "Bundled mono samples with custom tuning and a seeded random blend of two neighboring recordings per note. One dynamic layer; note volume controls gain. Natural pitch movement remains. No external plugin required.",
+            },
+            Self::VscoFlute => VoiceDetails {
+                description: "A recorded solo flute with non-vibrato, looped sustains.",
+                source: "Versilian Studios / Sam Gossner — VSCO 2 Community Edition (CC0)",
+                fidelity: "Bundled mono samples with custom tuning and a seeded random blend of two neighboring recordings per note. One dynamic layer; note volume controls gain. Natural pitch movement remains. No external plugin required.",
+            },
+            Self::VscoClarinet => VoiceDetails {
+                description: "A recorded solo clarinet with looped sustains.",
+                source: "Versilian Studios / Sam Gossner — VSCO 2 Community Edition (CC0)",
+                fidelity: "Bundled mono samples with custom tuning and a seeded random blend of two neighboring recordings per note. One dynamic layer; note volume controls gain. Natural pitch movement remains. No external plugin required.",
+            },
+            Self::VscoHarp => VoiceDetails {
+                description: "A recorded harp with natural, overlapping plucked decays.",
+                source: "Versilian Studios / Sam Gossner — VSCO 2 Community Edition (CC0)",
+                fidelity: "Bundled mono samples with custom tuning and a seeded random blend of two neighboring recordings per note. One dynamic layer; note volume controls gain. Natural pitch movement remains. No external plugin required.",
             },
             Self::Clarinet => VoiceDetails {
                 description: "A native clarinet with a nonlinear reed, resonant air column, shaped body resonances, breathy articulation, and repeatable breath expression.",

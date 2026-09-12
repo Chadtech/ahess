@@ -17,6 +17,7 @@ struct DragSelection {
     original: BTreeSet<usize>,
 }
 pub struct MultiSelectionList {
+    row_prefix: &'static str,
     rows: Vec<Row>,
     selected: BTreeSet<usize>,
     drag: Option<DragSelection>,
@@ -33,6 +34,7 @@ impl MultiSelectionList {
             .filter(|index| *index < labels.len())
             .collect();
         Self {
+            row_prefix: "multi-selection-row",
             rows: labels
                 .into_iter()
                 .map(|label| Row {
@@ -43,6 +45,10 @@ impl MultiSelectionList {
             selected,
             drag: None,
         }
+    }
+    pub fn with_row_prefix(mut self, prefix: &'static str) -> Self {
+        self.row_prefix = prefix;
+        self
     }
     pub fn sync_rows(
         &mut self,
@@ -116,10 +122,11 @@ impl Render for MultiSelectionList {
             .iter()
             .enumerate()
             .map(|(index, row)| {
+                let prefix = self.row_prefix;
                 gpui::div().child(
                     selection_list::row(index, self.selected.contains(&index), row.label.clone())
-                        .id(SharedString::from(format!("multi-selection-row-{index}")))
-                        .debug_selector(move || format!("multi-selection-row-{index}"))
+                        .id(SharedString::from(format!("{prefix}-{index}")))
+                        .debug_selector(move || format!("{prefix}-{index}"))
                         .track_focus(&row.focus)
                         .focus(|style| style.border(s::BORDER_WIDTH).border_color(s::GRAY5))
                         .on_mouse_down(
