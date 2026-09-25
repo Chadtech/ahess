@@ -180,6 +180,7 @@ pub enum VoiceType {
     VscoFlute,
     VscoClarinet,
     VscoHarp,
+    CleanGuitar,
     NoitechBellA,
     NoitechBellB,
     NoitechBellG,
@@ -211,7 +212,7 @@ pub enum VoiceType {
 }
 
 impl VoiceType {
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 36] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
@@ -221,6 +222,7 @@ impl VoiceType {
         Self::VscoFlute,
         Self::VscoClarinet,
         Self::VscoHarp,
+        Self::CleanGuitar,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -249,7 +251,7 @@ impl VoiceType {
         Self::SurgeXtClarinet,
     ];
     #[cfg(test)]
-    pub(crate) const BUILT_IN: [Self; 32] = [
+    pub(crate) const BUILT_IN: [Self; 33] = [
         Self::Sin,
         Self::Saw,
         Self::HarmonicSaw,
@@ -259,6 +261,7 @@ impl VoiceType {
         Self::VscoFlute,
         Self::VscoClarinet,
         Self::VscoHarp,
+        Self::CleanGuitar,
         Self::NoitechBellA,
         Self::NoitechBellB,
         Self::NoitechBellG,
@@ -294,6 +297,7 @@ impl VoiceType {
             Self::VscoFlute => "VSCO flute",
             Self::VscoClarinet => "VSCO clarinet",
             Self::VscoHarp => "VSCO harp",
+            Self::CleanGuitar => "clean electric guitar",
             Self::GamelanMetallophone => "gamelan metallophone",
             Self::NoitechBellA => "Noitech Bell A",
             Self::NoitechBellB => "Noitech Bell B",
@@ -334,6 +338,7 @@ impl VoiceType {
             Self::VscoFlute => "vsco-flute",
             Self::VscoClarinet => "vsco-clarinet",
             Self::VscoHarp => "vsco-harp",
+            Self::CleanGuitar => "clean-guitar",
             Self::GamelanMetallophone => "gamelan-metallophone",
             Self::NoitechBellA => "noitech-bell-a",
             Self::NoitechBellB => "noitech-bell-b",
@@ -419,6 +424,11 @@ impl VoiceType {
                 description: "A band-limited additive saw assembled from sine harmonics.",
                 source: "Ahess built-in voice",
                 fidelity: "Native Ahess implementation.",
+            },
+            Self::CleanGuitar => VoiceDetails {
+                description: "A real clean hollowbody guitar with a pronounced pick attack and ringing string decay.",
+                source: "Brian Wood / Karoryfer — Black And Green Guitars, Gretsch Anniversary (CC0)",
+                fidelity: "Embedded recordings at eleven pitches, two pick strengths and two takes each. Exact custom tuning; score volume selects medium or firm picking. Natural decay, explicit-duration damping. No plugin required. Extreme transpositions alter timbre and decay; chords follow authored note timing.",
             },
             Self::VscoCello => VoiceDetails {
                 description: "A recorded cello section with vibrato and looped sustains.",

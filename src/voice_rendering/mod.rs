@@ -9,3 +9,6 @@ pub(crate) mod recovered_voice;
 #[cfg(target_os = "macos")]
 pub(crate) mod surge_xt;
 pub(crate) mod vsco;
+
+pub(crate) mod clean_guitar;
+mod sampled_note;

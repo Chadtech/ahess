@@ -55,7 +55,7 @@ impl SurgeXtPatch {
         match self {
             Self::GrandPiano => Ok(()),
             Self::DistortedElectricGuitar => remove_distorted_guitar_reverb(chunk),
-            Self::Clarinet => Ok(()),
+            Self::Clarinet => zero_clarinet_vibrato_tremolo(chunk),
         }
     }
 }
@@ -323,6 +323,32 @@ fn fxp_chunk<'a>(fxp: &'a [u8], patch_name: &str) -> Result<&'a [u8], SurgeXtErr
             ))
         })?;
     Ok(&fxp[FXP_HEADER_BYTES..end])
+}
+
+fn zero_clarinet_vibrato_tremolo(chunk: &mut [u8]) -> Result<(), SurgeXtError> {
+    // Change only the installed preset's macro value, keeping the chunk length
+    // and its modulation routing intact. The factory file remains untouched.
+    const CONTROL: &[u8] =
+        br#"<entry i="4" bipolar="0" v="0.22834645211697" label="Vibrato Tremolo" />"#;
+    const ZERO: &[u8] =
+        br#"<entry i="4" bipolar="0" v="0.00000000000000" label="Vibrato Tremolo" />"#;
+
+    let mut matches = chunk
+        .windows(CONTROL.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == CONTROL).then_some(offset));
+    let Some(offset) = matches.next() else {
+        return Err(SurgeXtError::new(
+            "Surge XT Clarinet patch does not contain its expected Vibrato Tremolo control",
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(SurgeXtError::new(
+            "Surge XT Clarinet patch contains more than one expected Vibrato Tremolo control",
+        ));
+    }
+    chunk[offset..offset + ZERO.len()].copy_from_slice(ZERO);
+    Ok(())
 }
 
 fn remove_distorted_guitar_reverb(chunk: &mut [u8]) -> Result<(), SurgeXtError> {

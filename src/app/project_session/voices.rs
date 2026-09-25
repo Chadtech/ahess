@@ -1023,7 +1023,7 @@ mod tests {
     #[test]
     fn voice_type_search_is_case_insensitive_and_matches_all_terms() {
         assert_eq!(
-            matching_voice_types("XT guitar").collect::<Vec<_>>(),
+            matching_voice_types("sUrGe XT guitar").collect::<Vec<_>>(),
             vec![VoiceType::SurgeXtDistortedElectricGuitar]
         );
         assert_eq!(
@@ -1118,6 +1118,44 @@ mod tests {
             (VoiceType::VscoClarinet, "voice-type-vsco-clarinet"),
             (VoiceType::VscoHarp, "voice-type-vsco-harp"),
         ] {
+            let bounds = cx.debug_bounds(selector).unwrap();
+            assert!(bounds.bottom() <= px(800.0));
+            cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::default());
+            workspace.read_with(cx, |workspace, _| {
+                let View::Add {
+                    voice_type_picker, ..
+                } = &workspace.view
+                else {
+                    unreachable!()
+                };
+                assert_eq!(voice_type_picker.selected, kind);
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn clean_guitar_is_visible_and_selectable_in_the_existing_picker(cx: &mut TestAppContext) {
+        let (workspace, cx) = cx.add_window_view(move |_, cx| {
+            VoicesWorkspace::new(Vec::new(), AcousticScene::default(), cx)
+        });
+        cx.simulate_resize(size(px(800.0), px(800.0)));
+        workspace.update(cx, |workspace, cx| {
+            workspace.view = VoicesWorkspace::add_view(&workspace.acoustic_scene, cx);
+            let View::Add {
+                voice_type_picker, ..
+            } = &workspace.view
+            else {
+                unreachable!()
+            };
+            voice_type_picker.search.update(cx, |search, cx| {
+                search.sync_value("clean electric guitar", cx)
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("voice-type-sin").is_none());
+        for (kind, selector) in [(VoiceType::CleanGuitar, "voice-type-clean-guitar")] {
             let bounds = cx.debug_bounds(selector).unwrap();
             assert!(bounds.bottom() <= px(800.0));
             cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::default());

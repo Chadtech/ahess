@@ -1,0 +1,2290 @@
+[
+  {
+    "path": "Samples/green/ord/twang_e3_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "4ac79b812c093fa457a4463cea434cfbf8fdd6e1",
+    "size": 943712,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/4ac79b812c093fa457a4463cea434cfbf8fdd6e1",
+    "midi": 40,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 83.04682168682083,
+    "pitch_spread_cents": 1.1621562566046948,
+    "trimmed_frames": 325,
+    "gain": 1.8697034782758755,
+    "levels": [
+      {
+        "file": "guitar-40-firm-1-0.pcm",
+        "frames": 314219,
+        "sha256": "93a68f3c95d02b7649d912fb5905a7d4a4d052db7fc49608d718fe635a0e058b"
+      },
+      {
+        "file": "guitar-40-firm-1-1.pcm",
+        "frames": 157110,
+        "sha256": "0a8b1a533a4b5fea58dd89f0a67208927971594e7d560b771f3ee0da262cad90"
+      },
+      {
+        "file": "guitar-40-firm-1-2.pcm",
+        "frames": 78555,
+        "sha256": "7ab21d27bdb24b4c779c0defd93499a509785c69b87488b17f30b1528ac7c5a2"
+      },
+      {
+        "file": "guitar-40-firm-1-3.pcm",
+        "frames": 39278,
+        "sha256": "a56ec353c3a30da5aa8bb516f1d4afb9357cf3e122ec8291e311712866a8a2b4"
+      },
+      {
+        "file": "guitar-40-firm-1-4.pcm",
+        "frames": 19639,
+        "sha256": "6b9ca49ed9337756cab6e07c4f50b591de9eb25dbfc847060b7506063aaed589"
+      },
+      {
+        "file": "guitar-40-firm-1-5.pcm",
+        "frames": 9820,
+        "sha256": "71c39834fa5ab388ebcd6cc883ad25be0ed3502048a30f39426288aaee8b06bd"
+      },
+      {
+        "file": "guitar-40-firm-1-6.pcm",
+        "frames": 4910,
+        "sha256": "c393fb16fc19c5f88aee3fe9e8e1145ed7525000fc168841decd657b70d9859b"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e3_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "d0f992b662066aeb1fb64504153ee8732f06ee9a",
+    "size": 877898,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/d0f992b662066aeb1fb64504153ee8732f06ee9a",
+    "midi": 40,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 83.01762597459009,
+    "pitch_spread_cents": 1.023131272339718,
+    "trimmed_frames": 133,
+    "gain": 1.9219799642018904,
+    "levels": [
+      {
+        "file": "guitar-40-firm-2-0.pcm",
+        "frames": 292473,
+        "sha256": "d0d79ef6d6209519f6576b62a6aa64afe80deac83ed2af38e8b34c6f6f56983c"
+      },
+      {
+        "file": "guitar-40-firm-2-1.pcm",
+        "frames": 146237,
+        "sha256": "5db274425c984d36cf21d964677e77be63da0a7137f06bc63d77c08ee586da1a"
+      },
+      {
+        "file": "guitar-40-firm-2-2.pcm",
+        "frames": 73119,
+        "sha256": "9ffefc2bede7c45d9ce229ff7e89a6cca58c33de28234d4076d26f4677f9085a"
+      },
+      {
+        "file": "guitar-40-firm-2-3.pcm",
+        "frames": 36560,
+        "sha256": "478d33ebd85a9a1a32b6c061ffecd73429bedadfa702b808e0313771295e78d6"
+      },
+      {
+        "file": "guitar-40-firm-2-4.pcm",
+        "frames": 18280,
+        "sha256": "306ae6c2f9f554a6455e51a816991fa5e2ada146ae2f0a73af1ffe551a471f19"
+      },
+      {
+        "file": "guitar-40-firm-2-5.pcm",
+        "frames": 9140,
+        "sha256": "bea1173ba08e4d2b5a166ae5592f1c959f90817a06170b010d847f7054c43c4f"
+      },
+      {
+        "file": "guitar-40-firm-2-6.pcm",
+        "frames": 4570,
+        "sha256": "3fd3dfe0b883496bc1b377fd29f81e394fd6d2cbe5783c7ad4c8691f87b5e5c9"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e3_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "624691b675f495816d2cf55e1b846c5158ab3924",
+    "size": 637898,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/624691b675f495816d2cf55e1b846c5158ab3924",
+    "midi": 40,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 82.79100955705974,
+    "pitch_spread_cents": 0.41838311468779116,
+    "trimmed_frames": 0,
+    "gain": 4.686350973154949,
+    "levels": [
+      {
+        "file": "guitar-40-medium-1-0.pcm",
+        "frames": 212606,
+        "sha256": "c606abd453805469991f7cdee842286c653f64aa4bb2d067859eb137acc19877"
+      },
+      {
+        "file": "guitar-40-medium-1-1.pcm",
+        "frames": 106303,
+        "sha256": "a5e822c1116798c16549cb6d18f55834f5a58234343c884ca3c1450ecbb29e24"
+      },
+      {
+        "file": "guitar-40-medium-1-2.pcm",
+        "frames": 53152,
+        "sha256": "c159751fa59f75b08181fe5c5052d23f1f101f6265a26cd9f9c77990b2f1c562"
+      },
+      {
+        "file": "guitar-40-medium-1-3.pcm",
+        "frames": 26576,
+        "sha256": "b730d8c9e04a4aa0cab06c2ec2949411bd25e67ee2aaa8813a24a73c1e169831"
+      },
+      {
+        "file": "guitar-40-medium-1-4.pcm",
+        "frames": 13288,
+        "sha256": "a95e98233f6e1c4957e5b10a60f981ff020e06eea63acd861d2836be9bd19754"
+      },
+      {
+        "file": "guitar-40-medium-1-5.pcm",
+        "frames": 6644,
+        "sha256": "4dd83dd1030578868247c2712f1184f28cb912a94a7fe6c47730cc81f0e531e0"
+      },
+      {
+        "file": "guitar-40-medium-1-6.pcm",
+        "frames": 3322,
+        "sha256": "fccd6442ab6d78507f118d9d2695ffb691cf99e2e414645db00aada8f0a3e461"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e3_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "8723ba68d1ff2eb52af5e5f3a90183a832951542",
+    "size": 643164,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/8723ba68d1ff2eb52af5e5f3a90183a832951542",
+    "midi": 40,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 82.76883323313282,
+    "pitch_spread_cents": 0.406653387873212,
+    "trimmed_frames": 0,
+    "gain": 4.47811631662374,
+    "levels": [
+      {
+        "file": "guitar-40-medium-2-0.pcm",
+        "frames": 214361,
+        "sha256": "abc3ed1231a945c95487b6f16e2d008b370f637d0d29d4a0fa15dcf761807d90"
+      },
+      {
+        "file": "guitar-40-medium-2-1.pcm",
+        "frames": 107181,
+        "sha256": "7f6cb76f11a49406c95e272e77899fdfc535e4d6a3713315f123112601b55b66"
+      },
+      {
+        "file": "guitar-40-medium-2-2.pcm",
+        "frames": 53591,
+        "sha256": "d17529e78c56e79f4c3652c12d214fe9ff46327881d1054c10bca79f5178481b"
+      },
+      {
+        "file": "guitar-40-medium-2-3.pcm",
+        "frames": 26796,
+        "sha256": "09b5c8380617bce3886f038512919ef40d84cf2b92e490374887783171384151"
+      },
+      {
+        "file": "guitar-40-medium-2-4.pcm",
+        "frames": 13398,
+        "sha256": "c037266c21782dd637984fe23f01458cb6880410235ad756d4d5dbfb336d742a"
+      },
+      {
+        "file": "guitar-40-medium-2-5.pcm",
+        "frames": 6699,
+        "sha256": "0bfe8c345ad332fab24e32963ff633b82e5ce7dcfe5352abc90a9c4f52f763db"
+      },
+      {
+        "file": "guitar-40-medium-2-6.pcm",
+        "frames": 3350,
+        "sha256": "3cd1f63851201298bcba8e454210fb8df40cf3126da66657a2b0f4209245d1ce"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab3_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "743e0895a36fdcf5d22c69020f6326103d127bef",
+    "size": 743778,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/743e0895a36fdcf5d22c69020f6326103d127bef",
+    "midi": 44,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 104.8173749238695,
+    "pitch_spread_cents": 1.5181073317216884,
+    "trimmed_frames": 0,
+    "gain": 2.1343110893450814,
+    "levels": [
+      {
+        "file": "guitar-44-firm-1-0.pcm",
+        "frames": 247899,
+        "sha256": "d265d0a5df5765f2f90b483ea97acec763e8b8f2f91317b50d0dec85086e89cb"
+      },
+      {
+        "file": "guitar-44-firm-1-1.pcm",
+        "frames": 123950,
+        "sha256": "53e6fc84f5cd46cbaf27354b7e8fc928b90f5d6f30a496c36a14ba8f76df73d7"
+      },
+      {
+        "file": "guitar-44-firm-1-2.pcm",
+        "frames": 61975,
+        "sha256": "2077a6718f5a86d42feafd0bb40237dba49599f124a94c00eaae82787b83cf04"
+      },
+      {
+        "file": "guitar-44-firm-1-3.pcm",
+        "frames": 30988,
+        "sha256": "4c40489943c5c8a46c12d4911b2b3172e3602f988bb624bed4d95a1abcd1ac6f"
+      },
+      {
+        "file": "guitar-44-firm-1-4.pcm",
+        "frames": 15494,
+        "sha256": "b89942f3075ad6824db9682ad83b0655e01acf0262fd6605a017db6f2ab7fc64"
+      },
+      {
+        "file": "guitar-44-firm-1-5.pcm",
+        "frames": 7747,
+        "sha256": "99d1e5bc65af1ba012980870b0e5a4018b63c98920aaa56ff8cfb287cb89e029"
+      },
+      {
+        "file": "guitar-44-firm-1-6.pcm",
+        "frames": 3874,
+        "sha256": "f838eef7b5d49faaca917facbfe11a3925b073d9a37d570277c2773583769b5d"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab3_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "3e0d711a0f7b6e29b6b7e4f2ca28bc6d8b5782ea",
+    "size": 743868,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/3e0d711a0f7b6e29b6b7e4f2ca28bc6d8b5782ea",
+    "midi": 44,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 104.7246122244009,
+    "pitch_spread_cents": 1.511125708974696,
+    "trimmed_frames": 282,
+    "gain": 2.3654164374256905,
+    "levels": [
+      {
+        "file": "guitar-44-firm-2-0.pcm",
+        "frames": 247647,
+        "sha256": "5f09974380c26bff1eea669f2c883e677e2b1fdf594c8e4137ea3e2022b9d715"
+      },
+      {
+        "file": "guitar-44-firm-2-1.pcm",
+        "frames": 123824,
+        "sha256": "82c2a9c43f54d53756b3d97153b91eb2e223204aaf9ac1d3692442f079e6531b"
+      },
+      {
+        "file": "guitar-44-firm-2-2.pcm",
+        "frames": 61912,
+        "sha256": "6144429be26de80f240f411a9705ab74a90434ef6be748439874bd99dd2d4438"
+      },
+      {
+        "file": "guitar-44-firm-2-3.pcm",
+        "frames": 30956,
+        "sha256": "6dd72d965e966d91240d880fb3ec095d85ce16e453424a5675a574abaf87a043"
+      },
+      {
+        "file": "guitar-44-firm-2-4.pcm",
+        "frames": 15478,
+        "sha256": "4881417cb82bc99713cccf989e41a162c2d61d27390f8f91c00666c89aaef000"
+      },
+      {
+        "file": "guitar-44-firm-2-5.pcm",
+        "frames": 7739,
+        "sha256": "1ebe438c79e63a49e544c6c4da17907f8337395095a706ea7669d4a3964a3113"
+      },
+      {
+        "file": "guitar-44-firm-2-6.pcm",
+        "frames": 3870,
+        "sha256": "3aa236931270d9d4f8e6f9c94ac1c58ea68e8b254430eba4661bbd48eebb9d4f"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab3_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "b414d7430e13283ae051fbf8a4cf66b97e56a397",
+    "size": 700250,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/b414d7430e13283ae051fbf8a4cf66b97e56a397",
+    "midi": 44,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 104.73399154732488,
+    "pitch_spread_cents": 0.8224518972371897,
+    "trimmed_frames": 108,
+    "gain": 5.551877532715174,
+    "levels": [
+      {
+        "file": "guitar-44-medium-1-0.pcm",
+        "frames": 233282,
+        "sha256": "923514ebd48acc6ffd0e667a99c14fd009642ec49fafc38468ff2beb1b6780e0"
+      },
+      {
+        "file": "guitar-44-medium-1-1.pcm",
+        "frames": 116641,
+        "sha256": "27383077340801ebefb30ffde7993504ec411ed2ae7da4e854a59579e66dfb7d"
+      },
+      {
+        "file": "guitar-44-medium-1-2.pcm",
+        "frames": 58321,
+        "sha256": "81c585f4b146b3c8af3031240f29afeda83678b78134157257535ac275c832fb"
+      },
+      {
+        "file": "guitar-44-medium-1-3.pcm",
+        "frames": 29161,
+        "sha256": "bb44a555309a93e7c7491bb2f910ce0d3143fd87cb41ad09098278a76b6d0f86"
+      },
+      {
+        "file": "guitar-44-medium-1-4.pcm",
+        "frames": 14581,
+        "sha256": "facf0e8b10d689c116f4c89840325a0b43c74d56917e5065e526ed52f966dea5"
+      },
+      {
+        "file": "guitar-44-medium-1-5.pcm",
+        "frames": 7291,
+        "sha256": "031080a85e67d17ba32de87b9ee9f9916f3133486d3237372dc80107c55b021a"
+      },
+      {
+        "file": "guitar-44-medium-1-6.pcm",
+        "frames": 3646,
+        "sha256": "70e7ca01b4fd94df33987c70fc5956287c9dde86ae3bb69ca6d825d6adc167ec"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab3_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "fe4cdb89a25b9bc15fb05c19dee6fb81248b737f",
+    "size": 688554,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/fe4cdb89a25b9bc15fb05c19dee6fb81248b737f",
+    "midi": 44,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 104.71947725765332,
+    "pitch_spread_cents": 0.9133414132641264,
+    "trimmed_frames": 378,
+    "gain": 5.7640014761279605,
+    "levels": [
+      {
+        "file": "guitar-44-medium-2-0.pcm",
+        "frames": 229113,
+        "sha256": "8968d35123ccf2c30fe49967be202e008b16d0057969de90725afb193a37fe9d"
+      },
+      {
+        "file": "guitar-44-medium-2-1.pcm",
+        "frames": 114557,
+        "sha256": "7e8166fead4a4204eb085cb0623f0901aadd4d42e4175645186d48b1f0f38324"
+      },
+      {
+        "file": "guitar-44-medium-2-2.pcm",
+        "frames": 57279,
+        "sha256": "3064e0723716bb90bc9988941ea697c1a99fd3b5549e81f3ca2a34a8da067267"
+      },
+      {
+        "file": "guitar-44-medium-2-3.pcm",
+        "frames": 28640,
+        "sha256": "58583ba462e17c80a9cfe5df64757babc786ec2dacb77a46a4adc95968281314"
+      },
+      {
+        "file": "guitar-44-medium-2-4.pcm",
+        "frames": 14320,
+        "sha256": "70ed0d3d1cb60ae3582c2a9578a76e58b95a288d23891421a2d98dc10324fa82"
+      },
+      {
+        "file": "guitar-44-medium-2-5.pcm",
+        "frames": 7160,
+        "sha256": "cd884df1800922584013cd248ca32209fbb0f7a3d46ee2d397a3dc897829816c"
+      },
+      {
+        "file": "guitar-44-medium-2-6.pcm",
+        "frames": 3580,
+        "sha256": "a34ae729ad942ad7958fed0a22a21715d6394b264661f1ad41f2c75e5026e4ca"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c4_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "133f02d8d53937cc72e08862ab9bf0e5cb0b1ab7",
+    "size": 837162,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/133f02d8d53937cc72e08862ab9bf0e5cb0b1ab7",
+    "midi": 48,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 131.56629776406945,
+    "pitch_spread_cents": 0.7028514385923058,
+    "trimmed_frames": 150,
+    "gain": 2.095191213829944,
+    "levels": [
+      {
+        "file": "guitar-48-firm-1-0.pcm",
+        "frames": 278877,
+        "sha256": "b9144e876180c243503e150654c874551ed46af10ce00e24dfcb013a785da923"
+      },
+      {
+        "file": "guitar-48-firm-1-1.pcm",
+        "frames": 139439,
+        "sha256": "782a69add85caac1091c2c874f757a6ad0786c19fe1726fffbcf9190c5743693"
+      },
+      {
+        "file": "guitar-48-firm-1-2.pcm",
+        "frames": 69720,
+        "sha256": "e729b80b4971514fc884c9dba42fc7da77a42a1939ed3404fe8503ec1f88b3df"
+      },
+      {
+        "file": "guitar-48-firm-1-3.pcm",
+        "frames": 34860,
+        "sha256": "ec80a1f3a90216b357890c226ff00ee19644ca1ea7a47e47311e11394fccaaa2"
+      },
+      {
+        "file": "guitar-48-firm-1-4.pcm",
+        "frames": 17430,
+        "sha256": "aee2ae76ad907337ed148054f850a4c5e3fd318ce0acfdad59c49ac66db823a3"
+      },
+      {
+        "file": "guitar-48-firm-1-5.pcm",
+        "frames": 8715,
+        "sha256": "8206f6191d398182d4e81e69639015454a2847ca88b664c609ce64cbae6afd0d"
+      },
+      {
+        "file": "guitar-48-firm-1-6.pcm",
+        "frames": 4358,
+        "sha256": "c5020753645423402cb41cab11925b7804ff2aee9d6671d4033c20bb8dd58423"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c4_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "c949bf7e156f7a63be6fc25295d6a728abe37182",
+    "size": 788486,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/c949bf7e156f7a63be6fc25295d6a728abe37182",
+    "midi": 48,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 131.58469206378717,
+    "pitch_spread_cents": 0.721278248430505,
+    "trimmed_frames": 498,
+    "gain": 2.094011385090704,
+    "levels": [
+      {
+        "file": "guitar-48-firm-2-0.pcm",
+        "frames": 262304,
+        "sha256": "87fafc1560fd82d64de568a66641ea9a556e9abce28b04d1f1cfa5e090044a1a"
+      },
+      {
+        "file": "guitar-48-firm-2-1.pcm",
+        "frames": 131152,
+        "sha256": "0143971786fd5ea42eeace60c939508439d306b6e2bfb388d89ffc4d886c9449"
+      },
+      {
+        "file": "guitar-48-firm-2-2.pcm",
+        "frames": 65576,
+        "sha256": "99d90cc5505a10b1e538b46fc7b437cc0a31323acc872fdef7e54fce387b869f"
+      },
+      {
+        "file": "guitar-48-firm-2-3.pcm",
+        "frames": 32788,
+        "sha256": "28661031d1b35ad7c1de9ec1ad96f8067c3bc2440fdf73c665f47483f2907e46"
+      },
+      {
+        "file": "guitar-48-firm-2-4.pcm",
+        "frames": 16394,
+        "sha256": "da680090d5d9d211f0388561ef899494e332c11729d074939fbf10de2a723d2d"
+      },
+      {
+        "file": "guitar-48-firm-2-5.pcm",
+        "frames": 8197,
+        "sha256": "95baea81e9b652d6ef671953aee0fe0ce244a1889904a95d20f667237866df6c"
+      },
+      {
+        "file": "guitar-48-firm-2-6.pcm",
+        "frames": 4099,
+        "sha256": "65963d11f92f5095efb3ed76deed71b27d8136392425c829d17f82ec85ffde5e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c4_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "efdba6a6b45ef06bdc4138335a1334be323f1a10",
+    "size": 628568,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/efdba6a6b45ef06bdc4138335a1334be323f1a10",
+    "midi": 48,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 131.49214621406236,
+    "pitch_spread_cents": 0.6461347554733711,
+    "trimmed_frames": 616,
+    "gain": 5.802578066442031,
+    "levels": [
+      {
+        "file": "guitar-48-medium-1-0.pcm",
+        "frames": 208880,
+        "sha256": "df3b50b71f30a73495b4b6bd102feee9e7f7347c0d7772bcaee0c1b02b1f0aa5"
+      },
+      {
+        "file": "guitar-48-medium-1-1.pcm",
+        "frames": 104440,
+        "sha256": "9bbdbb36e1cc22bb8bfe0c40adc9e2a60fafe24457fe6b7ea0b94df41a759534"
+      },
+      {
+        "file": "guitar-48-medium-1-2.pcm",
+        "frames": 52220,
+        "sha256": "50d71a2661bc56826acd0c6c0d30c874c8beef82fd593b2a1d6c7915249fe498"
+      },
+      {
+        "file": "guitar-48-medium-1-3.pcm",
+        "frames": 26110,
+        "sha256": "f973e87ae2085f0598da5de3132d0a364e88eeca2b77b6ac2e33a5e5cd8ccd83"
+      },
+      {
+        "file": "guitar-48-medium-1-4.pcm",
+        "frames": 13055,
+        "sha256": "b61c27baadffc19f8e385fbe6827ecb20fb64694ea38643800ba093b8522c6f6"
+      },
+      {
+        "file": "guitar-48-medium-1-5.pcm",
+        "frames": 6528,
+        "sha256": "e0ff46e772969603be92319f5acaa9a401cc61e4ffd3c62468ac224df08e425b"
+      },
+      {
+        "file": "guitar-48-medium-1-6.pcm",
+        "frames": 3264,
+        "sha256": "972f975a3883b765cce646a2db80d2364ea691489e0f4f8dc2d9e240627f7451"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c4_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "89b41647004ba5742679534736606ab835822553",
+    "size": 684380,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/89b41647004ba5742679534736606ab835822553",
+    "midi": 48,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 131.5283044583582,
+    "pitch_spread_cents": 0.559537495513826,
+    "trimmed_frames": 425,
+    "gain": 5.204027915496812,
+    "levels": [
+      {
+        "file": "guitar-48-medium-2-0.pcm",
+        "frames": 227675,
+        "sha256": "130501f00732a9f2dd2eb33ba111176bb8bd83712891e15dcc917a72f1180766"
+      },
+      {
+        "file": "guitar-48-medium-2-1.pcm",
+        "frames": 113838,
+        "sha256": "9949679b6ac16089536d32e9b850c8cedb3a3daef33d5b3e2c4aa544c49ddf9d"
+      },
+      {
+        "file": "guitar-48-medium-2-2.pcm",
+        "frames": 56919,
+        "sha256": "ccc3b36fdbf89128239aa16ffc797ff20227051aa0e88e63f7d1977c3954a35c"
+      },
+      {
+        "file": "guitar-48-medium-2-3.pcm",
+        "frames": 28460,
+        "sha256": "e8d708539c9657e5ebdb2bde6afeffcca79bd5ff71d174033cb1a21d1a732162"
+      },
+      {
+        "file": "guitar-48-medium-2-4.pcm",
+        "frames": 14230,
+        "sha256": "ac667ab84867f48614f8f3cfa8eb6f9892d332e348bbf1887e93934470fc9967"
+      },
+      {
+        "file": "guitar-48-medium-2-5.pcm",
+        "frames": 7115,
+        "sha256": "5ec727213905f2026acc8f2f366de01c9608f68393fd9a8ff3104687045d0d75"
+      },
+      {
+        "file": "guitar-48-medium-2-6.pcm",
+        "frames": 3558,
+        "sha256": "f867eacc5dfeda5d9e9134ed3a0391051869721e7ff40571f44b65877713694e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e4_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "4bc1ce94eede66da0ae87ed19ba08216c05e9daa",
+    "size": 876062,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/4bc1ce94eede66da0ae87ed19ba08216c05e9daa",
+    "midi": 52,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 165.89384215282803,
+    "pitch_spread_cents": 0.698888061383208,
+    "trimmed_frames": 890,
+    "gain": 3.8094235255070994,
+    "levels": [
+      {
+        "file": "guitar-52-firm-1-0.pcm",
+        "frames": 291104,
+        "sha256": "d6e3c5de844095826782cff2d7d231b1f129667960d193c97c53f76053df0d9a"
+      },
+      {
+        "file": "guitar-52-firm-1-1.pcm",
+        "frames": 145552,
+        "sha256": "2a4bd503853e70f8908fe9bf8a81102f18f7bf7331ec66ac04bdf55cd5493037"
+      },
+      {
+        "file": "guitar-52-firm-1-2.pcm",
+        "frames": 72776,
+        "sha256": "e8e14b029616b707d01900ffdcb00e4baa90daee5003df55dbf9bfd7757e91b9"
+      },
+      {
+        "file": "guitar-52-firm-1-3.pcm",
+        "frames": 36388,
+        "sha256": "0b803d6c65558b1fd32d3cb8946b3dea939d01bc87edf5eb9e2c95a30f7ff12b"
+      },
+      {
+        "file": "guitar-52-firm-1-4.pcm",
+        "frames": 18194,
+        "sha256": "9026c63c5f277cd9f0ddb4c04c90121bc8ba669126372a4383077c5cba8cda1b"
+      },
+      {
+        "file": "guitar-52-firm-1-5.pcm",
+        "frames": 9097,
+        "sha256": "dae79ca77ca07dc1e3a0f855755cec26363e50abf269e1ce1dff232c2c0cffe9"
+      },
+      {
+        "file": "guitar-52-firm-1-6.pcm",
+        "frames": 4549,
+        "sha256": "33925fc40cf6356c81368174ff2a55f66a89de6e27f8b34595b28bebc83efe45"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e4_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "9d7a8a9057234a2473ae2bb5eeef4af38b8804f7",
+    "size": 870440,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/9d7a8a9057234a2473ae2bb5eeef4af38b8804f7",
+    "midi": 52,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 165.84840780599933,
+    "pitch_spread_cents": 0.6372177798253243,
+    "trimmed_frames": 809,
+    "gain": 3.2851996125173124,
+    "levels": [
+      {
+        "file": "guitar-52-firm-2-0.pcm",
+        "frames": 289311,
+        "sha256": "0b5c70b995c98d3aad70ad67fda7857ebd2c4c542ffad0852b53d46f82bbe053"
+      },
+      {
+        "file": "guitar-52-firm-2-1.pcm",
+        "frames": 144656,
+        "sha256": "a21d4ebd7bef139e01a70d6e10b590063666cf3d65f45413cc83e2d71b2613b5"
+      },
+      {
+        "file": "guitar-52-firm-2-2.pcm",
+        "frames": 72328,
+        "sha256": "9fb8705a8c118ab4b43969c225fd815a0698ce9e19590c8e11c7332a8d881c81"
+      },
+      {
+        "file": "guitar-52-firm-2-3.pcm",
+        "frames": 36164,
+        "sha256": "ce1a049687bd3a685a5511b1fe9b24c1fd5a2e13682c7051501c9b0fea9ee26d"
+      },
+      {
+        "file": "guitar-52-firm-2-4.pcm",
+        "frames": 18082,
+        "sha256": "01986e3be6c038fd8a081890867d15ea64a21101ab3e4de182685ea77c52b724"
+      },
+      {
+        "file": "guitar-52-firm-2-5.pcm",
+        "frames": 9041,
+        "sha256": "e6c8f5badcc0755c9d6df93f1aa4eb60e38e2d7840a1fd94c3284f7131c76cd8"
+      },
+      {
+        "file": "guitar-52-firm-2-6.pcm",
+        "frames": 4521,
+        "sha256": "e0a7e7a0e283fa6f7388a61602945af11a29c1c2c0619f378f56abf214d347f5"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e4_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "470dbbce0b4838e9c4a5407d20c433b3fd6c4420",
+    "size": 784362,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/470dbbce0b4838e9c4a5407d20c433b3fd6c4420",
+    "midi": 52,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 165.7827607833562,
+    "pitch_spread_cents": 0.2985976717339066,
+    "trimmed_frames": 594,
+    "gain": 9.4403049450912,
+    "levels": [
+      {
+        "file": "guitar-52-medium-1-0.pcm",
+        "frames": 260833,
+        "sha256": "37a5f96f20d750fa06a2721ffe9e104413ec8d646c430689d011b1a2d960432d"
+      },
+      {
+        "file": "guitar-52-medium-1-1.pcm",
+        "frames": 130417,
+        "sha256": "fdcd6336d339382d945d947271e2486e6feacd5f641962408ef8628291ae2626"
+      },
+      {
+        "file": "guitar-52-medium-1-2.pcm",
+        "frames": 65209,
+        "sha256": "8abf1bd7c9ac68bc0813ef48a5591c1a8adbb64c03eeceda61805ba327f7aacc"
+      },
+      {
+        "file": "guitar-52-medium-1-3.pcm",
+        "frames": 32605,
+        "sha256": "dd7f218f7eab641ba30bf053f02cb9e9a57fd25c8e8ebd7ed6ff8acc8c83ad8d"
+      },
+      {
+        "file": "guitar-52-medium-1-4.pcm",
+        "frames": 16303,
+        "sha256": "7898b307c45cd9a1b7589854548aa5165c47794cacbe8b11420f9d9da1d354b9"
+      },
+      {
+        "file": "guitar-52-medium-1-5.pcm",
+        "frames": 8152,
+        "sha256": "58463e92b0f46ac01b89f2793519be66e5b86532486dd3c7c257167394d23fab"
+      },
+      {
+        "file": "guitar-52-medium-1-6.pcm",
+        "frames": 4076,
+        "sha256": "fc95722e420ab9a50aff8f90af9915ae02cc452f6b0fc826365682b27c9404ae"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e4_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "93d7f9de7e48fe137e8327a762424d286781b26d",
+    "size": 792518,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/93d7f9de7e48fe137e8327a762424d286781b26d",
+    "midi": 52,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 165.68315162880896,
+    "pitch_spread_cents": 0.36914101346827394,
+    "trimmed_frames": 705,
+    "gain": 9.664728214009047,
+    "levels": [
+      {
+        "file": "guitar-52-medium-2-0.pcm",
+        "frames": 263441,
+        "sha256": "87a0db1ccfa2e8efe4ef926d32e274f800ffa5e0fd4e8caf1bccd270bcb8c012"
+      },
+      {
+        "file": "guitar-52-medium-2-1.pcm",
+        "frames": 131721,
+        "sha256": "a0f51e5a2d29b5db74efc9aa89221d407af9bc70073faa55a66bef3787f3d47d"
+      },
+      {
+        "file": "guitar-52-medium-2-2.pcm",
+        "frames": 65861,
+        "sha256": "5db2c23845d69e3a6efcd8b41fbbf4c146de2862b5957beae84843bcd6751ac0"
+      },
+      {
+        "file": "guitar-52-medium-2-3.pcm",
+        "frames": 32931,
+        "sha256": "3257fdffe01aebd63efea5874d28f560baf5eccbacdc57da13f14bfc45572169"
+      },
+      {
+        "file": "guitar-52-medium-2-4.pcm",
+        "frames": 16466,
+        "sha256": "32a9a18c431b7b21bbb64f6ace0baf0db699caf648bf2d6d1a45dc5edece6915"
+      },
+      {
+        "file": "guitar-52-medium-2-5.pcm",
+        "frames": 8233,
+        "sha256": "c115eec1c1921f802c4f6f61c9ab25e905753c3ed7e81aa5512380451f87f6c6"
+      },
+      {
+        "file": "guitar-52-medium-2-6.pcm",
+        "frames": 4117,
+        "sha256": "8ac820dad7f20152d6502a5828f96fa818f459f1e5ae493b8446e009d9fe4615"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab4_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "cb05392cc8359f97f3eaaa1f1b4fb1b209e003aa",
+    "size": 817628,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/cb05392cc8359f97f3eaaa1f1b4fb1b209e003aa",
+    "midi": 56,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 209.82869400465114,
+    "pitch_spread_cents": 1.6596958537397333,
+    "trimmed_frames": 876,
+    "gain": 2.668297951099906,
+    "levels": [
+      {
+        "file": "guitar-56-firm-1-0.pcm",
+        "frames": 271640,
+        "sha256": "053cc0543ca3585fc2657a3a5bb996aba80933163ec1290d1e7b54b963e333d6"
+      },
+      {
+        "file": "guitar-56-firm-1-1.pcm",
+        "frames": 135820,
+        "sha256": "b271584b52d34e47c6eab866b639d6e662d3a8fd1badbfdfd7b2a0245857583a"
+      },
+      {
+        "file": "guitar-56-firm-1-2.pcm",
+        "frames": 67910,
+        "sha256": "607db19146296bc2b657216284543a9b2446d947590def459e6308ea705746b8"
+      },
+      {
+        "file": "guitar-56-firm-1-3.pcm",
+        "frames": 33955,
+        "sha256": "7ccd4032f2306a270acb38eee385092641853c5b4ca6e30702fd88f8aa9950f3"
+      },
+      {
+        "file": "guitar-56-firm-1-4.pcm",
+        "frames": 16978,
+        "sha256": "1a25125d0541c9436cca188868c6dea070744aa68d1154e5d4f91d835c36915a"
+      },
+      {
+        "file": "guitar-56-firm-1-5.pcm",
+        "frames": 8489,
+        "sha256": "493e7c137ed10e063b3c8575f4459d6e70ea422a6573197f78954f8143b8d6cc"
+      },
+      {
+        "file": "guitar-56-firm-1-6.pcm",
+        "frames": 4245,
+        "sha256": "7dfd30aa2dde7c228e174a03727cd1e7efe01e43924db6abf6afe7a9d647d217"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab4_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "d4138910960ae931fa79f5949715eec763223b92",
+    "size": 950868,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/d4138910960ae931fa79f5949715eec763223b92",
+    "midi": 56,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 209.44321317502158,
+    "pitch_spread_cents": 1.042134045328805,
+    "trimmed_frames": 853,
+    "gain": 2.2922779331687724,
+    "levels": [
+      {
+        "file": "guitar-56-firm-2-0.pcm",
+        "frames": 316076,
+        "sha256": "228428b373999c668728dae8920ac83cf8fdbdbffa2e587a76582ea2bf487008"
+      },
+      {
+        "file": "guitar-56-firm-2-1.pcm",
+        "frames": 158038,
+        "sha256": "1e35c0bc046373ac7ad3cedc51dc7387c44392e5693b077868702b3890e351d9"
+      },
+      {
+        "file": "guitar-56-firm-2-2.pcm",
+        "frames": 79019,
+        "sha256": "a16fb22a4c47b8d72b1df773066dffc8e5a07b2b5d681da6a2add5fed117c338"
+      },
+      {
+        "file": "guitar-56-firm-2-3.pcm",
+        "frames": 39510,
+        "sha256": "b950c1d61f82799fa8c9d969ca149d4c2887db916a97e16d8cadc0613add8ae7"
+      },
+      {
+        "file": "guitar-56-firm-2-4.pcm",
+        "frames": 19755,
+        "sha256": "d88892bda2ba7a495d676465a44c95bd183e43e76ff6777e2a8bb21611b6d921"
+      },
+      {
+        "file": "guitar-56-firm-2-5.pcm",
+        "frames": 9878,
+        "sha256": "55538d6fbf1360eeb682ab16f3789e6e011823f4e0cd3d7af3134d80baedc9ea"
+      },
+      {
+        "file": "guitar-56-firm-2-6.pcm",
+        "frames": 4939,
+        "sha256": "fba42bfd02e0e0657b5680db2f34af26f4a4ce36932c5416ff3abf7965282076"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab4_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "b1e4bc158d4cc64d0b0ccc25b67693a41e504f3a",
+    "size": 710124,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/b1e4bc158d4cc64d0b0ccc25b67693a41e504f3a",
+    "midi": 56,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 209.20756760562088,
+    "pitch_spread_cents": 0.4701535889917212,
+    "trimmed_frames": 573,
+    "gain": 9.840825798945513,
+    "levels": [
+      {
+        "file": "guitar-56-medium-1-0.pcm",
+        "frames": 236108,
+        "sha256": "b274b29afb909c32b05af37825969e5e894e3a92d041303a9e0f4b175386f3a5"
+      },
+      {
+        "file": "guitar-56-medium-1-1.pcm",
+        "frames": 118054,
+        "sha256": "06e39fb38eb428c3c0f17fe1a7b6fc44f5e611ab3e5623b6c4e33cb8c6b424f5"
+      },
+      {
+        "file": "guitar-56-medium-1-2.pcm",
+        "frames": 59027,
+        "sha256": "e9c76628b843c5e73c26ad90413585a2b035651cdc4857497cd4844ce7c4a171"
+      },
+      {
+        "file": "guitar-56-medium-1-3.pcm",
+        "frames": 29514,
+        "sha256": "4fdc9670c2f35c5fcb4f3c35e2e422f7cc1767088efc4a798c4414a969a44cbf"
+      },
+      {
+        "file": "guitar-56-medium-1-4.pcm",
+        "frames": 14757,
+        "sha256": "282092ff74485ed08fe7531ab7e4a59917d8fd821fd18495e209e26ab330706b"
+      },
+      {
+        "file": "guitar-56-medium-1-5.pcm",
+        "frames": 7379,
+        "sha256": "d5d357ce70dc3f34a92a4fd99e738b9ef0cf5c31cdbf85d1e165327f99ae528e"
+      },
+      {
+        "file": "guitar-56-medium-1-6.pcm",
+        "frames": 3690,
+        "sha256": "8444acaacb20e2c0c100c9f8146961959be69fc71245d9be52dd5edfbe62a138"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab4_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "08ac7fb2ac5549e7a9cacb348c0c35ac6d9b0da4",
+    "size": 659456,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/08ac7fb2ac5549e7a9cacb348c0c35ac6d9b0da4",
+    "midi": 56,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 209.26667679667608,
+    "pitch_spread_cents": 0.48424999117199313,
+    "trimmed_frames": 604,
+    "gain": 8.595346181610312,
+    "levels": [
+      {
+        "file": "guitar-56-medium-2-0.pcm",
+        "frames": 219188,
+        "sha256": "5c6fc70113562aeaaa6d725677a55c2c59f21d69b12fbac0989153805116baef"
+      },
+      {
+        "file": "guitar-56-medium-2-1.pcm",
+        "frames": 109594,
+        "sha256": "09cd1aa00ee4ae71ab9bd49627d962708ce4c3d2fc34b3e4f30e9215c450736e"
+      },
+      {
+        "file": "guitar-56-medium-2-2.pcm",
+        "frames": 54797,
+        "sha256": "59f8a384137427fd233a1ebc3e27eac3b01ef3f5c3edcecf3b36c2da720b02bb"
+      },
+      {
+        "file": "guitar-56-medium-2-3.pcm",
+        "frames": 27399,
+        "sha256": "0e3bd277a5d3afdb792e81d502044ddfedf8f369786625187cf22b07d937ebda"
+      },
+      {
+        "file": "guitar-56-medium-2-4.pcm",
+        "frames": 13700,
+        "sha256": "4d9f45919ed18f62a39a3e1f16ccb10eb8f092c908a03e84284e6c16dd92c6b3"
+      },
+      {
+        "file": "guitar-56-medium-2-5.pcm",
+        "frames": 6850,
+        "sha256": "3adcdf316beadaf4f10648845de7133e4724eed3bb13a22347fdad68c74bc581"
+      },
+      {
+        "file": "guitar-56-medium-2-6.pcm",
+        "frames": 3425,
+        "sha256": "49f2b292366adb0d14a476a8572bfff4159f222ef9d25cf4ae1c2f52e0892b4e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c5_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "c84717f14a1dde0693dea758068073e81f183023",
+    "size": 753558,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/c84717f14a1dde0693dea758068073e81f183023",
+    "midi": 60,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 263.3375606210024,
+    "pitch_spread_cents": 0.8651253465631438,
+    "trimmed_frames": 919,
+    "gain": 3.471094887123961,
+    "levels": [
+      {
+        "file": "guitar-60-firm-1-0.pcm",
+        "frames": 250240,
+        "sha256": "2834686f5992a94b4506a4f750d79ba5fc9cab29ea6ae5e072dd521eea2c6e9e"
+      },
+      {
+        "file": "guitar-60-firm-1-1.pcm",
+        "frames": 125120,
+        "sha256": "194e5ca30dc8712ce1c2579f70b2c61aab5369ddefcee0c18858cb025f8587df"
+      },
+      {
+        "file": "guitar-60-firm-1-2.pcm",
+        "frames": 62560,
+        "sha256": "78954a832e715ebc1bbae451242031e5843f2e3c54a719f0f1c3849300cdb465"
+      },
+      {
+        "file": "guitar-60-firm-1-3.pcm",
+        "frames": 31280,
+        "sha256": "56bc098de63f71c9f9957bf77399c9397e3daf87ff80cc6400ea9da63310729a"
+      },
+      {
+        "file": "guitar-60-firm-1-4.pcm",
+        "frames": 15640,
+        "sha256": "e6c87864f364aa737be9e64563809349a3e7345af25464bbb88dd355af90ae60"
+      },
+      {
+        "file": "guitar-60-firm-1-5.pcm",
+        "frames": 7820,
+        "sha256": "2cf85fa61e0ec977f971007097efb2df210f5e9d8e81b737213b98252e3e8e57"
+      },
+      {
+        "file": "guitar-60-firm-1-6.pcm",
+        "frames": 3910,
+        "sha256": "07ed28afd7dfcfad381447f0c8e63232101eba68e2e1461f79d19495eaf94f35"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c5_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "f967dc0114331781288d16dff93cedda8e7240fb",
+    "size": 848904,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/f967dc0114331781288d16dff93cedda8e7240fb",
+    "midi": 60,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 263.10494218783305,
+    "pitch_spread_cents": 0.679177560031424,
+    "trimmed_frames": 882,
+    "gain": 3.227700995852585,
+    "levels": [
+      {
+        "file": "guitar-60-firm-2-0.pcm",
+        "frames": 282059,
+        "sha256": "749d172cc164670533f9d627fed9a0b22ec5f7328cf5ed36bb54cf753c6daa4b"
+      },
+      {
+        "file": "guitar-60-firm-2-1.pcm",
+        "frames": 141030,
+        "sha256": "b47b3babc69dea89f50de0ea0d09732f5defdfb40e67962aef04253891f2114d"
+      },
+      {
+        "file": "guitar-60-firm-2-2.pcm",
+        "frames": 70515,
+        "sha256": "a331ba6518994fd85395de11d1ee01a4d4f5e1ecc0ee17c695b70d23502f6a53"
+      },
+      {
+        "file": "guitar-60-firm-2-3.pcm",
+        "frames": 35258,
+        "sha256": "9e3623cf528203da04b9956f0b22527a91dfd430721e948d84d57c019c7640b9"
+      },
+      {
+        "file": "guitar-60-firm-2-4.pcm",
+        "frames": 17629,
+        "sha256": "1fc5a19f998268aacc96a82feadd7046a7c357a0049a7cb381ea56f47ff65c59"
+      },
+      {
+        "file": "guitar-60-firm-2-5.pcm",
+        "frames": 8815,
+        "sha256": "8151d4bd92d4b450df2f738862f2dde48da6a7524226c5401ddd8754019a26f0"
+      },
+      {
+        "file": "guitar-60-firm-2-6.pcm",
+        "frames": 4408,
+        "sha256": "2e2124f5b95a19c94a92d852e124175302784b42ed72d5677072a50c7d0c9a3e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c5_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "69d5527c80da2f9e3f3d3e290e5f38ec41c4196f",
+    "size": 642674,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/69d5527c80da2f9e3f3d3e290e5f38ec41c4196f",
+    "midi": 60,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 262.8491444520594,
+    "pitch_spread_cents": 0.10311499032963248,
+    "trimmed_frames": 603,
+    "gain": 15.762870204214813,
+    "levels": [
+      {
+        "file": "guitar-60-medium-1-0.pcm",
+        "frames": 213595,
+        "sha256": "1a8e871bebb201e737a368117a2370c53fc5f29755d7bb00c8853212ae8f65ff"
+      },
+      {
+        "file": "guitar-60-medium-1-1.pcm",
+        "frames": 106798,
+        "sha256": "2e9e636b3cbcc24b9903f0e14f075098b1868b346708d1924d9a65f63b58aed8"
+      },
+      {
+        "file": "guitar-60-medium-1-2.pcm",
+        "frames": 53399,
+        "sha256": "d707783404ad6eb5c69a7dc6fbf51bb96c4cf83f624f5504ba6a19229c613144"
+      },
+      {
+        "file": "guitar-60-medium-1-3.pcm",
+        "frames": 26700,
+        "sha256": "a36acb9bf32f9536396d83cd61204b48cd64b54b42849faede0acec4b2b0089a"
+      },
+      {
+        "file": "guitar-60-medium-1-4.pcm",
+        "frames": 13350,
+        "sha256": "b018f822d79f151cb4088d4d37df8b5c7e2351609a5f7524bb3ad802d337b86f"
+      },
+      {
+        "file": "guitar-60-medium-1-5.pcm",
+        "frames": 6675,
+        "sha256": "e135e9106aa8262efdbc56ef5b1bdb0a141afd4a4db05162bacf65a4078593f1"
+      },
+      {
+        "file": "guitar-60-medium-1-6.pcm",
+        "frames": 3338,
+        "sha256": "76e1618e34cecd1ea533f682f0f658780d9e2fc6c8723bd3761a1d0524273aa7"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c5_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "40e88107b8e9647c9f86a4eac1987706913bd525",
+    "size": 665876,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/40e88107b8e9647c9f86a4eac1987706913bd525",
+    "midi": 60,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 262.9219123908153,
+    "pitch_spread_cents": 0.1425786897586232,
+    "trimmed_frames": 399,
+    "gain": 12.111662243070246,
+    "levels": [
+      {
+        "file": "guitar-60-medium-2-0.pcm",
+        "frames": 221533,
+        "sha256": "827330511be42a50a7ccc30ddb41e6894678df50c02650ece275a6c481db632f"
+      },
+      {
+        "file": "guitar-60-medium-2-1.pcm",
+        "frames": 110767,
+        "sha256": "ff9f3bf691cde9d892ddb2eb8617a11c5d72d48ef15199f6209b89fabca43fad"
+      },
+      {
+        "file": "guitar-60-medium-2-2.pcm",
+        "frames": 55384,
+        "sha256": "c57e188097c6e6f325256380ed8a0fdff8e6c8fb969718ac45bd898fe5667362"
+      },
+      {
+        "file": "guitar-60-medium-2-3.pcm",
+        "frames": 27692,
+        "sha256": "02944f54a8e43cddece1bb5c0857e48c204ecfb832aca7b950c5ca0b2fd76ae6"
+      },
+      {
+        "file": "guitar-60-medium-2-4.pcm",
+        "frames": 13846,
+        "sha256": "6f2afa731e6e2e89d07195f6a0939d22b0fa9d8f5738a152bd70267c087666d5"
+      },
+      {
+        "file": "guitar-60-medium-2-5.pcm",
+        "frames": 6923,
+        "sha256": "0dc2217c9683973a500cbebd982fb0fd6df04d857ab8a639033498db4917d17b"
+      },
+      {
+        "file": "guitar-60-medium-2-6.pcm",
+        "frames": 3462,
+        "sha256": "926851197d10a62295c5b91059ce7808a04096e2a40f75c0e4305b58993322bc"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e5_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "577823ab04dc2eabab537dffb878348630e8a507",
+    "size": 947576,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/577823ab04dc2eabab537dffb878348630e8a507",
+    "midi": 64,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 330.58771381832327,
+    "pitch_spread_cents": 0.5640750015263566,
+    "trimmed_frames": 248,
+    "gain": 5.940172837043236,
+    "levels": [
+      {
+        "file": "guitar-64-firm-1-0.pcm",
+        "frames": 315584,
+        "sha256": "a1e278c9cf19120609665b86ee65e44940e7badfe6c36215dfe14c7d8d377e88"
+      },
+      {
+        "file": "guitar-64-firm-1-1.pcm",
+        "frames": 157792,
+        "sha256": "49e21793bee16e36ba6ffd110dc5a451de9a558cbdfa3a2cfb0f75c8ebd247bb"
+      },
+      {
+        "file": "guitar-64-firm-1-2.pcm",
+        "frames": 78896,
+        "sha256": "ba77c509f13a24200e30a03ce0c1918f08f752d1d66df4178fbd4f8fe60280bd"
+      },
+      {
+        "file": "guitar-64-firm-1-3.pcm",
+        "frames": 39448,
+        "sha256": "880fbace6cbfe22e7229af6101086a5859a6d7cc285400c54044d1c7dc2d6204"
+      },
+      {
+        "file": "guitar-64-firm-1-4.pcm",
+        "frames": 19724,
+        "sha256": "9af1a2134494d3c2b9f29c6a82afc93383d0b60da0bfdf13633d1b27329d756d"
+      },
+      {
+        "file": "guitar-64-firm-1-5.pcm",
+        "frames": 9862,
+        "sha256": "8b87b138d29ff5d704e247e27764fe307610c99936c2018c6f011b0795cf9fc5"
+      },
+      {
+        "file": "guitar-64-firm-1-6.pcm",
+        "frames": 4931,
+        "sha256": "e4e3908e98a29f21522cccf74ba9b20fa3616d2db8fc404cabd398863d82602c"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e5_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "0f44338381141e396b152120f3eb4dbc1d59f913",
+    "size": 876134,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/0f44338381141e396b152120f3eb4dbc1d59f913",
+    "midi": 64,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 330.67928760441174,
+    "pitch_spread_cents": 0.48975211381653044,
+    "trimmed_frames": 1022,
+    "gain": 6.079724351309653,
+    "levels": [
+      {
+        "file": "guitar-64-firm-2-0.pcm",
+        "frames": 290996,
+        "sha256": "e34aa6c31528cc888dc9153131a5784effe0268fa0f9aca28dfb4ffec3aa3135"
+      },
+      {
+        "file": "guitar-64-firm-2-1.pcm",
+        "frames": 145498,
+        "sha256": "25b02a17a2812882e9027f274d687faac803d616e397db1f966943f290d885e8"
+      },
+      {
+        "file": "guitar-64-firm-2-2.pcm",
+        "frames": 72749,
+        "sha256": "723cc3f0140f5c243d62bd20123af1a394809a1c8f2f8e14613250ccfc3c5222"
+      },
+      {
+        "file": "guitar-64-firm-2-3.pcm",
+        "frames": 36375,
+        "sha256": "0f5f23fce0d488b41d547829ca6f1e00cff41e69530164cd8a74fcfbe0778211"
+      },
+      {
+        "file": "guitar-64-firm-2-4.pcm",
+        "frames": 18188,
+        "sha256": "84bf727f5ccc239d047a954f54cf3dccd720e5afc725fcc3a03a69fee485e994"
+      },
+      {
+        "file": "guitar-64-firm-2-5.pcm",
+        "frames": 9094,
+        "sha256": "eb958e67837c0514c0453f2ab5a6e649723ace5824f2a45f84a2d953f284265e"
+      },
+      {
+        "file": "guitar-64-firm-2-6.pcm",
+        "frames": 4547,
+        "sha256": "816d87db713321c595cfccc64b489f2ef23d3f56b7fa78efc9ad761d79df4f76"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e5_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "124a0adfafec7db8cf6ec05fad549c71b9faec61",
+    "size": 678110,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/124a0adfafec7db8cf6ec05fad549c71b9faec61",
+    "midi": 64,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 330.47837408924,
+    "pitch_spread_cents": 0.14881194592301591,
+    "trimmed_frames": 494,
+    "gain": 17.330412109673762,
+    "levels": [
+      {
+        "file": "guitar-64-medium-1-0.pcm",
+        "frames": 225516,
+        "sha256": "990fb826adc6b978a9a356cda62247efba4fe3fdfb2ae5417a54f62f80532929"
+      },
+      {
+        "file": "guitar-64-medium-1-1.pcm",
+        "frames": 112758,
+        "sha256": "b20aae5e06d30d46e360b0a6f66fde98c3a6713f78dfed9c127866991986d9ba"
+      },
+      {
+        "file": "guitar-64-medium-1-2.pcm",
+        "frames": 56379,
+        "sha256": "c0f103dea278a5e4df72f8cfe6bc29abe1034cce8a7235c6aeb8a9653d204d2b"
+      },
+      {
+        "file": "guitar-64-medium-1-3.pcm",
+        "frames": 28190,
+        "sha256": "6e1bb5d117c6cf5fe483d492528bf3b694e839fcd792504639966f406454773f"
+      },
+      {
+        "file": "guitar-64-medium-1-4.pcm",
+        "frames": 14095,
+        "sha256": "2567d16ee8cf26e8929fff3fd58bc277fc8ec13058f36a0e1f05e3db29d101da"
+      },
+      {
+        "file": "guitar-64-medium-1-5.pcm",
+        "frames": 7048,
+        "sha256": "a4d395eebc5c3c1c8d31ac535e4b49515d573e5796fc75982f53cf8504ddcb85"
+      },
+      {
+        "file": "guitar-64-medium-1-6.pcm",
+        "frames": 3524,
+        "sha256": "3b1e33887b1288f07062aeeb0552d8b0cd7a20b2ff0c817a4a3ef841da95122c"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e5_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "768c543cfdebefd9026f57e4ef00533a435a41e6",
+    "size": 627938,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/768c543cfdebefd9026f57e4ef00533a435a41e6",
+    "midi": 64,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 330.6617581534955,
+    "pitch_spread_cents": 0.1272635870548855,
+    "trimmed_frames": 600,
+    "gain": 15.347489904893001,
+    "levels": [
+      {
+        "file": "guitar-64-medium-2-0.pcm",
+        "frames": 208686,
+        "sha256": "36e13e58dff523985ee0ad4cbbf1d94e9b34fc4e5843579c23dc259b837a69bb"
+      },
+      {
+        "file": "guitar-64-medium-2-1.pcm",
+        "frames": 104343,
+        "sha256": "0122cbac91aff4226fdacf1e61e9f214c06dd502c701146d52936006c274b4eb"
+      },
+      {
+        "file": "guitar-64-medium-2-2.pcm",
+        "frames": 52172,
+        "sha256": "dafb613c2a32071d3f7c7ac1318d3401842d140059811f6fb482f485367f211d"
+      },
+      {
+        "file": "guitar-64-medium-2-3.pcm",
+        "frames": 26086,
+        "sha256": "2d40c9eaf91d8e154f7274af54483e71fc46eaf94539b56279e5ce86a96da267"
+      },
+      {
+        "file": "guitar-64-medium-2-4.pcm",
+        "frames": 13043,
+        "sha256": "80c8036f3b34b6a20ade2c22f0456d1a1691a6730cfc2e709ceeaf7ee12c6058"
+      },
+      {
+        "file": "guitar-64-medium-2-5.pcm",
+        "frames": 6522,
+        "sha256": "a655a3137a181f05d4ce5256b61458525392c7cfbac4e248a2fb2df2c4858ea3"
+      },
+      {
+        "file": "guitar-64-medium-2-6.pcm",
+        "frames": 3261,
+        "sha256": "6bb92ccc050f9aff4b1c56613db18f072c9e8586f1ccccedfb538184aa95f361"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab5_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "2066423183ca480ff67c17a8fcc892a0bf61b14c",
+    "size": 780134,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/2066423183ca480ff67c17a8fcc892a0bf61b14c",
+    "midi": 68,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 416.21846664474987,
+    "pitch_spread_cents": 0.27459328103257885,
+    "trimmed_frames": 636,
+    "gain": 4.04743269352588,
+    "levels": [
+      {
+        "file": "guitar-68-firm-1-0.pcm",
+        "frames": 259382,
+        "sha256": "62c0217cd7ff75846907ca899ba8f389986665137f2ab919b8dc7341ad29ecb1"
+      },
+      {
+        "file": "guitar-68-firm-1-1.pcm",
+        "frames": 129691,
+        "sha256": "bff9f71ab90873753b22683712b4461a453a09b74e970ea634f3f855aab008f1"
+      },
+      {
+        "file": "guitar-68-firm-1-2.pcm",
+        "frames": 64846,
+        "sha256": "fc90c75dcf8f4b75080fecc66419c5755eef561db0500e8e06a581f7c4c49f5d"
+      },
+      {
+        "file": "guitar-68-firm-1-3.pcm",
+        "frames": 32423,
+        "sha256": "5ccfd8f097b1d8bc624bad6f6be7d94ce22f480096794703d6ae5a514a6540ec"
+      },
+      {
+        "file": "guitar-68-firm-1-4.pcm",
+        "frames": 16212,
+        "sha256": "0357bfc9316f18d1973c922e1a2f1a7cfcf3fa09caa961620738784b51068d2c"
+      },
+      {
+        "file": "guitar-68-firm-1-5.pcm",
+        "frames": 8106,
+        "sha256": "83e8dbe86902f65c3622b80ca4e788209205425bf9e17694a99df8dfe022e62b"
+      },
+      {
+        "file": "guitar-68-firm-1-6.pcm",
+        "frames": 4053,
+        "sha256": "31de0177f9014ad07d61a31c2afe4cd75bc6b4afdfdc23099ca6e784e812f466"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab5_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "b7f1f1588e2afe954b91ee7959204fa8059b9cea",
+    "size": 720768,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/b7f1f1588e2afe954b91ee7959204fa8059b9cea",
+    "midi": 68,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 416.15061675139947,
+    "pitch_spread_cents": 0.2277700992150919,
+    "trimmed_frames": 635,
+    "gain": 3.971654488042013,
+    "levels": [
+      {
+        "file": "guitar-68-firm-2-0.pcm",
+        "frames": 239594,
+        "sha256": "3971c11a2542e10c67f4f0d25484ae9c0999a5756b8671c3bc9a26a358e6626f"
+      },
+      {
+        "file": "guitar-68-firm-2-1.pcm",
+        "frames": 119797,
+        "sha256": "e33a09008d7bf2302a8d390b01aa4f7f028c60db6f0285f4fdaa10f9c1bd41e1"
+      },
+      {
+        "file": "guitar-68-firm-2-2.pcm",
+        "frames": 59899,
+        "sha256": "d7b41efcc26c26e5556f52477726cc250e4d7cc523ba6fa7da4f6398b56ff563"
+      },
+      {
+        "file": "guitar-68-firm-2-3.pcm",
+        "frames": 29950,
+        "sha256": "b91a75e4ff1091756af572da33ab839a8ab6d1c49d612a85fbad619f900f3849"
+      },
+      {
+        "file": "guitar-68-firm-2-4.pcm",
+        "frames": 14975,
+        "sha256": "30cb22b083890e9f2bedd8ad6a7825f84a7093029b25e8955830008931b404aa"
+      },
+      {
+        "file": "guitar-68-firm-2-5.pcm",
+        "frames": 7488,
+        "sha256": "659eb7545fcb7b8d2b9458db2b11b605b7a93ac6185202e22c4efd5544e906a8"
+      },
+      {
+        "file": "guitar-68-firm-2-6.pcm",
+        "frames": 3744,
+        "sha256": "0a45a606a94f820a030400554fdc88d60e9d5547290c5d8c4d63b06e9ea16e81"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab5_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "eed5b81b1ce29e12ed4e94b88535b9c5360f358d",
+    "size": 612834,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/eed5b81b1ce29e12ed4e94b88535b9c5360f358d",
+    "midi": 68,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 416.1537059277011,
+    "pitch_spread_cents": 0.06622230774847249,
+    "trimmed_frames": 620,
+    "gain": 17.476286227123516,
+    "levels": [
+      {
+        "file": "guitar-68-medium-1-0.pcm",
+        "frames": 203631,
+        "sha256": "025806df8cd027aaf0a3917ce1336242fc28b8f2d2cab5f2605041a0fb18c971"
+      },
+      {
+        "file": "guitar-68-medium-1-1.pcm",
+        "frames": 101816,
+        "sha256": "e4f69ce2874c3f4e2ec2fc2242f7ac59c9c25be4eee96059ba601afcc0406ed1"
+      },
+      {
+        "file": "guitar-68-medium-1-2.pcm",
+        "frames": 50908,
+        "sha256": "460207dbc2f1de05725a10828847560fa9c6c3088897df36a243ab02f95d70ec"
+      },
+      {
+        "file": "guitar-68-medium-1-3.pcm",
+        "frames": 25454,
+        "sha256": "c934fce4d7a4b85f57a6edf45db17007088c0ba6ec078d9335f8a197dc11b226"
+      },
+      {
+        "file": "guitar-68-medium-1-4.pcm",
+        "frames": 12727,
+        "sha256": "f24f96436ce55bde26cc42a65cbc28085d731ccb5661c1fee34b1c507a093959"
+      },
+      {
+        "file": "guitar-68-medium-1-5.pcm",
+        "frames": 6364,
+        "sha256": "4682bb67672fb554ab2cb4d5d1e2dd96e3b177a4fa8fd9ddd10f03ee9852edbf"
+      },
+      {
+        "file": "guitar-68-medium-1-6.pcm",
+        "frames": 3182,
+        "sha256": "8cfdf0765e21a321750c43e1f22aba973e1f6405bafd9454f4dcc322d8a0e0af"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab5_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "0abc4ed2b4922540f038fcbda29bb5efeb1f5a93",
+    "size": 572640,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/0abc4ed2b4922540f038fcbda29bb5efeb1f5a93",
+    "midi": 68,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 416.12739715023105,
+    "pitch_spread_cents": 0.06585246355940941,
+    "trimmed_frames": 549,
+    "gain": 20.993220935590568,
+    "levels": [
+      {
+        "file": "guitar-68-medium-2-0.pcm",
+        "frames": 190304,
+        "sha256": "e84636eca97477f7570a56262da45570393fa82cbf47c1bf22f8f9470d5e4257"
+      },
+      {
+        "file": "guitar-68-medium-2-1.pcm",
+        "frames": 95152,
+        "sha256": "a7dd7015319eda85164d34b59868231eed744b49bc548f43156564f2fe78f668"
+      },
+      {
+        "file": "guitar-68-medium-2-2.pcm",
+        "frames": 47576,
+        "sha256": "bf58431302e2a22c2ceee0938f55b8357fc80ba0b23b540e44791a86fa5801ff"
+      },
+      {
+        "file": "guitar-68-medium-2-3.pcm",
+        "frames": 23788,
+        "sha256": "4f2033cc8c347bd261e133b6cc7211623468e0287a7750c87c59383663a40015"
+      },
+      {
+        "file": "guitar-68-medium-2-4.pcm",
+        "frames": 11894,
+        "sha256": "4cb26b30bc1c552b7ac3567af0e19037cb0cad5f854c67c0d7c2486413d2b1c5"
+      },
+      {
+        "file": "guitar-68-medium-2-5.pcm",
+        "frames": 5947,
+        "sha256": "88e7daff97e528512185c6f22d19bcd8dd6ff307c3c274addd2b2c44ce8eef6b"
+      },
+      {
+        "file": "guitar-68-medium-2-6.pcm",
+        "frames": 2974,
+        "sha256": "b21b46ea9040c06fc5d26cd878215422b1630e48dd6eb23afdfcbd0c2642acd9"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c6_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "034bc4f30783bacb610482145f3ed3d1a6b08af2",
+    "size": 668606,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/034bc4f30783bacb610482145f3ed3d1a6b08af2",
+    "midi": 72,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 522.552788055112,
+    "pitch_spread_cents": 0.27206347145008625,
+    "trimmed_frames": 672,
+    "gain": 4.30378902548183,
+    "levels": [
+      {
+        "file": "guitar-72-firm-1-0.pcm",
+        "frames": 222170,
+        "sha256": "dd3b0f7239083b637bd780341e5e526afe520664e7ca22b927e0d92757c8fb15"
+      },
+      {
+        "file": "guitar-72-firm-1-1.pcm",
+        "frames": 111085,
+        "sha256": "f650a7287457d0d8b30a4b12a71c0481d2f0173245d7f89419d5bbbf380eeb52"
+      },
+      {
+        "file": "guitar-72-firm-1-2.pcm",
+        "frames": 55543,
+        "sha256": "50286f9cb306f8e3c2ea061f1be147a63a4f334ee4435a218d17b3a1fa86a981"
+      },
+      {
+        "file": "guitar-72-firm-1-3.pcm",
+        "frames": 27772,
+        "sha256": "54e96f75e129f086c3b86625a200700e34d1849886b8fa059ecc5bb08c1f77f2"
+      },
+      {
+        "file": "guitar-72-firm-1-4.pcm",
+        "frames": 13886,
+        "sha256": "8542cfac108a98144b00379aec21f83aa920db83f690d89a3de4f50f335d7a20"
+      },
+      {
+        "file": "guitar-72-firm-1-5.pcm",
+        "frames": 6943,
+        "sha256": "3c81ab6a1afb2875945599becb52eee6d012e62efb370b09dacd66a75df86c66"
+      },
+      {
+        "file": "guitar-72-firm-1-6.pcm",
+        "frames": 3472,
+        "sha256": "e993ccd34cf22adca4a0c15d8089ff1f1e7c9e6a0029e9ef05a5e86d8879a01e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c6_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "ea055977bf13ccf1cff9a143cd895f9ca81ddb47",
+    "size": 714396,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/ea055977bf13ccf1cff9a143cd895f9ca81ddb47",
+    "midi": 72,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 522.950740906826,
+    "pitch_spread_cents": 0.3372188760947658,
+    "trimmed_frames": 652,
+    "gain": 4.56661525027933,
+    "levels": [
+      {
+        "file": "guitar-72-firm-2-0.pcm",
+        "frames": 237453,
+        "sha256": "b43bf5d5338af472feada185f9b3fdcd6ded085131f8b4155a47b6296a5c9980"
+      },
+      {
+        "file": "guitar-72-firm-2-1.pcm",
+        "frames": 118727,
+        "sha256": "42e5485f3996c67d035690a04b6d40db6a196328b4de9362424920b6070f4aa8"
+      },
+      {
+        "file": "guitar-72-firm-2-2.pcm",
+        "frames": 59364,
+        "sha256": "62d5f86ad4879899729dee8d93df050e4937fdf150a873cd3378787154a312a1"
+      },
+      {
+        "file": "guitar-72-firm-2-3.pcm",
+        "frames": 29682,
+        "sha256": "c25163697de5964b72a139eb91d18a4aa0e1e42b8f1cd3051141d554f4e085fd"
+      },
+      {
+        "file": "guitar-72-firm-2-4.pcm",
+        "frames": 14841,
+        "sha256": "84b8157b82c97c896daebf97c2f3676a7ef368c31e546a01534e5b58a1e7a56b"
+      },
+      {
+        "file": "guitar-72-firm-2-5.pcm",
+        "frames": 7421,
+        "sha256": "ad1a8a64a9e2834f250ff09dfe26e6cd8a663cdf2d0442fa36d57d9bff36950c"
+      },
+      {
+        "file": "guitar-72-firm-2-6.pcm",
+        "frames": 3711,
+        "sha256": "2eb557e33d2ec20fccbba6682772d2b050fb584ab2abc885b7fc670c3ed3b91e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c6_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "f88a651c94415e691945b336e6fd8188e8f5fcfc",
+    "size": 607994,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/f88a651c94415e691945b336e6fd8188e8f5fcfc",
+    "midi": 72,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 522.9383083807971,
+    "pitch_spread_cents": 0.1306285030586438,
+    "trimmed_frames": 635,
+    "gain": 21.283610796780586,
+    "levels": [
+      {
+        "file": "guitar-72-medium-1-0.pcm",
+        "frames": 202003,
+        "sha256": "93d4f52dda1ef2d480def358d1062c09b04ddeaf9c97621707fde1e30cf746f4"
+      },
+      {
+        "file": "guitar-72-medium-1-1.pcm",
+        "frames": 101002,
+        "sha256": "ef3cff16ee41bcef05c4a7c41fa1ccf8908a4f6f012d1e814d8e729243f7382e"
+      },
+      {
+        "file": "guitar-72-medium-1-2.pcm",
+        "frames": 50501,
+        "sha256": "fa50c9a2bfaf0b00378d10067bea226ad3c8d50cc01fcd709e115810086c0637"
+      },
+      {
+        "file": "guitar-72-medium-1-3.pcm",
+        "frames": 25251,
+        "sha256": "def96f4f6348e855875cbb904838b70d1f65460ee95f4d4baa87b631ffbce8ea"
+      },
+      {
+        "file": "guitar-72-medium-1-4.pcm",
+        "frames": 12626,
+        "sha256": "4d562a01cce751f4ba9b9d34b636042e64d11a0c46863d0b6980d8318a82816d"
+      },
+      {
+        "file": "guitar-72-medium-1-5.pcm",
+        "frames": 6313,
+        "sha256": "3597a820b7352455f5d456207abef814d9f812975aa5b688afcfefacc868b4fd"
+      },
+      {
+        "file": "guitar-72-medium-1-6.pcm",
+        "frames": 3157,
+        "sha256": "fc487efdec3a6c9871dc870768aa296ff16b984c4c66363964fc3f73114f34c8"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_c6_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "c3a0586e0eb9162894975bc00d6aae6d201af843",
+    "size": 576498,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/c3a0586e0eb9162894975bc00d6aae6d201af843",
+    "midi": 72,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 523.0173666567669,
+    "pitch_spread_cents": 0.18147399774198933,
+    "trimmed_frames": 601,
+    "gain": 18.322729389439573,
+    "levels": [
+      {
+        "file": "guitar-72-medium-2-0.pcm",
+        "frames": 191538,
+        "sha256": "d4647dff867621f3f1d24153beab48d927d4d8c665b2c27b7b8c9e605b32b186"
+      },
+      {
+        "file": "guitar-72-medium-2-1.pcm",
+        "frames": 95769,
+        "sha256": "d65b8c9db61877093024f824f0148c0904efff7707253f27aae06bfba0278e29"
+      },
+      {
+        "file": "guitar-72-medium-2-2.pcm",
+        "frames": 47885,
+        "sha256": "6a42186beb6ed81f62aafeb0548593d7937541efe730df0d374006376f8d3e04"
+      },
+      {
+        "file": "guitar-72-medium-2-3.pcm",
+        "frames": 23943,
+        "sha256": "b2cc796a55ef0f0038961f6187cff77b15cb9b71d15901a6c4003d34479afd13"
+      },
+      {
+        "file": "guitar-72-medium-2-4.pcm",
+        "frames": 11972,
+        "sha256": "0f283d84d59c1ab6967f274144b9284c998ca1c613a4c07b2dc257181b6807db"
+      },
+      {
+        "file": "guitar-72-medium-2-5.pcm",
+        "frames": 5986,
+        "sha256": "d9557e7a9d873a1a546a6de53cdb9f6c09d2d94009b53add87c978e82c3f74e7"
+      },
+      {
+        "file": "guitar-72-medium-2-6.pcm",
+        "frames": 2993,
+        "sha256": "1bd9050d3edf6f0009a1f3c46131bac4f90adfe9840274ab460d9eb8fd46a6c3"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e6_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "848073981edf71c2cf3a13c28228aeab9f8a1ce3",
+    "size": 640536,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/848073981edf71c2cf3a13c28228aeab9f8a1ce3",
+    "midi": 76,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 656.8785232549103,
+    "pitch_spread_cents": 0.7320546810184384,
+    "trimmed_frames": 708,
+    "gain": 5.129493276708825,
+    "levels": [
+      {
+        "file": "guitar-76-firm-1-0.pcm",
+        "frames": 212777,
+        "sha256": "51034819a982fea9ecff9c60145e2ec736b11fd785df6db79251de120e4f0e92"
+      },
+      {
+        "file": "guitar-76-firm-1-1.pcm",
+        "frames": 106389,
+        "sha256": "c50c4acfe496c31f37223f44ef73e62f90e381bbfa687258ea2517953c60b611"
+      },
+      {
+        "file": "guitar-76-firm-1-2.pcm",
+        "frames": 53195,
+        "sha256": "5de99cbb068a8e6fc8118b35692b30f8c6e15b67c3c2e00c0d0b6e22f680b473"
+      },
+      {
+        "file": "guitar-76-firm-1-3.pcm",
+        "frames": 26598,
+        "sha256": "3f71b74cce18aadef7b8d279e4277613ab0c306983b62a6446ba7889c9c460ef"
+      },
+      {
+        "file": "guitar-76-firm-1-4.pcm",
+        "frames": 13299,
+        "sha256": "f95854c42818daa2feb0e1d2e77982c3613afb230f513c3473c9931abe5d9d7a"
+      },
+      {
+        "file": "guitar-76-firm-1-5.pcm",
+        "frames": 6650,
+        "sha256": "7c69529efe1beb0cecb70cf42254fe2ff0060435bcdb7c61647cc30ab7cc5bc4"
+      },
+      {
+        "file": "guitar-76-firm-1-6.pcm",
+        "frames": 3325,
+        "sha256": "342acd9f6ef78b79069fe3bcba7881c2dbf53665b26cda4d7db39d2fbb16af67"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e6_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "2498c763ab104946dc0bf2f855e42a5342121a67",
+    "size": 612894,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/2498c763ab104946dc0bf2f855e42a5342121a67",
+    "midi": 76,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 656.9197847042673,
+    "pitch_spread_cents": 0.29853370876116986,
+    "trimmed_frames": 698,
+    "gain": 4.64995220898412,
+    "levels": [
+      {
+        "file": "guitar-76-firm-2-0.pcm",
+        "frames": 203573,
+        "sha256": "a4ee2d911abaca41f4d974261f00c3f3501312c64a12f0a17c147dc1b9b9089c"
+      },
+      {
+        "file": "guitar-76-firm-2-1.pcm",
+        "frames": 101787,
+        "sha256": "7aba5c7300b9e7d55a988f1c26cc8f18a561c57e70f360c580245a6fa20c7ddc"
+      },
+      {
+        "file": "guitar-76-firm-2-2.pcm",
+        "frames": 50894,
+        "sha256": "457b193054d9fc2f09130c9ca147f11b246cc787deb745bc6968c2856e29721e"
+      },
+      {
+        "file": "guitar-76-firm-2-3.pcm",
+        "frames": 25447,
+        "sha256": "e8ab158b695106727d26ea96b434d59cb917bf85fe3ad789c27b97e5cb94b776"
+      },
+      {
+        "file": "guitar-76-firm-2-4.pcm",
+        "frames": 12724,
+        "sha256": "20cb2f14e15d382c74f2d0868790ab32eac9912efd035cb0aebbab43b1e44e88"
+      },
+      {
+        "file": "guitar-76-firm-2-5.pcm",
+        "frames": 6362,
+        "sha256": "674d80106d2c0894bfd453a4398a1afd0de726c16b86335474ff3f88e15237f8"
+      },
+      {
+        "file": "guitar-76-firm-2-6.pcm",
+        "frames": 3181,
+        "sha256": "c6db72078d006c43b51fd425bdbd0dd9d04240afa26fadacca9d76d8ae7d576e"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e6_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "e17437a1234b2887624c38c301c13fdfef25056d",
+    "size": 527580,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/e17437a1234b2887624c38c301c13fdfef25056d",
+    "midi": 76,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 656.9275222602865,
+    "pitch_spread_cents": 0.23599603849202852,
+    "trimmed_frames": 0,
+    "gain": 21.12344306659362,
+    "levels": [
+      {
+        "file": "guitar-76-medium-1-0.pcm",
+        "frames": 175833,
+        "sha256": "d371eefb99a47009183bfc072e94b537d7c2932b78e488b94b304de9fee12ac8"
+      },
+      {
+        "file": "guitar-76-medium-1-1.pcm",
+        "frames": 87917,
+        "sha256": "9f52913cad41b7d8083141410cf00a42a9c098cdb8a7d54d983d040c64e66b62"
+      },
+      {
+        "file": "guitar-76-medium-1-2.pcm",
+        "frames": 43959,
+        "sha256": "73efcd85f866110b7b66be93c3cb57d9f67bc1be86dbe4a79587dc144cd4f518"
+      },
+      {
+        "file": "guitar-76-medium-1-3.pcm",
+        "frames": 21980,
+        "sha256": "3307cdf6f80f8d6bd05f4c15e8aafe1b59f71e9cbb40cd0cfd3d1aed77f6cd43"
+      },
+      {
+        "file": "guitar-76-medium-1-4.pcm",
+        "frames": 10990,
+        "sha256": "2c294b470d7becd3740258e2c3bde90c7461b28eb31bc8fa2240fa57f4b641ed"
+      },
+      {
+        "file": "guitar-76-medium-1-5.pcm",
+        "frames": 5495,
+        "sha256": "ebeccf76a7734ea1e83ba17c61fda7d08b2bcc3c95a613f76981a197344fa872"
+      },
+      {
+        "file": "guitar-76-medium-1-6.pcm",
+        "frames": 2748,
+        "sha256": "f58b9b809ea2f436020c7a3ccaa25c9c3c9176ea56a3a6ee7f2e3ee19dbb071b"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_e6_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "f78613a3368c80450c7fa513ee0c03c382d11b1f",
+    "size": 530618,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/f78613a3368c80450c7fa513ee0c03c382d11b1f",
+    "midi": 76,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 656.80023913214,
+    "pitch_spread_cents": 0.19178264597570213,
+    "trimmed_frames": 203,
+    "gain": 22.326854265408404,
+    "levels": [
+      {
+        "file": "guitar-76-medium-2-0.pcm",
+        "frames": 176643,
+        "sha256": "be0390975b048946c005fefb27bab29cfe4c16eb55f12fb360abd0f6349273d6"
+      },
+      {
+        "file": "guitar-76-medium-2-1.pcm",
+        "frames": 88322,
+        "sha256": "da4ccb207c68210bcd74bcdd2c7bb1b03ef2d0ec40598eb4c281e366e55180fb"
+      },
+      {
+        "file": "guitar-76-medium-2-2.pcm",
+        "frames": 44161,
+        "sha256": "1c9f5be915443274deacd643460b3d612ade9165b04b42b34b33d0dbe51d690e"
+      },
+      {
+        "file": "guitar-76-medium-2-3.pcm",
+        "frames": 22081,
+        "sha256": "b9df0eb976bd68a47c4adf8e22c7e3c4b9c1bae7ea164ff5951f27f29ab4f8d2"
+      },
+      {
+        "file": "guitar-76-medium-2-4.pcm",
+        "frames": 11041,
+        "sha256": "68378c04a5ec0f881ec94833ecc5ab2342e63464eef1842d119ef8fb80d0e6a2"
+      },
+      {
+        "file": "guitar-76-medium-2-5.pcm",
+        "frames": 5521,
+        "sha256": "15965c4c4f27ac91287e88321208219473fc1b69a7f070a132de554b94274ed0"
+      },
+      {
+        "file": "guitar-76-medium-2-6.pcm",
+        "frames": 2761,
+        "sha256": "244e153d9ad9f935d6827434f109563020cb2a3d757f90e1863cdb631aa23d32"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab6_f_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "b5da9eca5796e44bfe1c124a6f9a5c5873bffc67",
+    "size": 595250,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/b5da9eca5796e44bfe1c124a6f9a5c5873bffc67",
+    "midi": 80,
+    "dynamic": "firm",
+    "take": 1,
+    "reference_hz": 825.5644072895237,
+    "pitch_spread_cents": 0.16961379849087643,
+    "trimmed_frames": 903,
+    "gain": 2.980759428725285,
+    "levels": [
+      {
+        "file": "guitar-80-firm-1-0.pcm",
+        "frames": 197487,
+        "sha256": "14ad88567f4d991d6d71e26db587ec01331e93286fb4071968c7336285dcfb1a"
+      },
+      {
+        "file": "guitar-80-firm-1-1.pcm",
+        "frames": 98744,
+        "sha256": "79c5c4dfa8e0e9e343f56ee3af2194a32cb8f8cd59ddeb6db0f57ec4153bb57f"
+      },
+      {
+        "file": "guitar-80-firm-1-2.pcm",
+        "frames": 49372,
+        "sha256": "a5c69362395e1b43dee8d740e36e61924eebf90a5d576be799a8670ef3408c6f"
+      },
+      {
+        "file": "guitar-80-firm-1-3.pcm",
+        "frames": 24686,
+        "sha256": "bcc134516a34d5f2344a9dd52f815868c41be1aecd3f2aebb917d96f9f24b997"
+      },
+      {
+        "file": "guitar-80-firm-1-4.pcm",
+        "frames": 12343,
+        "sha256": "b07414e1a8b14a1f38e31aec3387f9f59a02bfe0fd2f72f95ae73a08c662ca95"
+      },
+      {
+        "file": "guitar-80-firm-1-5.pcm",
+        "frames": 6172,
+        "sha256": "34b6aec06c4a3fcf505114e1604c02fb76ee29c5ecda278e39927dd51721ebb9"
+      },
+      {
+        "file": "guitar-80-firm-1-6.pcm",
+        "frames": 3086,
+        "sha256": "50237430e700f809db632beb97404fbe239cbf2772a47be45fc14f682346f200"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab6_f_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "54519b9d44247299489b956e1e5811282ee89a17",
+    "size": 594228,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/54519b9d44247299489b956e1e5811282ee89a17",
+    "midi": 80,
+    "dynamic": "firm",
+    "take": 2,
+    "reference_hz": 825.9429031078573,
+    "pitch_spread_cents": 0.099110417814108,
+    "trimmed_frames": 798,
+    "gain": 3.0680853429711537,
+    "levels": [
+      {
+        "file": "guitar-80-firm-2-0.pcm",
+        "frames": 197251,
+        "sha256": "5d2ad6b32599285f03a31fd31ed38772f8fc45101299ddfef38ec486b753047a"
+      },
+      {
+        "file": "guitar-80-firm-2-1.pcm",
+        "frames": 98626,
+        "sha256": "893950d34117f9640fa5575908a581cd17c8341bd37be07e0479c16f6d04bf9c"
+      },
+      {
+        "file": "guitar-80-firm-2-2.pcm",
+        "frames": 49313,
+        "sha256": "6bc29fe53c6a14062b9fec7884327627021fe2ecb0aa99524a820a26148df2ea"
+      },
+      {
+        "file": "guitar-80-firm-2-3.pcm",
+        "frames": 24657,
+        "sha256": "7cea18bcd7e1cecaf6101b62677a1be06af024588c543e78f11adcf85e83bac5"
+      },
+      {
+        "file": "guitar-80-firm-2-4.pcm",
+        "frames": 12329,
+        "sha256": "1fbd147e473dc0f033267dc0e85be8bf482622894672146330f366753fe261d1"
+      },
+      {
+        "file": "guitar-80-firm-2-5.pcm",
+        "frames": 6165,
+        "sha256": "464a013a53d794f8b41c6d7a869103d2312048583136a32f4e7ddc498123a4e3"
+      },
+      {
+        "file": "guitar-80-firm-2-6.pcm",
+        "frames": 3083,
+        "sha256": "7db782cb28dd6701654b4a0c4746557c03db851da8f7497c3d372bd6c0808615"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab6_mf_rr1.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "e0b1b3ce1d08bdf7eebf35b30b6e1698c6925963",
+    "size": 523038,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/e0b1b3ce1d08bdf7eebf35b30b6e1698c6925963",
+    "midi": 80,
+    "dynamic": "medium",
+    "take": 1,
+    "reference_hz": 826.3567313029006,
+    "pitch_spread_cents": 0.06605560263215926,
+    "trimmed_frames": 293,
+    "gain": 23.14054678868892,
+    "levels": [
+      {
+        "file": "guitar-80-medium-1-0.pcm",
+        "frames": 174026,
+        "sha256": "54e6ef3d61bdd302a767af9cdbafb72f947a03da8d1c829528ec0064f38db6ae"
+      },
+      {
+        "file": "guitar-80-medium-1-1.pcm",
+        "frames": 87013,
+        "sha256": "62286f99d1eebaa63cd97ffa0ee4a404b96147467f3a18715826fdab72a70c11"
+      },
+      {
+        "file": "guitar-80-medium-1-2.pcm",
+        "frames": 43507,
+        "sha256": "8bbaedd81d00cbcd761534ae3c7828558647744620ffd14689db776fe9835217"
+      },
+      {
+        "file": "guitar-80-medium-1-3.pcm",
+        "frames": 21754,
+        "sha256": "e507d211c29ddd6066de146e292ceff90a799a06a7cd6ba1797ef7c7992d351d"
+      },
+      {
+        "file": "guitar-80-medium-1-4.pcm",
+        "frames": 10877,
+        "sha256": "c5453869881bcb0a0476afe8c116760bf26225c003f8b9ccce6ea79b7978e85c"
+      },
+      {
+        "file": "guitar-80-medium-1-5.pcm",
+        "frames": 5439,
+        "sha256": "8d27894f2d55abded3c59e863808653d1fc0d4d4bb99f63308bc9bede920613f"
+      },
+      {
+        "file": "guitar-80-medium-1-6.pcm",
+        "frames": 2720,
+        "sha256": "a2761972023ae7e7662776dd6355920e0c8e1d3a4c239d291ea43811f1c22315"
+      }
+    ]
+  },
+  {
+    "path": "Samples/green/ord/twang_ab6_mf_rr2.wav",
+    "mode": "100644",
+    "type": "blob",
+    "sha": "6fc113b29b83a0bb636f3f207b094aca2f3280af",
+    "size": 535896,
+    "url": "https://api.github.com/repos/sfzinstruments/karoryfer.black-and-green-guitars/git/blobs/6fc113b29b83a0bb636f3f207b094aca2f3280af",
+    "midi": 80,
+    "dynamic": "medium",
+    "take": 2,
+    "reference_hz": 826.3609835606615,
+    "pitch_spread_cents": 0.07021959646039753,
+    "trimmed_frames": 0,
+    "gain": 18.07883367737357,
+    "levels": [
+      {
+        "file": "guitar-80-medium-2-0.pcm",
+        "frames": 178605,
+        "sha256": "075e4e41ab33ac239b0c64a35f70d75300c703ef7f21844af2e0663655786820"
+      },
+      {
+        "file": "guitar-80-medium-2-1.pcm",
+        "frames": 89303,
+        "sha256": "378013008b9d49e1cf0e9a267eaad162033032115f28be3d48630b0bedde7ad2"
+      },
+      {
+        "file": "guitar-80-medium-2-2.pcm",
+        "frames": 44652,
+        "sha256": "ebf8b8e8e7cab6502dc9335bf065fe99b3c6efc38045cc7b37b64637174bfb20"
+      },
+      {
+        "file": "guitar-80-medium-2-3.pcm",
+        "frames": 22326,
+        "sha256": "0361d9ede5927517f56a9f27c8c42d426f1731a0d9f6326afa2e776fd7958349"
+      },
+      {
+        "file": "guitar-80-medium-2-4.pcm",
+        "frames": 11163,
+        "sha256": "0744c45ede6a2840f42752ee1cbf000c456b3f30676ba10c6024908eb0ba650b"
+      },
+      {
+        "file": "guitar-80-medium-2-5.pcm",
+        "frames": 5582,
+        "sha256": "71efa03d3c063d5aad0767466b03b3e67a6da62fcc1f8d88477e4e1f77508fcd"
+      },
+      {
+        "file": "guitar-80-medium-2-6.pcm",
+        "frames": 2791,
+        "sha256": "b0a95e8fc29bc6014d241ffe7483051dc1a3196215071db84a5c35c77fafaf75"
+      }
+    ]
+  }
+]

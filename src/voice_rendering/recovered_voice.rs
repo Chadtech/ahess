@@ -282,6 +282,7 @@ fn voice_sample(
         | VoiceType::VscoCello
         | VoiceType::VscoFlute
         | VoiceType::VscoClarinet
+        | VoiceType::CleanGuitar
         | VoiceType::VscoHarp
         | VoiceType::SurgeXtClarinet => unreachable!("voice does not use the recovered runtime"),
     }

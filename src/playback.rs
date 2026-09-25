@@ -22,6 +22,7 @@ use crate::{
     seed::{standard_normal, Seed},
     voice::AttackSharpness,
     voice_rendering::clarinet::ClarinetRuntime,
+    voice_rendering::clean_guitar::CleanGuitarRuntime,
     voice_rendering::gamelan_metallophone::GamelanMetallophoneRuntime,
     voice_rendering::noitech_bell_a::NoitechBellARuntime,
     voice_rendering::noitech_bell_b::NoitechBellBRuntime,
@@ -1138,6 +1139,7 @@ enum InstrumentRuntime {
     BuiltIn(OscillatorRuntime),
     Clarinet(ClarinetRuntime),
     Vsco(VscoRuntime),
+    CleanGuitar(CleanGuitarRuntime),
     GamelanMetallophone(GamelanMetallophoneRuntime),
     NoitechBellA(NoitechBellARuntime),
     NoitechBellB(NoitechBellBRuntime),
@@ -1169,6 +1171,7 @@ impl InstrumentRuntime {
             | VoiceType::HarmonicSaw
             | VoiceType::RadlerDullSaw
             | VoiceType::RadlerHarmonics => Ok(Self::BuiltIn(OscillatorRuntime::new(voice_type))),
+            VoiceType::CleanGuitar => Ok(Self::CleanGuitar(CleanGuitarRuntime::new(sample_rate))),
             VoiceType::Clarinet => Ok(Self::Clarinet(ClarinetRuntime::new(sample_rate))),
             VoiceType::GamelanMetallophone => {
                 Ok(Self::GamelanMetallophone(GamelanMetallophoneRuntime::new()))
@@ -1210,6 +1213,7 @@ impl InstrumentRuntime {
     fn matches(&self, voice_type: VoiceType, voice_index: usize, voice_count: usize) -> bool {
         match self {
             Self::BuiltIn(oscillator) => oscillator.voice_type() == voice_type,
+            Self::CleanGuitar(_) => voice_type == VoiceType::CleanGuitar,
             Self::Clarinet(_) => voice_type == VoiceType::Clarinet,
             Self::Vsco(runtime) => runtime.voice_type() == voice_type,
             Self::GamelanMetallophone(_) => voice_type == VoiceType::GamelanMetallophone,
@@ -1274,6 +1278,14 @@ impl InstrumentRuntime {
                             strike.volume,
                             cutoff,
                         ),
+                        Self::CleanGuitar(r) => r.trigger(
+                            strike.frequency,
+                            strike.volume,
+                            length,
+                            cutoff.is_some(),
+                            voice.blend_seeds[events[index].source_row]
+                                .derive(events[index].event_index as u64),
+                        ),
                         Self::Vsco(r) => r.trigger_with_attack(
                             strike.frequency,
                             strike.volume,
@@ -1317,6 +1329,7 @@ impl InstrumentRuntime {
                 Self::GamelanMetallophone(r) => r.sample(sample_rate),
                 Self::Recovered(r) => r.sample(sample_rate),
                 Self::Vsco(r) => r.sample(),
+                Self::CleanGuitar(r) => r.sample(),
                 Self::Clarinet(r) => r.sample(),
                 _ => (0.0, false),
             };
@@ -1377,6 +1390,28 @@ impl InstrumentRuntime {
                     }
                 }
                 runtime.sample(sample_rate)
+            }
+            Self::CleanGuitar(runtime) => {
+                if let Some(beat_index) = beat_index {
+                    if let Some(strike) = voice.strikes[beat_index] {
+                        let delay = voice.delays[beat_index].min(beat_length.saturating_sub(1));
+                        if sample_in_beat == delay {
+                            let gate = strike
+                                .duration
+                                .samples(beat_length)
+                                .saturating_sub(delay)
+                                .max(1);
+                            runtime.trigger(
+                                strike.frequency,
+                                strike.volume,
+                                gate,
+                                strike.duration != StrikeDuration::VoiceDefault,
+                                voice.blend_seeds[beat_index].derive(0),
+                            );
+                        }
+                    }
+                }
+                runtime.sample()
             }
             Self::Vsco(runtime) => {
                 if let Some(beat_index) = beat_index {
@@ -1513,6 +1548,7 @@ impl SurgeXtRuntime {
             VoiceType::VscoCello
             | VoiceType::VscoFlute
             | VoiceType::VscoClarinet
+            | VoiceType::CleanGuitar
             | VoiceType::VscoHarp
             | VoiceType::Sin
             | VoiceType::Saw
@@ -1854,6 +1890,7 @@ impl OscillatorRuntime {
             VoiceType::VscoCello
             | VoiceType::VscoFlute
             | VoiceType::VscoClarinet
+            | VoiceType::CleanGuitar
             | VoiceType::VscoHarp => unreachable!("VSCO instruments have a sample runtime"),
             VoiceType::GamelanMetallophone => {
                 unreachable!("gamelan metallophone has a tail-aware runtime")
@@ -2975,7 +3012,7 @@ mod tests {
                 VoiceType::VscoCello | VoiceType::VscoFlute | VoiceType::VscoClarinet => {
                     Some((5_700, 5_800))
                 }
-                VoiceType::VscoHarp => Some((1_000, 600_000)),
+                VoiceType::CleanGuitar | VoiceType::VscoHarp => Some((1_000, 600_000)),
                 VoiceType::NoitechBellA => Some((200_000, 250_000)),
                 VoiceType::NoitechBellB => Some((160_000, 200_000)),
                 VoiceType::NoitechBellG
@@ -3342,3 +3379,7 @@ mod tests {
 #[cfg(test)]
 #[path = "playback_vsco_tests.rs"]
 mod vsco_tests;
+
+#[cfg(test)]
+#[path = "playback_clean_guitar_tests.rs"]
+mod clean_guitar_tests;

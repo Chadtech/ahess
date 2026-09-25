@@ -112,6 +112,7 @@ pub struct Model {
     close_button: Entity<Button>,
     pane_count_dropdown: Entity<Dropdown>,
     score_arrangement_button: Entity<Button>,
+    arrangement_select_all_button: Entity<Button>,
     loop_button: Entity<Button>,
     transport_button: Entity<Button>,
     undo_button: Entity<Button>,
@@ -418,6 +419,16 @@ impl Model {
             cx.new(|cx| Dropdown::new("score-pane-count", ["1 pane", "2 panes", "3 panes"], 0, cx));
         let score_arrangement_button =
             cx.new(|_| Button::new("toggle-score-arrangement", "arrangement").depressed(true));
+        let arrangement_select_all_button =
+            cx.new(|_| Button::new("arrangement-select-all", "select all"));
+        cx.subscribe(
+            &arrangement_select_all_button,
+            |this, _, _: &button::Clicked, cx| {
+                let range = this.workspace.loop_editor.read(cx).arrangement_range();
+                range.update(cx, |range, cx| range.select_all(cx));
+            },
+        )
+        .detach();
         let loop_button = cx.new(|_| Button::new("loop-workspace", "loop"));
         let transport_button =
             cx.new(|_| Button::new("toggle-playback", "play").variant(ButtonVariant::Primary));
@@ -534,6 +545,7 @@ impl Model {
             close_button,
             pane_count_dropdown,
             score_arrangement_button,
+            arrangement_select_all_button,
             loop_button,
             transport_button,
             undo_button,
@@ -3371,11 +3383,15 @@ impl Render for Model {
             WorkspaceSection::Score { .. } => {
                 let project_status = self.project_status(cx);
                 let arrangement_range = self.workspace.loop_editor.read(cx).arrangement_range();
+                self.arrangement_select_all_button.update(cx, |button, cx| {
+                    button.set_disabled(self.project.arrangement_beat_count() == 0, cx);
+                });
                 score_workspace(
                     &self.score_views,
                     &self.project,
                     &self.loop_selection,
                     arrangement_range,
+                    self.arrangement_select_all_button.clone(),
                     self.score_arrangement_visible,
                     project_status,
                     cx,
@@ -3423,9 +3439,11 @@ fn loop_range_summary(project: &Project, selection: &LoopSelection) -> String {
     }
 }
 
-fn arrangement_duration_summary(project: &Project) -> String {
-    let duration_millis = u128::from(project.arrangement_beat_count())
-        * u128::from(project.beat_duration_millis.get());
+fn arrangement_duration_summary(project: &Project, selection: &LoopSelection) -> String {
+    let beats = selection
+        .resolve(&project.arrangement_occurrences())
+        .map_or(0, |range| range.last() - range.first() + 1);
+    let duration_millis = u128::from(beats) * u128::from(project.beat_duration_millis.get());
     let rounded_seconds = (duration_millis + 500) / 1_000;
     let minutes = rounded_seconds / 60;
     let seconds = rounded_seconds % 60;
@@ -3460,6 +3478,7 @@ fn score_workspace(
     project: &Project,
     loop_selection: &LoopSelection,
     arrangement_range: Entity<RangeSelectionList>,
+    select_all_button: Entity<Button>,
     arrangement_visible: bool,
     project_status: ProjectStatus,
     cx: &mut Context<Model>,
@@ -3512,6 +3531,7 @@ fn score_workspace(
                 project,
                 loop_selection,
                 arrangement_range,
+                select_all_button,
             ))
         });
     let status_is_actionable = match &project_status {
@@ -3572,6 +3592,7 @@ fn score_arrangement_panel(
     project: &Project,
     loop_selection: &LoopSelection,
     arrangement_range: Entity<RangeSelectionList>,
+    select_all_button: Entity<Button>,
 ) -> gpui::Div {
     let occurrences = project.arrangement_occurrences();
     let occurrence_label = if occurrences.len() == 1 {
@@ -3598,7 +3619,7 @@ fn score_arrangement_panel(
                 .child(
                     div()
                         .debug_selector(|| "score-arrangement-duration-summary".to_string())
-                        .child(arrangement_duration_summary(project)),
+                        .child(arrangement_duration_summary(project, loop_selection)),
                 ),
         )
         .child(
@@ -3615,6 +3636,12 @@ fn score_arrangement_panel(
                         .min_w(s::S0)
                         .truncate()
                         .child(loop_range_summary(project, loop_selection)),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .debug_selector(|| "arrangement-select-all".to_string())
+                        .child(select_all_button),
                 ),
         )
         .child(
@@ -3743,23 +3770,45 @@ mod tests {
     }
 
     #[test]
-    fn arrangement_duration_summary_uses_the_complete_arrangement() {
+    fn arrangement_duration_summary_follows_the_selection() {
         let project = Project::new("test project", 5_125, 0, Seed::new(12))
             .with_parts(vec![Part::new("intro", 3), Part::new("verse", 5)])
             .with_sequence(vec!["intro".into(), "verse".into(), "verse".into()]);
 
-        assert_eq!(arrangement_duration_summary(&project), "1:07");
+        assert_eq!(
+            arrangement_duration_summary(&project, &LoopSelection::EntireArrangement),
+            "1:07"
+        );
+
+        let occurrences = project.arrangement_occurrences();
+        let selected = LoopSelection::Occurrences(vec![occurrences[1].id(), occurrences[2].id()]);
+        assert_eq!(arrangement_duration_summary(&project, &selected), "0:51");
+        let selected = LoopSelection::Occurrences(vec![occurrences[2].id()]);
+        assert_eq!(arrangement_duration_summary(&project, &selected), "0:26");
+        assert_eq!(
+            arrangement_duration_summary(&project, &LoopSelection::Occurrences(Vec::new())),
+            "0:00"
+        );
 
         let one_second = Project::new("test project", 500, 0, Seed::new(12))
             .with_parts(vec![Part::new("intro", 2)]);
-        assert_eq!(arrangement_duration_summary(&one_second), "0:01");
+        assert_eq!(
+            arrangement_duration_summary(&one_second, &LoopSelection::EntireArrangement),
+            "0:01"
+        );
 
         let whole_minutes = Project::new("test project", 30_000, 0, Seed::new(12))
             .with_parts(vec![Part::new("intro", 4)]);
-        assert_eq!(arrangement_duration_summary(&whole_minutes), "2:00");
+        assert_eq!(
+            arrangement_duration_summary(&whole_minutes, &LoopSelection::EntireArrangement),
+            "2:00"
+        );
 
         let empty = Project::new("test project", 500, 0, Seed::new(12));
-        assert_eq!(arrangement_duration_summary(&empty), "0:00");
+        assert_eq!(
+            arrangement_duration_summary(&empty, &LoopSelection::EntireArrangement),
+            "0:00"
+        );
     }
 
     #[gpui::test]
@@ -4237,7 +4286,8 @@ mod tests {
                 Voice::new(2, "second", VoiceType::Saw),
                 Voice::new(3, "third", VoiceType::Sin),
             ])
-            .with_parts(vec![part.clone()]);
+            .with_parts(vec![part.clone()])
+            .with_sequence(vec![part.name.clone(); 3]);
         PartScore::from_rows(vec![vec![String::new(); 3]; 16])
             .save(&project_directory, &part, &project)
             .unwrap();
@@ -4272,6 +4322,31 @@ mod tests {
         assert!(panes[2].right() < arrangement.left());
         assert!(arrangement_duration.right() <= arrangement.right());
         assert!(arrangement_right <= workspace_right + px(1.0));
+
+        let select_all = cx.debug_bounds("arrangement-select-all").unwrap();
+        assert!(select_all.right() <= arrangement.right());
+        let first_row = cx.debug_bounds("loop-arrangement-list-row-0").unwrap();
+        cx.simulate_click(first_row.center(), Modifiers::default());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            assert_eq!(
+                arrangement_duration_summary(&model.project, &model.loop_selection),
+                "5:20"
+            );
+        });
+        cx.simulate_click(select_all.center(), Modifiers::default());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let model = model.read(cx);
+            let range = model.workspace.loop_editor.read(cx).arrangement_range();
+            let selected = range.read(cx).selected_range().unwrap();
+            assert_eq!((selected.first(), selected.last()), (0, 2));
+            assert_eq!(
+                arrangement_duration_summary(&model.project, &model.loop_selection),
+                "16:00"
+            );
+        });
 
         fs::remove_dir_all(root).unwrap();
     }

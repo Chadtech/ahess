@@ -2,7 +2,7 @@
 
 Status: working design
 
-Last updated: 2026-09-11
+Last updated: 2026-09-14
 
 This document records the intended direction for pitch systems, score
 interpretation, instruments, playback, stereo spatialization, and acoustic
@@ -425,6 +425,38 @@ switching, round robins, or recorded legato transitions.
 See `assets/samples/vsco2/README.md`, `manifest.json`, and `tools/vsco/` for
 attribution, exact sources, calibration, processing, and reproducible generation.
 
+### Clean guitar preserves recorded pick attacks
+
+`clean electric guitar` (`clean-guitar`) is a built-in sampled Gretsch Anniversary
+hollowbody, using Brian Wood / Karoryfer's CC0 Black And Green Guitars recordings.
+Eleven nominal roots E2–G#5 have two pick strengths and two takes each. Each event
+selects its nearest source root and a deterministic seeded take, then retunes
+that recording from its measured reference frequency to the exact `FrequencyHz`.
+Root selection never quantizes the score. Score volume below 0.65 selects medium
+picking; at or above it selects firm picking, with ordinary linear volume gain
+applied afterward. This discrete switch changes attack timbre. Voice-level gain
+remains downstream and does not change articulation.
+
+One recording per note keeps the pick transient coherent. The original onset and
+natural string decay remain; there is no generated attack, sustain loop, amp
+plugin, compression, or distortion stage. Default-duration notes ring naturally;
+explicit durations damp in the last 5 ms of their gate. Chords sound at authored
+note offsets; the voice does not invent strum timing or additional chord notes.
+The existing VSCO onset-trimming control does not apply to this instrument.
+
+`clean_guitar.rs` owns the fixed 128-note bank and sample selection. Shared
+`sampled_note.rs` now holds the unchanged VSCO fractional playback, anti-alias mip
+selection, interpolation, loop and release implementation. Both paths allocate
+nothing on note-on or in their sample loop. Guitar uses the existing deterministic
+event seeds, scheduling, mono spatialization, volume and live/offline build paths.
+Existing VSCO selection and attack behavior are unchanged.
+
+The 44 embedded recordings add about 39 MiB of PCM including seven anti-alias
+levels, with no additional Cargo or runtime dependency. Recorded pitch settling
+remains; large transpositions change tone and decay length. Source hashes,
+calibration and processing details, license, and reproduction instructions live
+in `assets/samples/clean-guitar/` and `tools/clean-guitar/`.
+
 ### Surge XT instruments preserve exact frequencies
 
 `Surge XT Piano`, `Surge XT distorted electric guitar`, and `Surge XT clarinet`
@@ -464,7 +496,9 @@ Guitar patch does not. Ahess turns off that guitar patch's Reverb 2 global
 effect while retaining its distortion and other tone-shaping effects, leaving
 project room acoustics as the voice's only reverb. The John Valentine Clarinet
 patch is already dry: its reverb effects are disabled and its scene sends are
-zero. Each concrete voice loads its installed John Valentine patch through the
+zero. Ahess sets the clarinet patch's `Vibrato Tremolo` macro to zero in memory
+when loading it, preserving the installed factory file and modulation routing.
+Each concrete voice loads its installed John Valentine patch through the
 Audio Unit's JUCE class-state dictionary. Surge XT does not
 expose its native patch library through the Audio Unit factory-preset list in
 the standard macOS build. Missing factory resources are an error rather than a
